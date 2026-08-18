@@ -19,28 +19,18 @@ import { configDir, credentialSource, listProfiles } from "./auth";
 import { loadConfig, type VesnaConfig } from "./config";
 import { colorSupported, resolveTheme, type Theme } from "../tui/theme";
 import { runChat } from "./chat";
+import { runTui } from "../tui/stdin";
 import { buildContext, CODEX_BASE_URL } from "./context";
 import { EXIT } from "./exit";
+import { parseFlags } from "./flags";
 import { formatParameter } from "./format";
 import { describeDropped } from "./dropped";
 import { diagnose } from "./doctor";
 import { planRun, summarizeFlow } from "./inspect";
 
-function parseFlags(args: string[]): Record<string, string> {
-  const flags: Record<string, string> = {};
-  for (let i = 0; i < args.length; i += 1) {
-    const arg = args[i]!;
-    if (arg.startsWith("--")) {
-      flags[arg.slice(2)] = args[i + 1] ?? "true";
-      i += 1;
-    }
-  }
-  return flags;
-}
-
 const USAGE = [
   "usage:",
-  "  vesna chat                              talk to the agent, then /crystallize",
+  "  vesna chat [--plain]                    full-screen chat; --plain for a dumb terminal",
   "  vesna do \"<task>\"                       solve a task live and record a trace",
   "  vesna run <flow> [--map rows.csv] [--<input> <value>]",
   "  vesna heal <run-id> --flow <flow>",
@@ -231,7 +221,10 @@ export async function main(argv: string[]): Promise<number> {
   const permit = (node: { use: string }) => config.permissions.nodes.includes(node.use);
 
   if (command === "chat") {
-    return await runChat({ registry, provider, store, config, theme, root });
+    const deps = { registry, provider, store, config, theme, root };
+    // The line-based chat stays available for dumb terminals and for piping.
+    if (flags.plain !== undefined || !process.stdout.isTTY) return await runChat(deps);
+    return await runTui(deps);
   }
 
   if (command === "do" && target) {

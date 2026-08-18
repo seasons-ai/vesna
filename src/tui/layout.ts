@@ -119,10 +119,18 @@ function windowOf(lines: string[], height: number, scroll: number): string[] {
   return [...Array<string>(height - window.length).fill(""), ...window];
 }
 
+/**
+ * Cost and usage are the half worth keeping: a narrow window trims the hint,
+ * which the user already knows, rather than the number they are watching.
+ */
 function statusLine(hint: string, status: string, cols: number): string {
-  const gap = cols - visibleWidth(hint) - visibleWidth(status);
-  if (gap < 1) return fit(hint, cols);
-  return `${hint}${" ".repeat(gap)}${status}`;
+  const statusWidth = visibleWidth(status);
+  if (statusWidth >= cols) return fit(status, cols);
+
+  const room = cols - statusWidth - 1;
+  const trimmed = visibleWidth(hint) <= room ? hint : fit(hint, room);
+  const gap = cols - visibleWidth(trimmed) - statusWidth;
+  return `${trimmed}${" ".repeat(Math.max(1, gap))}${status}`;
 }
 
 /** Truncate to the visible width, keeping escape codes out of the count. */

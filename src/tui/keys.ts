@@ -27,6 +27,8 @@ export type Key =
   | { type: "interrupt" }
   | { type: "eof" }
   | { type: "tab" }
+  | { type: "page-up" }
+  | { type: "page-down" }
   | { type: "escape" };
 
 const ESC = "\x1b";
@@ -63,12 +65,16 @@ const CSI_TILDE: Record<string, Key> = {
   "1": { type: "home" },
   "4": { type: "end" },
   "3": { type: "delete" },
+  "5": { type: "page-up" },
+  "6": { type: "page-down" },
   "7": { type: "home" },
   "8": { type: "end" },
 };
 
 /** ctrl (5) and alt (3) turn a horizontal arrow into a word motion. */
 const WORD_MODIFIERS = new Set(["3", "5"]);
+/** shift (2) turns a vertical arrow into a scroll. */
+const SCROLL_MODIFIER = "2";
 
 export interface Decoded {
   keys: Key[];
@@ -165,6 +171,10 @@ function readEscape(input: string, start: number): { key: Key | null; next: numb
   if (modifier !== undefined && WORD_MODIFIERS.has(modifier)) {
     if (key.type === "left") return { key: { type: "word-left" }, next };
     if (key.type === "right") return { key: { type: "word-right" }, next };
+  }
+  if (modifier === SCROLL_MODIFIER) {
+    if (key.type === "up") return { key: { type: "page-up" }, next };
+    if (key.type === "down") return { key: { type: "page-down" }, next };
   }
   return { key, next };
 }

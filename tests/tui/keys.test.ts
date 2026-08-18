@@ -119,3 +119,13 @@ test("tab is its own key so completion can use it later", () => {
 test("non-ascii text passes through intact", () => {
   expect(keys("привет")).toEqual([{ type: "text", text: "привет" }]);
 });
+
+test("page up and page down scroll the conversation", () => {
+  expect(keys(`${ESC}[5~`)).toEqual([{ type: "page-up" }]);
+  expect(keys(`${ESC}[6~`)).toEqual([{ type: "page-down" }]);
+});
+
+test("shift with a vertical arrow scrolls rather than browsing history", () => {
+  expect(keys(`${ESC}[1;2A`)).toEqual([{ type: "page-up" }]);
+  expect(keys(`${ESC}[1;2B`)).toEqual([{ type: "page-down" }]);
+});
