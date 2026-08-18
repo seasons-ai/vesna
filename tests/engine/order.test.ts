@@ -24,3 +24,14 @@ nodes:
 `);
   expect(() => topologicalOrder(flow)).toThrow(ContractError);
 });
+
+test("independent nodes keep declaration order rather than being sorted", () => {
+  const flow = parseFlow(`
+name: f
+inputs: {}
+nodes:
+  - { id: send, use: echo, in: {} }
+  - { id: check, use: echo, in: {} }
+`);
+  expect(topologicalOrder(flow)).toEqual(["send", "check"]);
+});

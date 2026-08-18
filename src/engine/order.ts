@@ -7,11 +7,13 @@ export function topologicalOrder(flow: Flow): string[] {
   const ordered: string[] = [];
   const done = new Set<string>();
 
+  // Among nodes the graph leaves unordered, declaration order wins. Sorting by
+  // id here would be deterministic too, but it would silently reorder a flow
+  // away from the sequence its author wrote.
   while (pending.size > 0) {
     const ready = [...pending.entries()]
       .filter(([, deps]) => deps.every((dep) => done.has(dep)))
-      .map(([id]) => id)
-      .sort();
+      .map(([id]) => id);
     if (ready.length === 0) {
       throw new ContractError(`dependency cycle among nodes: ${[...pending.keys()].join(", ")}`);
     }
