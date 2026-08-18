@@ -46,3 +46,39 @@ test("lists created runs", async () => {
     expect(runs.sort()).toEqual([a, b].sort());
   });
 });
+
+const liveTrace = {
+  prompt: "summarize the report",
+  finalText: "done",
+  usage: { inputTokens: 10, outputTokens: 5, cacheReadTokens: 0, cacheWriteTokens: 0 },
+  costUsd: 0.001,
+  environment: { cwd: ".", gitSha: null, envNames: [] },
+  steps: [
+    { id: "t1", nodeType: "read", input: { path: "a.txt" }, output: { text: "x" }, durationMs: 2 },
+  ],
+};
+
+test("saves a live trace and reads it back by id", async () => {
+  await withStore(async (store) => {
+    const id = await store.saveLiveTrace(liveTrace as any);
+    expect(id).toMatch(/^live_/);
+    const loaded = await store.readLiveTrace(id);
+    expect(loaded.prompt).toBe("summarize the report");
+    expect(loaded.steps).toHaveLength(1);
+  });
+});
+
+test("lists saved live traces, newest first", async () => {
+  await withStore(async (store) => {
+    const first = await store.saveLiveTrace(liveTrace as any);
+    await Bun.sleep(2);
+    const second = await store.saveLiveTrace(liveTrace as any);
+    expect(await store.listLiveTraces()).toEqual([second, first]);
+  });
+});
+
+test("reading an unknown live trace fails with a useful message", async () => {
+  await withStore(async (store) => {
+    await expect(store.readLiveTrace("live_nope")).rejects.toThrow(/live_nope/);
+  });
+});

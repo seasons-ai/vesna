@@ -5,6 +5,8 @@ export const shellNode: NodeDef<
   { stdout: string; stderr: string; code: number }
 > = {
   type: "shell",
+  description: "Run a shell command in the working directory",
+  inputSchema: { type: "object", properties: { command: { type: "string" } }, required: ["command"] },
   effect: "write",
   async run(input, ctx) {
     const proc = Bun.spawn(["/bin/sh", "-c", input.command], {

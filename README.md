@@ -21,13 +21,32 @@ tests, but it is early. See [What is not built yet](#what-is-not-built-yet).
 
 ## The thing it does
 
+Solve something once, live:
+
 ```console
-$ vesna crystallize trace.json --name client-report
+$ vesna do "summarise reports/acme.txt into out/acme.md"
+  · read   412ms
+  · write   18ms
+
+Wrote the summary.
+
+2 steps · 6.1s · $0.0412 · trace live_msyz1k_a7f2c9
+
+next: vesna crystallize live_msyz1k_a7f2c9 --name client-report
+```
+
+Then freeze it:
+
+```console
+$ vesna crystallize live_msyz1k_a7f2c9 --name client-report
 Proposed parameters — confirm before applying:
   "reports/acme.txt"  ->  ${inputs.path}   at read_1.path
   "out/acme.md"  ->  ${inputs.write_2_path}   at write_2.path
 Wrote .agent/flows/client-report.yaml
 ```
+
+Nothing here is hand-written: `do` records the trace, `crystallize` reads it back
+by id.
 
 You edit that file to confirm which literals are really parameters, then run it
 over a data file:
@@ -53,6 +72,16 @@ $ vesna doctor
 read_1   runs 3  asserts 100%  $0.0000/run
 write_2  runs 3  asserts 100%  $0.0000/run
 ```
+
+### Exit codes
+
+Scriptable, because "some rows are held" is not the same as "it broke":
+
+| Code | Meaning |
+| --- | --- |
+| `0` | everything ran |
+| `1` | ran, but at least one row is held and needs repair |
+| `2` | did not run — bad usage, bad flow, missing credentials |
 
 ---
 
@@ -209,6 +238,8 @@ Named honestly, because the gap is deliberate rather than an oversight.
   is part of the security model.
 - No `watch` command, no flow-calling-flow, no `vesna upgrade` for model changes,
   no container sandbox, no memory directory.
+- No interactive UI yet: `crystallize` writes the proposal to a file and you
+  confirm the parameters by editing it.
 
 ---
 

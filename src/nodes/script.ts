@@ -33,6 +33,8 @@ export const scriptNode: NodeDef<
   unknown
 > = {
   type: "script",
+  description: "Evaluate a short JavaScript body in a sandbox with no network access. Assign the result to `output`.",
+  inputSchema: { type: "object", properties: { body: { type: "string" }, args: { type: "object" }, timeoutMs: { type: "number" } }, required: ["body"] },
   effect: "pure",
   async run(input, ctx) {
     const timeoutMs = input.timeoutMs ?? 10_000;

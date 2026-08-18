@@ -5,6 +5,8 @@ import { safeResolve } from "./read";
 
 export const writeNode: NodeDef<{ path: string; text: string }, { path: string; bytes: number }> = {
   type: "write",
+  description: "Write a UTF-8 text file inside the working directory",
+  inputSchema: { type: "object", properties: { path: { type: "string" }, text: { type: "string" } }, required: ["path", "text"] },
   effect: "write",
   async run(input, ctx) {
     const full = safeResolve(input.path, ctx);

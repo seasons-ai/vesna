@@ -1,18 +1,16 @@
 import { estimateCostUsd } from "../providers/cost";
-import { DEFAULT_MODEL, type Provider, type ToolSpec, type Usage } from "../providers/types";
+import { DEFAULT_MODEL, type Provider, type Usage } from "../providers/types";
+import { toolSpecs } from "../registry/registry";
 import type { Registry } from "../registry/types";
 import { fingerprint, type LiveTrace, type TraceStep } from "./trace";
 
 export interface LiveOptions {
-  schemas: Record<string, ToolSpec>;
   cwd: string;
   model?: string;
   maxTurns?: number;
   permit?: (type: string) => boolean;
-}
-
-export function toolSpecsFrom(registry: Registry, schemas: Record<string, ToolSpec>): ToolSpec[] {
-  return registry.list().flatMap((type) => (schemas[type] ? [schemas[type]!] : []));
+  /** Called after each tool call so a front end can render progress. */
+  onStep?: (step: TraceStep) => void;
 }
 
 /**
@@ -28,7 +26,7 @@ export async function runLive(
 ): Promise<LiveTrace> {
   const model = options.model ?? DEFAULT_MODEL;
   const maxTurns = options.maxTurns ?? 24;
-  const tools = toolSpecsFrom(registry, options.schemas);
+  const tools = toolSpecs(registry);
   const messages: any[] = [{ role: "user", content: prompt }];
   const steps: TraceStep[] = [];
   const usage: Usage = {
@@ -84,13 +82,15 @@ export async function runLive(
       const started = Date.now();
       try {
         const output = await definition.run(use.input, ctx);
-        steps.push({
+        const step: TraceStep = {
           id: use.id,
           nodeType: use.name,
           input: use.input,
           output,
           durationMs: Date.now() - started,
-        });
+        };
+        steps.push(step);
+        options.onStep?.(step);
         results.push({ type: "tool_result", tool_use_id: use.id, content: JSON.stringify(output) });
       } catch (error) {
         results.push({

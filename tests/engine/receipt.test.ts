@@ -5,10 +5,10 @@ import { createRegistry } from "../../src/registry/registry";
 
 function sendingRegistry(counter: { sent: number }) {
   const registry = createRegistry();
-  registry.register({ type: "echo", effect: "pure", async run(input: any) { return input; } });
+  registry.register({ type: "echo", description: "test node", inputSchema: { type: "object" }, effect: "pure", async run(input: any) { return input; } });
   registry.register({
     type: "send",
-    effect: "external",
+    description: "test node", inputSchema: { type: "object" }, effect: "external",
     async run() {
       counter.sent += 1;
       return { messageId: `m${counter.sent}` };
@@ -16,7 +16,7 @@ function sendingRegistry(counter: { sent: number }) {
   });
   registry.register({
     type: "maybe",
-    effect: "pure",
+    description: "test node", inputSchema: { type: "object" }, effect: "pure",
     async run(input: any) {
       if (input.fail) throw new Error("downstream failure");
       return { ok: true };

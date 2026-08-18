@@ -10,6 +10,16 @@ export function createLlmNode(
 > {
   return {
     type: "llm",
+    description: "Ask a language model for text. Use only where judgement is required.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        prompt: { type: "string" },
+        model: { type: "string", description: "Model id; defaults to the configured one" },
+        system: { type: "string" },
+      },
+      required: ["prompt"],
+    },
     effect: "pure",
     async run(input) {
       const model = input.model ?? DEFAULT_MODEL;

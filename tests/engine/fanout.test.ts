@@ -16,7 +16,7 @@ nodes:
 
 function registry() {
   const r = createRegistry();
-  r.register({ type: "echo", effect: "pure", async run(input: any) { return input; } });
+  r.register({ type: "echo", description: "test node", inputSchema: { type: "object" }, effect: "pure", async run(input: any) { return input; } });
   return r;
 }
 
@@ -40,7 +40,7 @@ test("respects the concurrency limit", async () => {
   const r = createRegistry();
   r.register({
     type: "echo",
-    effect: "pure",
+    description: "test node", inputSchema: { type: "object" }, effect: "pure",
     async run(input: any) {
       active += 1;
       peak = Math.max(peak, active);

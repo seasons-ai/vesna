@@ -6,7 +6,9 @@ import { parseCsv } from "../engine/csv";
 import { runMapped } from "../engine/fanout";
 import { healRun } from "../engine/heal";
 import { parseFlow } from "../flow/parse";
+import { runLive } from "../loop/loop";
 import { buildContext } from "./context";
+import { EXIT } from "./exit";
 import { diagnose } from "./doctor";
 
 function parseFlags(args: string[]): Record<string, string> {
@@ -32,9 +34,10 @@ export function formatParameter(parameter: ProposedParameter): string {
 
 const USAGE = [
   "usage:",
+  "  vesna do \"<task>\"                       solve a task live and record a trace",
   "  vesna run <flow> [--map rows.csv] [--<input> <value>]",
   "  vesna heal <run-id> --flow <flow>",
-  "  vesna crystallize <trace.json> --name <flow>",
+  "  vesna crystallize <trace-id|file> --name <flow>",
   "  vesna doctor",
 ].join("\n");
 
@@ -42,12 +45,32 @@ async function loadFlowFile(root: string, name: string) {
   return parseFlow(await readFile(join(root, ".agent", "flows", `${name}.yaml`), "utf8"));
 }
 
-export async function main(argv: string[]): Promise<void> {
+export async function main(argv: string[]): Promise<number> {
   const [command, target, ...rest] = argv;
   const root = process.cwd();
   const flags = parseFlags(rest);
-  const { registry, store, config } = await buildContext(root);
+  const { registry, store, config, provider } = await buildContext(root);
   const permit = (node: { use: string }) => config.permissions.nodes.includes(node.use);
+
+  if (command === "do" && target) {
+    const started = Date.now();
+    const trace = await runLive(target, provider, registry, {
+      cwd: root,
+      model: flags.model ?? config.model,
+      permit: (type) => config.permissions.nodes.includes(type),
+      onStep: (step) => console.log(`  · ${step.nodeType}  ${step.durationMs}ms`),
+    });
+
+    const id = await store.saveLiveTrace(trace);
+    const seconds = ((Date.now() - started) / 1000).toFixed(1);
+
+    if (trace.finalText) console.log(`\n${trace.finalText}`);
+    console.log(
+      `\n${trace.steps.length} steps · ${seconds}s · $${trace.costUsd.toFixed(4)} · trace ${id}`,
+    );
+    console.log(`\nnext: vesna crystallize ${id} --name <flow>`);
+    return EXIT.ok;
+  }
 
   if (command === "run" && target) {
     const flow = await loadFlowFile(root, target);
@@ -66,23 +89,26 @@ export async function main(argv: string[]): Promise<void> {
       const failed = row.result.nodes.find((n) => n.status === "held");
       console.log(`  row ${row.index} held at ${failed?.id}: ${failed?.error?.message ?? ""}`);
     }
-    return;
+    return summary.held > 0 ? EXIT.held : EXIT.ok;
   }
 
   if (command === "heal" && target) {
     if (!flags.flow) {
-      console.log("heal requires --flow <flow>");
-      return;
+      console.error("heal requires --flow <flow>");
+      return EXIT.error;
     }
     const flow = await loadFlowFile(root, flags.flow);
     const record = await store.readRun(target);
     const summary = await healRun(flow, registry, record, { store, permit, cwd: root });
     console.log(`${summary.runId}: ${summary.ok} ok · ${summary.held} held`);
-    return;
+    return summary.held > 0 ? EXIT.held : EXIT.ok;
   }
 
   if (command === "crystallize" && target) {
-    const trace = JSON.parse(await readFile(target, "utf8"));
+    // Accept either a trace id recorded by `vesna do` or a path to a JSON file.
+    const trace = target.endsWith(".json")
+      ? JSON.parse(await readFile(target, "utf8"))
+      : await store.readLiveTrace(target);
     const proposal = proposeFlow(trace, flags.name ?? "flow");
 
     console.log("Proposed parameters — confirm before applying:");
@@ -97,7 +123,7 @@ export async function main(argv: string[]): Promise<void> {
     const path = join(root, ".agent", "flows", `${proposal.flow.name}.yaml`);
     await writeFile(path, toYaml(proposal.flow));
     console.log(`Wrote ${path}`);
-    return;
+    return EXIT.ok;
   }
 
   if (command === "doctor") {
@@ -106,7 +132,7 @@ export async function main(argv: string[]): Promise<void> {
     const health = diagnose(records);
     if (health.length === 0) {
       console.log("no runs recorded yet");
-      return;
+      return EXIT.ok;
     }
     const width = Math.max(...health.map((node) => node.nodeId.length));
     for (const node of health) {
@@ -116,8 +142,9 @@ export async function main(argv: string[]): Promise<void> {
         `${node.nodeId.padEnd(width)}  runs ${node.runs}  asserts ${rate}  $${cost}/run`,
       );
     }
-    return;
+    return EXIT.ok;
   }
 
   console.log(USAGE);
+  return command === undefined ? EXIT.ok : EXIT.error;
 }

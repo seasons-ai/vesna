@@ -6,12 +6,12 @@ import type { Registry } from "../../src/registry/types";
 
 function fakeRegistry(): Registry {
   const registry = createRegistry();
-  registry.register({ type: "echo", effect: "pure", async run(input: any) { return input; } });
-  registry.register({ type: "boom", effect: "pure", async run() { throw new Error("kaboom"); } });
+  registry.register({ type: "echo", description: "test node", inputSchema: { type: "object" }, effect: "pure", async run(input: any) { return input; } });
+  registry.register({ type: "boom", description: "test node", inputSchema: { type: "object" }, effect: "pure", async run() { throw new Error("kaboom"); } });
   let attempts = 0;
   registry.register({
     type: "flaky",
-    effect: "pure",
+    description: "test node", inputSchema: { type: "object" }, effect: "pure",
     async run() {
       attempts += 1;
       if (attempts < 2) throw new Error("transient");

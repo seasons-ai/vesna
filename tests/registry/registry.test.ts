@@ -4,7 +4,7 @@ import type { NodeDef } from "../../src/registry/types";
 
 const echo: NodeDef<{ value: string }, { value: string }> = {
   type: "echo",
-  effect: "pure",
+  description: "test node", inputSchema: { type: "object" }, effect: "pure",
   async run(input) {
     return { value: input.value };
   },

@@ -14,6 +14,8 @@ export function safeResolve(path: string, ctx: NodeContext): string {
 
 export const readNode: NodeDef<{ path: string }, { text: string }> = {
   type: "read",
+  description: "Read a UTF-8 text file from the working directory",
+  inputSchema: { type: "object", properties: { path: { type: "string", description: "Path relative to the working directory" } }, required: ["path"] },
   effect: "pure",
   async run(input, ctx) {
     return { text: await readFile(safeResolve(input.path, ctx), "utf8") };

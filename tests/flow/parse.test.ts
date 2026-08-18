@@ -17,7 +17,7 @@ nodes:
 
 function registryWithEcho() {
   const registry = createRegistry();
-  registry.register({ type: "echo", effect: "pure", async run(input: any) { return input; } });
+  registry.register({ type: "echo", description: "test node", inputSchema: { type: "object" }, effect: "pure", async run(input: any) { return input; } });
   return registry;
 }
 

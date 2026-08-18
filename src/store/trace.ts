@@ -1,6 +1,7 @@
 import { mkdirSync, writeFileSync } from "node:fs";
 import { readFile, readdir } from "node:fs/promises";
 import { join } from "node:path";
+import type { LiveTrace } from "../loop/trace";
 import type { RowRecord, RunRecord, TraceStore } from "./types";
 
 export function createTraceStore(root: string): TraceStore {
@@ -32,7 +33,35 @@ export function createTraceStore(root: string): TraceStore {
 
     async listRuns() {
       try {
-        return await readdir(root);
+        return (await readdir(root)).filter((entry) => entry.startsWith("run_"));
+      } catch {
+        return [];
+      }
+    },
+
+    async saveLiveTrace(trace) {
+      const id = `live_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
+      mkdirSync(join(root, "live"), { recursive: true });
+      await Bun.write(join(root, "live", `${id}.json`), JSON.stringify(trace, null, 2));
+      return id;
+    },
+
+    async readLiveTrace(id) {
+      try {
+        return JSON.parse(await readFile(join(root, "live", `${id}.json`), "utf8"));
+      } catch {
+        throw new Error(`no live trace with id ${id}`);
+      }
+    },
+
+    async listLiveTraces() {
+      try {
+        const files = await readdir(join(root, "live"));
+        return files
+          .filter((file) => file.endsWith(".json"))
+          .map((file) => file.replace(/\.json$/, ""))
+          .sort()
+          .reverse();
       } catch {
         return [];
       }

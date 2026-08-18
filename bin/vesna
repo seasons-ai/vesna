@@ -1,2 +1,12 @@
 #!/usr/bin/env bun
-import("../src/cli/main.ts").then((m) => m.main(process.argv.slice(2)));
+Promise.all([import("../src/cli/main.ts"), import("../src/cli/exit.ts")])
+  .then(async ([cli, exit]) => {
+    try {
+      process.exitCode = await cli.main(process.argv.slice(2));
+    } catch (error) {
+      const explained = exit.explainError(error);
+      console.error(`vesna: ${explained.message}`);
+      if (explained.hint) console.error(`       ${explained.hint}`);
+      process.exitCode = exit.EXIT.error;
+    }
+  });

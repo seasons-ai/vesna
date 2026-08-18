@@ -26,7 +26,7 @@ function registryWithEcho() {
   const registry = createRegistry();
   registry.register({
     type: "echo",
-    effect: "pure",
+    description: "test node", inputSchema: { type: "object" }, effect: "pure",
     async run(input: any) {
       return { value: input.value };
     },
@@ -34,25 +34,13 @@ function registryWithEcho() {
   return registry;
 }
 
-const schemas = {
-  echo: {
-    name: "echo",
-    description: "Echo a value",
-    input_schema: {
-      type: "object",
-      properties: { value: { type: "string" } },
-      required: ["value"],
-    },
-  },
-};
-
 test("executes a requested tool and records it as a trace step", async () => {
   const provider = scriptedProvider([
     [{ type: "tool_use", id: "t1", name: "echo", input: { value: "hi" } }],
     [{ type: "text", text: "all done" }],
   ]);
 
-  const trace = await runLive("do it", provider, registryWithEcho(), { schemas, cwd: "." });
+  const trace = await runLive("do it", provider, registryWithEcho(), { cwd: "." });
 
   expect(trace.steps).toHaveLength(1);
   expect(trace.steps[0]!.nodeType).toBe("echo");
@@ -65,7 +53,7 @@ test("accumulates usage and cost across turns", async () => {
     [{ type: "tool_use", id: "t1", name: "echo", input: { value: "hi" } }],
     [{ type: "text", text: "done" }],
   ]);
-  const trace = await runLive("do it", provider, registryWithEcho(), { schemas, cwd: "." });
+  const trace = await runLive("do it", provider, registryWithEcho(), { cwd: "." });
   expect(trace.usage.outputTokens).toBe(10);
 });
 
@@ -76,7 +64,6 @@ test("stops at maxTurns instead of looping forever", async () => {
     ]),
   );
   const trace = await runLive("loop", provider, registryWithEcho(), {
-    schemas,
     cwd: ".",
     maxTurns: 3,
   });
@@ -85,7 +72,7 @@ test("stops at maxTurns instead of looping forever", async () => {
 
 test("records an environment fingerprint with names but no env values", async () => {
   const provider = scriptedProvider([[{ type: "text", text: "done" }]]);
-  const trace = await runLive("x", provider, registryWithEcho(), { schemas, cwd: "." });
+  const trace = await runLive("x", provider, registryWithEcho(), { cwd: "." });
   expect(trace.environment.cwd).toBe(".");
   expect(Array.isArray(trace.environment.envNames)).toBe(true);
   expect(JSON.stringify(trace.environment)).not.toContain(process.env.PATH ?? "@@no-path@@");
@@ -97,7 +84,6 @@ test("a denied tool returns an error result instead of executing", async () => {
     [{ type: "text", text: "ok" }],
   ]);
   const trace = await runLive("do it", provider, registryWithEcho(), {
-    schemas,
     cwd: ".",
     permit: () => false,
   });
