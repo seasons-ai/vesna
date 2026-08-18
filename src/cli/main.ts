@@ -1,12 +1,16 @@
 import { mkdir, readFile, readdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { stringify as toYaml } from "yaml";
+import { applyParameters } from "../crystallize/apply";
 import { proposeFlow, type ProposedParameter } from "../crystallize/propose";
 import { parseCsv } from "../engine/csv";
 import { runMapped } from "../engine/fanout";
 import { healRun } from "../engine/heal";
 import { parseFlow } from "../flow/parse";
 import { runLive } from "../loop/loop";
+import { confirmParameters } from "../tui/prompt";
+import { progressBar } from "../tui/render";
+import { createStdioPrompt, isInteractive } from "../tui/stdio";
 import { buildContext } from "./context";
 import { EXIT } from "./exit";
 import { diagnose } from "./doctor";
@@ -54,7 +58,7 @@ export async function main(argv: string[]): Promise<number> {
   const [command, target, ...rest] = argv;
   const root = process.cwd();
   const flags = parseFlags(rest);
-  const { registry, store, config, provider } = await buildContext(root);
+  const { registry, store, config, provider, theme } = await buildContext(root);
   const permit = (node: { use: string }) => config.permissions.nodes.includes(node.use);
 
   if (command === "do" && target) {
@@ -63,7 +67,10 @@ export async function main(argv: string[]): Promise<number> {
       cwd: root,
       model: flags.model ?? config.model,
       permit: (type) => config.permissions.nodes.includes(type),
-      onStep: (step) => console.log(`  · ${step.nodeType}  ${step.durationMs}ms`),
+      onStep: (step) =>
+        console.log(
+          `  ${theme.paint("accent", "·")} ${theme.paint("label", step.nodeType.padEnd(8))} ${theme.paint("dim", `${step.durationMs}ms`)}`,
+        ),
     });
 
     const id = await store.saveLiveTrace(trace);
@@ -107,10 +114,13 @@ export async function main(argv: string[]): Promise<number> {
       cwd: root,
       retries: 1,
       onRow: (row, done, total) => {
-        if (total > 1) {
-          const mark = row.result.status === "ok" ? "ok  " : "held";
-          console.log(`  [${done}/${total}] ${mark} row ${row.index}`);
-        }
+        if (total <= 1) return;
+        const mark =
+          row.result.status === "ok"
+            ? theme.paint("ok", "ok  ")
+            : theme.paint("held", "held");
+        const bar = theme.paint("accent", progressBar(done, total, 20));
+        console.log(`  ${bar} ${done}/${total}  ${mark} row ${row.index}`);
       },
     });
     console.log(`${summary.runId}: ${summary.ok} ok · ${summary.held} held`);
@@ -140,18 +150,35 @@ export async function main(argv: string[]): Promise<number> {
       : await store.readLiveTrace(target);
     const proposal = proposeFlow(trace, flags.name ?? "flow");
 
-    console.log("Proposed parameters — confirm before applying:");
-    if (proposal.parameters.length === 0) {
-      console.log("  (none found)");
-    }
-    for (const parameter of proposal.parameters) {
-      console.log(`  ${formatParameter(parameter)}`);
+    const interactive = isInteractive() && flags.yes === undefined;
+    const io = interactive ? createStdioPrompt() : null;
+
+    let accepted: Map<string, string>;
+    try {
+      accepted = await confirmParameters(
+        proposal.parameters,
+        io ?? { write: (text) => console.log(text), async question() { return ""; } },
+        theme,
+        { interactive },
+      );
+    } finally {
+      io?.close();
     }
 
+    if (!interactive && proposal.parameters.length > 0) {
+      console.log("Applied every proposed parameter (non-interactive):");
+      for (const parameter of proposal.parameters) {
+        console.log(`  ${formatParameter(parameter)}`);
+      }
+    }
+
+    const flow = applyParameters(proposal.flow, proposal.parameters, accepted);
+
     await mkdir(join(root, ".agent", "flows"), { recursive: true });
-    const path = join(root, ".agent", "flows", `${proposal.flow.name}.yaml`);
-    await writeFile(path, toYaml(proposal.flow));
-    console.log(`Wrote ${path}`);
+    const path = join(root, ".agent", "flows", `${flow.name}.yaml`);
+    await writeFile(path, toYaml(flow));
+    console.log(theme.paint("ok", `Wrote ${path}`));
+    console.log(theme.paint("dim", `next: vesna run ${flow.name} --dry-run`));
     return EXIT.ok;
   }
 

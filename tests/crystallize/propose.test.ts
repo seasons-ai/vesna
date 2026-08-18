@@ -77,3 +77,44 @@ test("the same literal used twice becomes one parameter with two sites", () => {
   expect(parameters[0]!.sites).toHaveLength(2);
   expect(parameters[0]!.sites.map((s) => s.nodeId)).toEqual(["read_1", "write_2"]);
 });
+
+test("a value produced by an earlier step becomes a reference, not a constant", () => {
+  const piped: LiveTrace = {
+    ...trace,
+    prompt: "read reports/acme.txt and write the summary",
+    steps: [
+      { id: "s1", nodeType: "read", input: { path: "reports/acme.txt" }, output: { text: "revenue: 120" }, durationMs: 1 },
+      { id: "s2", nodeType: "write", input: { path: "out.md", text: "revenue: 120" }, output: { path: "out.md" }, durationMs: 1 },
+    ],
+  };
+  const flow = proposeFlow(piped, "f").flow;
+  expect(flow.nodes[1]!.in.text).toBe("$.read_1.text");
+});
+
+test("a literal that no earlier step produced stays a literal", () => {
+  const piped: LiveTrace = {
+    ...trace,
+    prompt: "write a fixed banner",
+    steps: [
+      { id: "s1", nodeType: "read", input: { path: "a.txt" }, output: { text: "body" }, durationMs: 1 },
+      { id: "s2", nodeType: "write", input: { path: "out.md", text: "body" }, output: { path: "out.md" }, durationMs: 1 },
+    ],
+  };
+  const flow = proposeFlow(piped, "f").flow;
+  expect(flow.nodes[1]!.in.text).toBe("$.read_1.text");
+  expect(flow.nodes[1]!.in.path).toBe("out.md");
+});
+
+test("a wired reference is not also offered as a parameter", () => {
+  const piped: LiveTrace = {
+    ...trace,
+    prompt: "read reports/acme.txt then write revenue: 120 somewhere",
+    steps: [
+      { id: "s1", nodeType: "read", input: { path: "reports/acme.txt" }, output: { text: "revenue: 120" }, durationMs: 1 },
+      { id: "s2", nodeType: "write", input: { path: "out.md", text: "revenue: 120" }, output: { path: "out.md" }, durationMs: 1 },
+    ],
+  };
+  const proposal = proposeFlow(piped, "f");
+  expect(proposal.flow.nodes[1]!.in.text).toBe("$.read_1.text");
+  expect(proposal.parameters.some((p) => p.literal === "revenue: 120")).toBe(false);
+});

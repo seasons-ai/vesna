@@ -47,25 +47,56 @@ export function synthesizeAssertions(output: unknown): Assertion[] {
  * The proposal is deliberately not applied: generalising a single trace is the
  * hard problem, so a human confirms it. See the risks section of the spec.
  */
+/**
+ * Finds an earlier node whose output carried exactly this value, so the flow can
+ * reference it instead of freezing a constant. Without this a crystal looks
+ * correct and quietly writes the first run's data on every later row.
+ */
+function referenceForValue(
+  value: unknown,
+  produced: { nodeId: string; output: unknown }[],
+): string | undefined {
+  for (const earlier of produced) {
+    if (earlier.output === null || typeof earlier.output !== "object") continue;
+    for (const [key, candidate] of Object.entries(earlier.output as Record<string, unknown>)) {
+      if (candidate === value) return `$.${earlier.nodeId}.${key}`;
+    }
+  }
+  return undefined;
+}
+
 export function proposeFlow(trace: LiveTrace, name: string): Proposal {
   const steps = reachableSteps(trace);
 
   // One literal is one input, however many places it appears in.
   const byLiteral = new Map<string, ParameterSite[]>();
+  const produced: { nodeId: string; output: unknown }[] = [];
 
   const nodes: FlowNode[] = steps.map((step, index) => {
     const id = `${step.nodeType}_${index + 1}`;
+    const wired: Record<string, unknown> = {};
+
     for (const [field, value] of Object.entries(step.input)) {
+      const reference = referenceForValue(value, produced);
+      if (reference !== undefined) {
+        // Data that flowed between steps is wired, never parameterised.
+        wired[field] = reference;
+        continue;
+      }
+
+      wired[field] = value;
       if (typeof value === "string" && value.length > 0 && trace.prompt.includes(value)) {
         const sites = byLiteral.get(value) ?? [];
         sites.push({ nodeId: id, field });
         byLiteral.set(value, sites);
       }
     }
+
+    produced.push({ nodeId: id, output: step.output });
     return {
       id,
       use: step.nodeType,
-      in: { ...step.input },
+      in: wired,
       assert: synthesizeAssertions(step.output),
     };
   });

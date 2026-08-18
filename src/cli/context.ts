@@ -4,6 +4,7 @@ import { createLlmNode } from "../nodes/llm";
 import { createAnthropicProvider } from "../providers/anthropic";
 import { createRegistry } from "../registry/registry";
 import { createTraceStore } from "../store/trace";
+import { colorSupported, resolveTheme } from "../tui/theme";
 import { loadConfig } from "./config";
 
 export async function buildContext(root: string) {
@@ -13,5 +14,8 @@ export async function buildContext(root: string) {
   registerBuiltins(registry);
   registry.register(createLlmNode(provider));
   const store = createTraceStore(join(root, ".agent", "traces"));
-  return { registry, store, config, provider };
+  const theme = resolveTheme(config.theme, {
+    color: colorSupported(process.env, Boolean(process.stdout.isTTY)),
+  });
+  return { registry, store, config, provider, theme };
 }

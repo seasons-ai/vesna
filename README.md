@@ -45,11 +45,15 @@ Proposed parameters — confirm before applying:
 Wrote .agent/flows/client-report.yaml
 ```
 
-Nothing here is hand-written: `do` records the trace, `crystallize` reads it back
-by id.
+In a terminal, `crystallize` walks the proposed parameters with you — accept,
+skip, or rename each one — and writes a flow that is already parameterised. Off
+a terminal it accepts every suggestion, so it works in a script too.
 
-You edit that file to confirm which literals are really parameters, then run it
-over a data file:
+Nothing here is hand-written: `do` records the trace, `crystallize` reads it back
+by id, and values that flowed between steps are wired as references rather than
+frozen as constants.
+
+Then run it over a data file:
 
 ```console
 $ vesna run client-report --map clients.csv
@@ -219,9 +223,13 @@ Permissions are the registry: if no node exists, no capability exists.
 
 ```yaml
 model: claude-opus-5
+theme: vesna          # vesna · ember · dusk · mono
 permissions:
   nodes: [read, write, shell, llm]
 ```
+
+Colour follows the usual conventions: `NO_COLOR` wins, `FORCE_COLOR` overrides,
+and piped output carries no escape codes at all.
 
 ---
 
@@ -238,8 +246,6 @@ Named honestly, because the gap is deliberate rather than an oversight.
   is part of the security model.
 - No `watch` command, no flow-calling-flow, no `vesna upgrade` for model changes,
   no container sandbox, no memory directory.
-- No interactive UI yet: `crystallize` writes the proposal to a file and you
-  confirm the parameters by editing it.
 
 ---
 
