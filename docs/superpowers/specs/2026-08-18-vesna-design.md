@@ -1,4 +1,4 @@
-# Amara — Design Spec
+# Vesna — Design Spec
 
 **Date:** 2026-08-18
 **Status:** Approved for planning
@@ -8,11 +8,11 @@
 
 ## 1. Summary
 
-Amara is an open-source coding agent that turns its own work into deterministic,
+Vesna is an open-source coding agent that turns its own work into deterministic,
 version-controlled workflows.
 
 The first time a task is solved, an LLM does it live: expensive, slow, and
-non-deterministic. Amara records the trace, derives a graph of typed nodes from
+non-deterministic. Vesna records the trace, derives a graph of typed nodes from
 it, and — after the human confirms the generalization — freezes that graph into a
 **crystal**: a callable flow with declared inputs and per-node assertions.
 
@@ -21,15 +21,15 @@ nodes that genuinely require judgment. When an assertion fails, that single node
 for that single input row, melts back into live mode, is repaired by the model, and
 re-freezes.
 
-The name comes from Greek *amarantos*, "unfading": a live run fades with its
-context window, a crystallized one does not.
+The name is the Slavic goddess of spring — the thing that comes back on its own,
+every year, unasked and unsupervised. That is what a crystal is meant to become.
 
 ## 2. Why this, and not another agent framework
 
 Research across r/AI_Agents, r/automation, r/n8n, r/LocalLLaMA and r/ClaudeAI
 (August 2026) surfaced six recurring, independently-reported complaints:
 
-| Reported pain | What Amara does about it |
+| Reported pain | What Vesna does about it |
 | --- | --- |
 | Silent failure — "live submission, no pdf, zap still shows green", `{{client_name}}` shipped to a customer | Every node carries assertions; a wrong output is an event, not a swallowed exception |
 | "A bug in one of our 20 agents took forever to find" | One reviewable graph with per-node traces instead of N opaque loops |
@@ -69,12 +69,12 @@ RBAC. A hosted cloud. Automatic generalization without human confirmation.
 ### 4.1 Three states of a task
 
 - **Live** — the LLM solves from scratch. Maximum capability, maximum cost.
-- **Proposed** — Amara presents the derived graph and the literals it believes are
+- **Proposed** — Vesna presents the derived graph and the literals it believes are
   parameters. The human edits and confirms.
 - **Crystal** — a deterministic flow. The LLM runs only where a node is declared
   to need judgment.
 
-State transitions are explicit user actions. Amara never crystallizes silently.
+State transitions are explicit user actions. Vesna never crystallizes silently.
 
 ### 4.2 A flow is a function, not a script
 
@@ -82,9 +82,9 @@ Every flow declares typed inputs, which gives it one signature and four call
 sites: the CLI, the TUI, a `flow` node inside another flow, and a file watcher.
 
 ```bash
-amara run client-report --client "Acme" --report q3.pdf
-amara run client-report --map clients.csv        # fan-out, one run per row
-amara watch client-report --on 'inbox/*.pdf'
+vesna run client-report --client "Acme" --report q3.pdf
+vesna run client-report --map clients.csv        # fan-out, one run per row
+vesna watch client-report --on 'inbox/*.pdf'
 ```
 
 ### 4.3 Flow file format
@@ -220,11 +220,11 @@ A row whose assertion fails is marked **`held`, not `failed`**; the remaining ro
 complete. The run summary reads `199 ok · 1 held`.
 
 ```bash
-amara heal <run-id>
+vesna heal <run-id>
 ```
 
 wakes the model for held rows only, on the failed node only, with the expectation
-and the actual value in context. On success Amara offers to update the node, and
+and the actual value in context. On success Vesna offers to update the node, and
 the next run is deterministic again.
 
 Per-row state is persisted under `.agent/traces/<run-id>/`, so `heal` survives a
@@ -236,7 +236,7 @@ Every `external` node writes a **receipt** into the trace when it executes.
 **Nodes with a recorded receipt are never re-executed during `heal`.**
 
 Without this rule the first repair would send every email a second time,
-reproducing precisely the failure mode Amara exists to prevent. This is an engine
+reproducing precisely the failure mode Vesna exists to prevent. This is an engine
 invariant, covered by property tests from the first commit.
 
 ## 7. Error handling
@@ -269,7 +269,7 @@ limited to explicitly passed paths, a timeout, and a memory cap.
 
 This is **process isolation, not VM isolation**, and the README will say so
 plainly rather than implying a stronger guarantee. Users needing stricter
-containment run `amara run --sandbox docker`.
+containment run `vesna run --sandbox docker`.
 
 One structural mitigation that ordinary agents lack: `script` bodies live in the
 flow YAML and therefore appear in pull-request diffs. Review is part of the
@@ -284,10 +284,10 @@ behaviour.
 Upgrading is explicit:
 
 ```bash
-amara upgrade client-report --to <model id>
+vesna upgrade client-report --to <model id>
 ```
 
-Amara replays the flow's assertions against inputs saved in prior traces before
+Vesna replays the flow's assertions against inputs saved in prior traces before
 offering the switch — a regression test across a model change, which teams
 currently perform blind and discover through customer complaints.
 
@@ -297,7 +297,7 @@ Traces accumulate, so per-node assertion pass rate, cost and duration are
 trendable.
 
 ```
-amara doctor
+vesna doctor
   client-report › summary   asserts 96% -> 81% over 14 days
   client-report › send      $0.004 -> $0.019 per run
 ```
@@ -326,7 +326,7 @@ When the agent repaired `src/auth/login.ts`, the flow could reasonably mean "fix
 that file" or "fix whichever file the failing test points at". Guessing wrong
 produces a flow that works exactly once.
 
-v0.1 therefore performs **no automatic generalization**: Amara proposes the
+v0.1 therefore performs **no automatic generalization**: Vesna proposes the
 parameters it inferred and a human confirms them in an interactive prompt — the
 CLI in v0.1, the TUI once it lands. Automatic generalization is deferred to a
 later cycle, once a corpus of real flows exists to evaluate it against.
@@ -334,7 +334,7 @@ later cycle, once a corpus of real flows exists to evaluate it against.
 Secondary risk: if everything ends up inside `script` nodes, the declarative
 design collapses into code generation with extra steps. Mitigation is to treat
 each `script` node in a proposed graph as a signal that the registry is missing a
-node, and to surface that count in `amara doctor`.
+node, and to surface that count in `vesna doctor`.
 
 ## 11. v0.1 deliverable
 
