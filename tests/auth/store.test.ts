@@ -13,7 +13,7 @@ async function withDir(fn: (dir: string) => Promise<void>) {
   }
 }
 
-const auth = { provider: "chatgpt", accessToken: "at", refreshToken: "rt", expiresAt: 1 };
+const auth = { provider: "openai", accessToken: "at", refreshToken: "rt", expiresAt: 1 };
 
 test("credentials live outside the project directory", () => {
   const path = authPath({}, "/home/u");
@@ -64,5 +64,5 @@ test("expiry is judged with a margin, so a token does not die mid-request", () =
 });
 
 test("a token with no stated expiry is treated as still valid", () => {
-  expect(isExpired({ provider: "chatgpt", accessToken: "at" }, Date.now())).toBe(false);
+  expect(isExpired({ provider: "openai", accessToken: "at" }, Date.now())).toBe(false);
 });

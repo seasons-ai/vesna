@@ -61,3 +61,19 @@ test("an openai-compatible endpoint is configured by provider and baseUrl", asyn
     expect(config.prices["llama3.1"]).toEqual({ input: 0, output: 0 });
   });
 });
+
+test("authentication defaults to a key, not a subscription", async () => {
+  await withRoot(async (root) => {
+    expect((await loadConfig(root)).auth).toBe("key");
+  });
+});
+
+test("the subscription mode is opted into explicitly", async () => {
+  await withRoot(async (root) => {
+    await mkdir(join(root, ".vesna"), { recursive: true });
+    await writeFile(join(root, ".vesna", "config.yaml"), "provider: openai\nauth: subscription\n");
+    const config = await loadConfig(root);
+    expect(config.provider).toBe("openai");
+    expect(config.auth).toBe("subscription");
+  });
+});

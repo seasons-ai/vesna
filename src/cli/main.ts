@@ -12,7 +12,11 @@ import { runLive } from "../loop/loop";
 import { confirmParameters } from "../tui/prompt";
 import { progressBar } from "../tui/render";
 import { createStdioPrompt, isInteractive } from "../tui/stdio";
+import { browserLogin } from "../auth/login";
+import { authPath, isExpired, loadAuth, saveAuth } from "../auth/store";
 import { configDir, credentialSource, listProfiles } from "./auth";
+import { loadConfig, type VesnaConfig } from "./config";
+import { colorSupported, resolveTheme, type Theme } from "../tui/theme";
 import { buildContext } from "./context";
 import { EXIT } from "./exit";
 import { diagnose } from "./doctor";
@@ -48,6 +52,7 @@ const USAGE = [
   "  vesna flows                             list crystallised flows",
   "  vesna traces                            list recorded live traces",
   "  vesna auth                              show which model credentials will be used",
+  "  vesna auth login                        sign in (browser, headless, or API key)",
   "  vesna doctor",
   "",
   "  --dry-run on `run` validates and prints the plan without executing",
@@ -57,10 +62,155 @@ async function loadFlowFile(root: string, name: string) {
   return parseFlow(await readFile(join(root, ".vesna", "flows", `${name}.yaml`), "utf8"));
 }
 
+
+async function authCommand(
+  target: string | undefined,
+  config: VesnaConfig,
+  theme: Theme,
+  root: string,
+): Promise<number> {
+  if (target === "login") {
+    if (config.provider !== "openai" || !config.oauth) {
+      console.log("Sign-in applies to the openai provider with an oauth block configured.");
+      console.log(theme.paint("dim", "  provider: openai"));
+      console.log(theme.paint("dim", "  auth: subscription"));
+      console.log(theme.paint("dim", "  oauth: { issuer, clientId, baseUrl }"));
+      return EXIT.error;
+    }
+
+    const io = createStdioPrompt();
+    try {
+      console.log(theme.paint("label", "How would you like to sign in?"));
+      console.log(`  ${theme.paint("accent", "1")}  browser      opens ${config.oauth.issuer}`);
+      console.log(`  ${theme.paint("accent", "2")}  headless     print the URL to open elsewhere`);
+      console.log(`  ${theme.paint("accent", "3")}  API key      paste a key instead`);
+      const choice = (await io.question("\n  choice [1]: ")).trim() || "1";
+
+      if (choice === "3") {
+        const key = (await io.question("  API key: ")).trim();
+        if (key === "") {
+          console.error("no key entered");
+          return EXIT.error;
+        }
+        const path = authPath(process.env, homedir());
+        await saveAuth(path, { provider: "openai", accessToken: key });
+        console.log(theme.paint("ok", `\nSaved to ${path}`));
+        return EXIT.ok;
+      }
+
+      const headless = choice === "2";
+      const auth = await browserLogin(
+        {
+          issuer: config.oauth.issuer,
+          clientId: config.oauth.clientId,
+          provider: "openai",
+          scope: config.oauth.scope,
+        },
+        {
+          async openBrowser(url) {
+            if (headless) {
+              console.log(theme.paint("dim", "\n  open this on any machine with a browser:\n"));
+              console.log(`  ${url}\n`);
+              return;
+            }
+            console.log(theme.paint("dim", "\n  opening your browser…"));
+            Bun.spawn(["open", url], { stdout: "ignore", stderr: "ignore" });
+          },
+        },
+      );
+
+      const path = authPath(process.env, homedir());
+      await saveAuth(path, auth);
+      console.log(theme.paint("ok", `\nSigned in. Saved to ${path}`));
+      return EXIT.ok;
+    } finally {
+      io.close();
+    }
+  }
+
+  {
+    console.log(`provider:   ${theme.paint("accent", config.provider)}  model ${config.model}`);
+
+    if (config.provider === "openai" && config.auth === "subscription") {
+      const path = authPath(process.env, homedir());
+      const stored = await loadAuth(path);
+      console.log(`endpoint:   ${config.oauth?.baseUrl ?? theme.paint("held", "not configured")}`);
+      if (stored === null) {
+        console.log(`credential: ${theme.paint("held", "not signed in")}`);
+        console.log("");
+        console.log("  vesna auth login");
+        return EXIT.error;
+      }
+      const state = isExpired(stored, Date.now())
+        ? theme.paint("held", "expired — will refresh on next use")
+        : theme.paint("ok", "valid");
+      console.log(`credential: subscription token  ${state}`);
+      console.log(theme.paint("dim", `            ${path}`));
+      return EXIT.ok;
+    }
+
+    if (config.provider === "openai") {
+      const local = config.baseUrl !== undefined && /localhost|127\.0\.0\.1/.test(config.baseUrl);
+      const key = process.env.OPENAI_API_KEY;
+      console.log(`endpoint:   ${config.baseUrl ?? "https://api.openai.com/v1"}`);
+      if (key) {
+        console.log(`credential: ${theme.paint("ok", "OPENAI_API_KEY")}`);
+        return EXIT.ok;
+      }
+      if (local) {
+        console.log(
+          `credential: ${theme.paint("ok", "none needed")} ${theme.paint("dim", "(local endpoint)")}`,
+        );
+        return EXIT.ok;
+      }
+      console.log(`credential: ${theme.paint("held", "none")}`);
+      console.log("");
+      console.log("  export OPENAI_API_KEY=...   # or point baseUrl at a local host");
+      return EXIT.error;
+    }
+
+    const dir = configDir(process.env, process.platform, homedir());
+    const profiles = await listProfiles(dir);
+    const source = credentialSource(process.env, profiles);
+
+    const label =
+      source.kind === "profile"
+        ? theme.paint("ok", `OAuth profile "${source.profile}"`)
+        : source.kind === "api_key"
+          ? theme.paint("ok", "ANTHROPIC_API_KEY")
+          : source.kind === "auth_token"
+            ? theme.paint("ok", "ANTHROPIC_AUTH_TOKEN")
+            : theme.paint("held", "none");
+
+    console.log(`credential: ${label}`);
+    console.log(theme.paint("dim", `            ${source.note}`));
+    console.log(theme.paint("dim", `profiles:   ${profiles.length > 0 ? profiles.join(", ") : "none"} (${dir})`));
+
+    if (source.kind === "none" || source.kind === "missing_profile") {
+      console.log("");
+      console.log("Vesna reads whatever the Anthropic SDK reads. Either:");
+      console.log("  export ANTHROPIC_API_KEY=...");
+      console.log("  ant auth login          # OAuth, refreshed automatically, no static key");
+      return EXIT.error;
+    }
+    return EXIT.ok;
+  }
+
+
+}
+
 export async function main(argv: string[]): Promise<number> {
   const [command, target, ...rest] = argv;
   const root = process.cwd();
   const flags = parseFlags(rest);
+  // Signing in must not require a working provider, so auth commands are served
+  // from config alone, before buildContext tries to construct one.
+  const earlyConfig = await loadConfig(root);
+  const earlyTheme = resolveTheme(earlyConfig.theme, {
+    color: colorSupported(process.env, Boolean(process.stdout.isTTY)),
+  });
+  if (command === "auth") return await authCommand(target, earlyConfig, earlyTheme, root);
+
   const { registry, store, config, provider, theme } = await buildContext(root);
   const permit = (node: { use: string }) => config.permissions.nodes.includes(node.use);
 
@@ -183,56 +333,6 @@ export async function main(argv: string[]): Promise<number> {
     await writeFile(path, toYaml(flow));
     console.log(theme.paint("ok", `Wrote ${path}`));
     console.log(theme.paint("dim", `next: vesna run ${flow.name} --dry-run`));
-    return EXIT.ok;
-  }
-
-  if (command === "auth") {
-    console.log(`provider:   ${theme.paint("accent", config.provider)}  model ${config.model}`);
-
-    if (config.provider === "openai") {
-      const local = config.baseUrl !== undefined && /localhost|127\.0\.0\.1/.test(config.baseUrl);
-      const key = process.env.OPENAI_API_KEY;
-      console.log(`endpoint:   ${config.baseUrl ?? "https://api.openai.com/v1"}`);
-      if (key) {
-        console.log(`credential: ${theme.paint("ok", "OPENAI_API_KEY")}`);
-        return EXIT.ok;
-      }
-      if (local) {
-        console.log(
-          `credential: ${theme.paint("ok", "none needed")} ${theme.paint("dim", "(local endpoint)")}`,
-        );
-        return EXIT.ok;
-      }
-      console.log(`credential: ${theme.paint("held", "none")}`);
-      console.log("");
-      console.log("  export OPENAI_API_KEY=...   # or point baseUrl at a local host");
-      return EXIT.error;
-    }
-
-    const dir = configDir(process.env, process.platform, homedir());
-    const profiles = await listProfiles(dir);
-    const source = credentialSource(process.env, profiles);
-
-    const label =
-      source.kind === "profile"
-        ? theme.paint("ok", `OAuth profile "${source.profile}"`)
-        : source.kind === "api_key"
-          ? theme.paint("ok", "ANTHROPIC_API_KEY")
-          : source.kind === "auth_token"
-            ? theme.paint("ok", "ANTHROPIC_AUTH_TOKEN")
-            : theme.paint("held", "none");
-
-    console.log(`credential: ${label}`);
-    console.log(theme.paint("dim", `            ${source.note}`));
-    console.log(theme.paint("dim", `profiles:   ${profiles.length > 0 ? profiles.join(", ") : "none"} (${dir})`));
-
-    if (source.kind === "none" || source.kind === "missing_profile") {
-      console.log("");
-      console.log("Vesna reads whatever the Anthropic SDK reads. Either:");
-      console.log("  export ANTHROPIC_API_KEY=...");
-      console.log("  ant auth login          # OAuth, refreshed automatically, no static key");
-      return EXIT.error;
-    }
     return EXIT.ok;
   }
 

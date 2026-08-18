@@ -140,8 +140,37 @@ export ANTHROPIC_API_KEY=...   # a static key
 ant auth login                 # or OAuth: refreshed automatically, no key to manage
 ```
 
-For the OpenAI-compatible provider, set `OPENAI_API_KEY` — or point `baseUrl` at
-a local host, which needs no credential at all.
+For the OpenAI provider, set `OPENAI_API_KEY` — or point `baseUrl` at a local
+host, which needs no credential at all.
+
+A ChatGPT subscription is an authentication *mode* of the same provider rather
+than a provider of its own. It is opted into, and needs an OAuth client of your
+own: Vesna ships no client identity, its own or anyone else's.
+
+```yaml
+provider: openai
+auth: subscription
+oauth:
+  issuer: https://auth.openai.com
+  clientId: <your client id>
+  baseUrl: https://chatgpt.com/backend-api/codex
+```
+
+```console
+$ vesna auth login
+How would you like to sign in?
+  1  browser      opens https://auth.openai.com
+  2  headless     print the URL to open elsewhere
+  3  API key      paste a key instead
+```
+
+Every screen in the browser is the provider's; the only page Vesna serves is the
+one you land on afterwards. Tokens go to `~/.config/vesna/auth.json` at mode 600
+and are refreshed automatically.
+
+A subscription token is accepted only by the Responses endpoint, so Vesna
+switches wire format with the auth mode — that is why this is a mode and not
+just a different key.
 
 `vesna auth` reports which one will actually be used — including the common trap
 where a stale `ANTHROPIC_API_KEY` silently shadows an OAuth profile you thought

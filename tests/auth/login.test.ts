@@ -19,7 +19,7 @@ test("the whole browser flow ends in a stored credential", async () => {
   const opened: string[] = [];
   try {
     const auth = await browserLogin(
-      { issuer: issuer.url, clientId: "cid", provider: "chatgpt" },
+      { issuer: issuer.url, clientId: "cid", provider: "openai" },
       {
         async openBrowser(url) {
           opened.push(url);
@@ -30,7 +30,7 @@ test("the whole browser flow ends in a stored credential", async () => {
       },
     );
 
-    expect(auth.provider).toBe("chatgpt");
+    expect(auth.provider).toBe("openai");
     expect(auth.accessToken).toBe("at");
     expect(auth.refreshToken).toBe("rt");
     expect(auth.expiresAt).toBeGreaterThan(Date.now());
@@ -44,7 +44,7 @@ test("the browser is sent to the issuer's authorize page with a loopback redirec
   const opened: string[] = [];
   try {
     await browserLogin(
-      { issuer: issuer.url, clientId: "cid", provider: "chatgpt", scope: "openid" },
+      { issuer: issuer.url, clientId: "cid", provider: "openai", scope: "openid" },
       {
         async openBrowser(url) {
           opened.push(url);
@@ -70,7 +70,7 @@ test("the exchange sends the verifier that matches the challenge", async () => {
   const issuer = fakeIssuer();
   try {
     await browserLogin(
-      { issuer: issuer.url, clientId: "cid", provider: "chatgpt" },
+      { issuer: issuer.url, clientId: "cid", provider: "openai" },
       {
         async openBrowser(url) {
           const parsed = new URL(url);
@@ -92,7 +92,7 @@ test("a mismatched state is rejected — that check is the point of state", asyn
   try {
     await expect(
       browserLogin(
-        { issuer: issuer.url, clientId: "cid", provider: "chatgpt" },
+        { issuer: issuer.url, clientId: "cid", provider: "openai" },
         {
           async openBrowser(url) {
             const redirect = new URL(url).searchParams.get("redirect_uri")!;
@@ -111,7 +111,7 @@ test("a denied authorisation surfaces the provider's error", async () => {
   try {
     await expect(
       browserLogin(
-        { issuer: issuer.url, clientId: "cid", provider: "chatgpt" },
+        { issuer: issuer.url, clientId: "cid", provider: "openai" },
         {
           async openBrowser(url) {
             const redirect = new URL(url).searchParams.get("redirect_uri")!;
