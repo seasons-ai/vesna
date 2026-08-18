@@ -31,6 +31,8 @@ export interface RunOptions {
   retries?: number;
   /** Receipts already recorded for this row; external nodes present here are not re-run. */
   receipts?: Record<string, Receipt>;
+  /** Send an interrupted external effect again, once a human has checked. */
+  retryAttempted?: boolean;
 }
 
 export async function runFlow(
@@ -56,6 +58,17 @@ export async function runFlow(
     const node = byId.get(id)!;
     const started = Date.now();
 
+    if (ctx.signal.aborted) {
+      outcomes.push({
+        id,
+        status: "held",
+        error: { class: "node_error", message: "interrupted before this node ran" },
+        assertions: [],
+        durationMs: 0,
+      });
+      return { status: "held", nodes: outcomes };
+    }
+
     if (options.permit && !options.permit(node)) {
       outcomes.push({
         id,
@@ -76,7 +89,24 @@ export async function runFlow(
 
     // The receipt invariant: an external effect that already happened is never
     // repeated. Its recorded output is reused and re-checked instead.
-    if (effect === "external" && existing) {
+    if (effect === "external" && existing?.status === "attempted" && !options.retryAttempted) {
+      outcomes.push({
+        id,
+        status: "held",
+        error: {
+          class: "node_error",
+          message:
+            `${id} was interrupted mid-call, so whether the effect landed is unknown. ` +
+            "Check, then re-run with retryAttempted to send it again.",
+        },
+        assertions: [],
+        receipt: existing,
+        durationMs: 0,
+      });
+      return { status: "held", nodes: outcomes };
+    }
+
+    if (effect === "external" && existing?.status === "confirmed") {
       const replayed = evaluateAssertions(node.assert ?? [], { ...scope, out: existing.output });
       const replayFailed = replayed.filter((outcome) => !outcome.passed);
       if (replayFailed.length > 0) {
@@ -118,11 +148,19 @@ export async function runFlow(
     }
 
     if (!succeeded) {
+      // An external call that failed may still have landed. Recording the
+      // attempt is the only honest thing: repair must not guess either way.
+      const attempted: Receipt | undefined =
+        effect === "external"
+          ? { nodeId: id, at: new Date().toISOString(), output: null, status: "attempted" }
+          : undefined;
+
       outcomes.push({
         id,
         status: "held",
         error: { class: "node_error", message: (lastError as Error).message },
         assertions: [],
+        receipt: attempted,
         durationMs: Date.now() - started,
       });
       return { status: "held", nodes: outcomes };
@@ -144,7 +182,9 @@ export async function runFlow(
     }
 
     const receipt: Receipt | undefined =
-      effect === "external" ? { nodeId: id, at: new Date().toISOString(), output } : undefined;
+      effect === "external"
+        ? { nodeId: id, at: new Date().toISOString(), output, status: "confirmed" }
+        : undefined;
 
     scope[id] = output;
     outcomes.push({

@@ -56,6 +56,9 @@ export function createAnthropicProvider(options: { apiKey?: string } = {}): Prov
         messages: toAnthropicMessages(request.messages) as any,
       });
 
+      // Abort the open stream rather than waiting for a turn nobody wants.
+      request.signal?.addEventListener("abort", () => stream.abort(), { once: true });
+
       // The stream was already open; the deltas were simply being discarded.
       if (request.onText) stream.on("text", (delta: string) => request.onText!(delta));
 

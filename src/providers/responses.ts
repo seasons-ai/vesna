@@ -106,6 +106,7 @@ export function createResponsesProvider(options: ResponsesProviderOptions): Prov
 
       const response = await fetch(`${baseUrl}/responses`, {
         method: "POST",
+        signal: request.signal,
         headers: {
           "content-type": "application/json",
           authorization: `Bearer ${token}`,

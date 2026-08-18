@@ -33,6 +33,7 @@ export interface CompletionRequest {
   maxTokens?: number;
   /** Called with each text delta. Providers without streaming never call it. */
   onText?: (delta: string) => void;
+  signal?: AbortSignal;
 }
 
 export interface CompletionResult {

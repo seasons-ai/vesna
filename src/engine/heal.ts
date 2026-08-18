@@ -6,6 +6,8 @@ import type { Receipt } from "./receipt";
 import { runFlow, type RunResult } from "./run";
 
 export interface HealOptions extends FanoutOptions {
+  /** Re-send effects whose outcome was left unknown by an interrupt. */
+  retryAttempted?: boolean;
   repair?: (inputs: Record<string, unknown>, row: RowResult) => Record<string, unknown>;
 }
 

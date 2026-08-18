@@ -46,7 +46,7 @@ test("a node with an existing receipt is not re-executed", async () => {
   const counter = { sent: 0 };
   const registry = sendingRegistry(counter);
   const receipts = {
-    send: { nodeId: "send", at: "2026-08-18T00:00:00Z", output: { messageId: "m1" } },
+    send: { nodeId: "send", at: "2026-08-18T00:00:00Z", output: { messageId: "m1" }, status: "confirmed" as const },
   };
 
   const result = await runFlow(parseFlow(FLOW), registry, { fail: false }, { receipts });

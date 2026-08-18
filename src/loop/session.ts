@@ -21,6 +21,8 @@ export interface SessionOptions {
   onStep?: (step: TraceStep) => void;
   /** Called as the model produces text, so a chat can render while it types. */
   onText?: (delta: string) => void;
+  /** Cancels the turn: the provider request, and the loop between tool calls. */
+  signal?: AbortSignal;
 }
 
 export interface TurnResult {
@@ -56,7 +58,7 @@ export function createSession(
   const messages: AgentMessage[] = [];
   const steps: TraceStep[] = [];
   const usage: Usage = { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0 };
-  const ctx = { cwd: options.cwd, signal: new AbortController().signal };
+  const ctx = { cwd: options.cwd, signal: options.signal ?? new AbortController().signal };
 
   let firstPrompt = "";
   let lastText = "";
@@ -69,11 +71,13 @@ export function createSession(
     let turnText = "";
 
     for (let turn = 0; turn < maxTurns; turn += 1) {
+      if (options.signal?.aborted) break;
       const response = await provider.complete({
         model,
         messages,
         tools,
         onText: options.onText,
+        signal: options.signal,
       });
 
       usage.inputTokens += response.usage.inputTokens;

@@ -115,6 +115,7 @@ export function createOpenAICompatibleProvider(options: OpenAICompatibleOptions 
     async complete(request: CompletionRequest): Promise<CompletionResult> {
       const response = await fetch(`${baseUrl}/chat/completions`, {
         method: "POST",
+        signal: request.signal,
         headers: {
           "content-type": "application/json",
           ...(apiKey ? { authorization: `Bearer ${apiKey}` } : {}),
