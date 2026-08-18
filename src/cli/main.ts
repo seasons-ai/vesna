@@ -1,7 +1,7 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { stringify as toYaml } from "yaml";
-import { proposeFlow } from "../crystallize/propose";
+import { proposeFlow, type ProposedParameter } from "../crystallize/propose";
 import { parseCsv } from "../engine/csv";
 import { runMapped } from "../engine/fanout";
 import { healRun } from "../engine/heal";
@@ -19,6 +19,15 @@ function parseFlags(args: string[]): Record<string, string> {
     }
   }
   return flags;
+}
+
+/**
+ * Renders a proposal line. The arrow points at the exact template the flow
+ * language accepts, because that is what a human copies into the file.
+ */
+export function formatParameter(parameter: ProposedParameter): string {
+  const sites = parameter.sites.map((site) => `${site.nodeId}.${site.field}`).join(", ");
+  return `"${parameter.literal}"  ->  \${inputs.${parameter.suggestedName}}   at ${sites}`;
 }
 
 const USAGE = [
@@ -81,8 +90,7 @@ export async function main(argv: string[]): Promise<void> {
       console.log("  (none found)");
     }
     for (const parameter of proposal.parameters) {
-      const sites = parameter.sites.map((s) => `${s.nodeId}.${s.field}`).join(", ");
-      console.log(`  "${parameter.literal}"  ->  \${{inputs.${parameter.suggestedName}}}   at ${sites}`);
+      console.log(`  ${formatParameter(parameter)}`);
     }
 
     await mkdir(join(root, ".agent", "flows"), { recursive: true });
