@@ -7,6 +7,7 @@ import type {
   ToolSpec,
 } from "./types";
 import { textOf } from "./types";
+import { parseSseLines } from "./sse";
 
 /**
  * The Responses dialect. A ChatGPT subscription token is accepted only here —
@@ -120,6 +121,7 @@ export function createResponsesProvider(options: ResponsesProviderOptions): Prov
           ...(request.maxTokens ?? options.maxTokens
             ? { max_output_tokens: request.maxTokens ?? options.maxTokens }
             : {}),
+          ...(request.onText ? { stream: true } : {}),
         }),
       });
 
@@ -128,7 +130,12 @@ export function createResponsesProvider(options: ResponsesProviderOptions): Prov
         throw new Error(`${this.id} returned ${response.status}: ${detail}`);
       }
 
-      const body: any = await response.json();
+      // Streaming carries the finished response in `response.completed`, so the
+      // fragments of a function call never have to be reassembled by hand.
+      const body: any = request.onText
+        ? await readStreamedResponse(response, request.onText, this.id)
+        : await response.json();
+
       const usage = body.usage ?? {};
 
       return {
@@ -144,4 +151,35 @@ export function createResponsesProvider(options: ResponsesProviderOptions): Prov
       };
     },
   };
+}
+
+async function readStreamedResponse(
+  response: Response,
+  onText: (delta: string) => void,
+  id: string,
+): Promise<any> {
+  if (!response.body) throw new Error(`${id} returned an empty stream`);
+
+  let final: any = null;
+
+  for await (const payload of parseSseLines(response.body)) {
+    let event: any;
+    try {
+      event = JSON.parse(payload);
+    } catch {
+      continue; // one bad frame must not cost the rest of the answer
+    }
+
+    if (event.type === "response.output_text.delta" && typeof event.delta === "string") {
+      onText(event.delta);
+    } else if (event.type === "response.completed") {
+      final = event.response;
+    } else if (event.type === "response.failed" || event.type === "response.incomplete") {
+      const detail = event.response?.error?.message ?? event.type;
+      throw new Error(`${id} did not complete: ${detail}`);
+    }
+  }
+
+  if (final === null) throw new Error(`${id} stream ended without a completed response`);
+  return final;
 }

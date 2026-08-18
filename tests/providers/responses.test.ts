@@ -1,5 +1,6 @@
 import { test, expect } from "bun:test";
 import {
+  createResponsesProvider,
   fromResponsesOutput,
   toResponsesInput,
   toResponsesTools,
@@ -89,4 +90,97 @@ test("a refusal block is surfaced as text, not silently dropped", () => {
 
 test("unknown item types are ignored rather than crashing the parse", () => {
   expect(fromResponsesOutput([{ type: "reasoning", summary: [] } as any])).toEqual([]);
+});
+
+function sseServer(frames: string[]) {
+  let sentBody: any;
+  const server = Bun.serve({
+    port: 0,
+    async fetch(request) {
+      sentBody = await request.json();
+      return new Response(
+        new ReadableStream({
+          start(controller) {
+            const encoder = new TextEncoder();
+            for (const frame of frames) controller.enqueue(encoder.encode(frame));
+            controller.close();
+          },
+        }),
+        { headers: { "content-type": "text/event-stream" } },
+      );
+    },
+  });
+  return { server, url: `http://localhost:${server.port}`, body: () => sentBody };
+}
+
+test("streaming: text deltas arrive live and the final response is parsed", async () => {
+  const host = sseServer([
+    'data: {"type":"response.output_text.delta","delta":"Read"}\n\n',
+    'data: {"type":"response.output_text.delta","delta":"ing."}\n\n',
+    'data: {"type":"response.completed","response":{"model":"gpt-5.5","status":"completed",' +
+      '"output":[{"type":"message","role":"assistant","content":[{"type":"output_text","text":"Reading."}]},' +
+      '{"type":"function_call","call_id":"c1","name":"read","arguments":"{\\"path\\":\\"a.txt\\"}"}],' +
+      '"usage":{"input_tokens":9,"output_tokens":4}}}\n\n',
+    "data: [DONE]\n\n",
+  ]);
+
+  try {
+    const deltas: string[] = [];
+    const result = await createResponsesProvider({
+      baseUrl: host.url,
+      token: async () => "tok",
+    }).complete({
+      model: "gpt-5.5",
+      messages: [{ role: "user", content: [{ type: "text", text: "read a.txt" }] }],
+      onText: (delta) => deltas.push(delta),
+    });
+
+    expect(host.body().stream).toBe(true);
+    expect(deltas).toEqual(["Read", "ing."]);
+    expect(result.content).toEqual([
+      { type: "text", text: "Reading." },
+      { type: "tool_call", id: "c1", name: "read", input: { path: "a.txt" } },
+    ]);
+    expect(result.usage.inputTokens).toBe(9);
+    expect(result.model).toBe("gpt-5.5");
+  } finally {
+    host.server.stop(true);
+  }
+});
+
+test("streaming: a failed response surfaces its error rather than an empty turn", async () => {
+  const host = sseServer([
+    'data: {"type":"response.failed","response":{"error":{"message":"model overloaded"}}}\n\n',
+    "data: [DONE]\n\n",
+  ]);
+  try {
+    await expect(
+      createResponsesProvider({ baseUrl: host.url, token: async () => "t" }).complete({
+        model: "m",
+        messages: [{ role: "user", content: [] }],
+        onText: () => {},
+      }),
+    ).rejects.toThrow(/model overloaded/);
+  } finally {
+    host.server.stop(true);
+  }
+});
+
+test("without onText the request stays non-streaming", async () => {
+  const server = Bun.serve({
+    port: 0,
+    async fetch(request) {
+      const body = await request.json();
+      return Response.json({ output: [], stream_echo: body.stream ?? null });
+    },
+  });
+  try {
+    const result = await createResponsesProvider({
+      baseUrl: `http://localhost:${server.port}`,
+      token: async () => "t",
+    }).complete({ model: "m", messages: [{ role: "user", content: [] }] });
+    expect(result.content).toEqual([]);
+  } finally {
+    server.stop(true);
+  }
 });
