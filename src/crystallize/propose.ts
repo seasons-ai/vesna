@@ -17,9 +17,21 @@ export interface ProposedParameter {
   sites: ParameterSite[];
 }
 
+export interface DroppedStep {
+  nodeType: string;
+  input: Record<string, unknown>;
+}
+
 export interface Proposal {
   flow: Flow;
   parameters: ProposedParameter[];
+  /**
+   * Steps the answer turned out not to depend on. Usually the model read
+   * something and then paraphrased it instead of passing the value along, so
+   * there is no data path to follow. Dropping them is right; doing it quietly
+   * is not — the flow would be shorter than the run with no explanation.
+   */
+  dropped: DroppedStep[];
 }
 
 export function synthesizeAssertions(output: unknown): Assertion[] {
@@ -118,5 +130,10 @@ export function proposeFlow(trace: LiveTrace, name: string): Proposal {
     parameters.push({ literal, suggestedName, sites });
   }
 
-  return { flow: { name, inputs: {}, nodes }, parameters };
+  const kept = new Set(steps);
+  const dropped: DroppedStep[] = trace.steps
+    .filter((step) => !kept.has(step))
+    .map((step) => ({ nodeType: step.nodeType, input: step.input }));
+
+  return { flow: { name, inputs: {}, nodes }, parameters, dropped };
 }

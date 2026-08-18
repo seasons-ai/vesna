@@ -14,6 +14,7 @@ import type { VesnaConfig } from "./config";
 import { CHAT_COMMANDS, parseChatInput } from "./chatcmd";
 import { EXIT } from "./exit";
 import { formatParameter } from "./format";
+import { describeDropped } from "./dropped";
 
 export interface ChatDeps {
   registry: Registry;
@@ -187,6 +188,7 @@ async function crystallize(
   for (const parameter of proposal.parameters) {
     console.log(theme.paint("dim", `  ${formatParameter(parameter)}`));
   }
+  for (const line of describeDropped(proposal.dropped, theme)) console.log(line);
   console.log(theme.paint("ok", `  wrote ${path}`));
   console.log(theme.paint("dim", `  trace ${traceId} · try: vesna run ${flow.name} --dry-run`));
 }

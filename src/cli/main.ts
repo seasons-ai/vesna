@@ -22,6 +22,7 @@ import { runChat } from "./chat";
 import { buildContext, CODEX_BASE_URL } from "./context";
 import { EXIT } from "./exit";
 import { formatParameter } from "./format";
+import { describeDropped } from "./dropped";
 import { diagnose } from "./doctor";
 import { planRun, summarizeFlow } from "./inspect";
 
@@ -350,6 +351,7 @@ export async function main(argv: string[]): Promise<number> {
     await mkdir(join(root, ".vesna", "flows"), { recursive: true });
     const path = join(root, ".vesna", "flows", `${flow.name}.yaml`);
     await writeFile(path, toYaml(flow));
+    for (const line of describeDropped(proposal.dropped, theme)) console.log(line);
     console.log(theme.paint("ok", `Wrote ${path}`));
     console.log(theme.paint("dim", `next: vesna run ${flow.name} --dry-run`));
     return EXIT.ok;
