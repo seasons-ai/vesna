@@ -1,4 +1,4 @@
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, readFile, readdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { stringify as toYaml } from "yaml";
 import { proposeFlow, type ProposedParameter } from "../crystallize/propose";
@@ -10,6 +10,7 @@ import { runLive } from "../loop/loop";
 import { buildContext } from "./context";
 import { EXIT } from "./exit";
 import { diagnose } from "./doctor";
+import { planRun, summarizeFlow } from "./inspect";
 
 function parseFlags(args: string[]): Record<string, string> {
   const flags: Record<string, string> = {};
@@ -38,7 +39,11 @@ const USAGE = [
   "  vesna run <flow> [--map rows.csv] [--<input> <value>]",
   "  vesna heal <run-id> --flow <flow>",
   "  vesna crystallize <trace-id|file> --name <flow>",
+  "  vesna flows                             list crystallised flows",
+  "  vesna traces                            list recorded live traces",
   "  vesna doctor",
+  "",
+  "  --dry-run on `run` validates and prints the plan without executing",
 ].join("\n");
 
 async function loadFlowFile(root: string, name: string) {
@@ -76,13 +81,37 @@ export async function main(argv: string[]): Promise<number> {
     const flow = await loadFlowFile(root, target);
     const rows = flags.map
       ? parseCsv(await readFile(join(root, flags.map), "utf8"))
-      : [Object.fromEntries(Object.entries(flags).filter(([key]) => key !== "map"))];
+      : [
+          Object.fromEntries(
+            Object.entries(flags).filter(([key]) => key !== "map" && key !== "dry-run"),
+          ),
+        ];
+
+    if (flags["dry-run"]) {
+      const plan = planRun(flow, registry, rows[0] ?? {});
+      console.log(`${flow.name}  ${rows.length} row${rows.length === 1 ? "" : "s"}`);
+      console.log(`  order:    ${plan.order.join(" -> ")}`);
+      console.log(`  external: ${plan.external.length > 0 ? plan.external.join(", ") : "none"}`);
+      console.log(`  model:    ${plan.model.length > 0 ? plan.model.join(", ") : "none"}`);
+      if (plan.external.length > 0) {
+        console.log(
+          `\n  ${plan.external.length * rows.length} external effect(s) would happen across ${rows.length} row(s).`,
+        );
+      }
+      return EXIT.ok;
+    }
 
     const summary = await runMapped(flow, registry, rows, {
       store,
       permit,
       cwd: root,
       retries: 1,
+      onRow: (row, done, total) => {
+        if (total > 1) {
+          const mark = row.result.status === "ok" ? "ok  " : "held";
+          console.log(`  [${done}/${total}] ${mark} row ${row.index}`);
+        }
+      },
     });
     console.log(`${summary.runId}: ${summary.ok} ok · ${summary.held} held`);
     for (const row of summary.rows.filter((r) => r.result.status === "held")) {
@@ -123,6 +152,44 @@ export async function main(argv: string[]): Promise<number> {
     const path = join(root, ".agent", "flows", `${proposal.flow.name}.yaml`);
     await writeFile(path, toYaml(proposal.flow));
     console.log(`Wrote ${path}`);
+    return EXIT.ok;
+  }
+
+  if (command === "flows") {
+    let files: string[];
+    try {
+      files = (await readdir(join(root, ".agent", "flows"))).filter((f) => f.endsWith(".yaml"));
+    } catch {
+      files = [];
+    }
+    if (files.length === 0) {
+      console.log("no flows yet — `vesna do \"<task>\"` then `vesna crystallize <id>`");
+      return EXIT.ok;
+    }
+    for (const file of files.sort()) {
+      const flow = parseFlow(await readFile(join(root, ".agent", "flows", file), "utf8"));
+      const summary = summarizeFlow(flow);
+      const inputs = summary.inputs
+        .map((input) => (input.required ? input.name : `${input.name}?`))
+        .join(", ");
+      console.log(`${summary.name}  (${summary.nodes.length} nodes)  inputs: ${inputs || "none"}`);
+    }
+    return EXIT.ok;
+  }
+
+  if (command === "traces") {
+    const ids = await store.listLiveTraces();
+    if (ids.length === 0) {
+      console.log("no live traces yet — run `vesna do \"<task>\"`");
+      return EXIT.ok;
+    }
+    for (const id of ids) {
+      const trace = await store.readLiveTrace(id);
+      const prompt = trace.prompt.length > 56 ? `${trace.prompt.slice(0, 53)}...` : trace.prompt;
+      console.log(
+        `${id}  ${String(trace.steps.length).padStart(2)} steps  $${trace.costUsd.toFixed(4)}  ${prompt}`,
+      );
+    }
     return EXIT.ok;
   }
 

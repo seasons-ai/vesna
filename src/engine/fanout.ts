@@ -19,6 +19,8 @@ export interface FanoutSummary {
 export interface FanoutOptions extends RunOptions {
   concurrency?: number;
   store?: TraceStore;
+  /** Called as each row settles, so a front end can show progress live. */
+  onRow?: (row: RowResult, done: number, total: number) => void;
 }
 
 export async function runMapped(
@@ -44,6 +46,7 @@ export async function runMapped(
       const row: RowResult = { index, inputs, result };
       results.push(row);
       await options.store?.writeRow(runId, row);
+      options.onRow?.(row, results.length, rows.length);
     }
   }
 
