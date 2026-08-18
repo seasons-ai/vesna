@@ -32,12 +32,19 @@ export interface TurnResult {
   steps: TraceStep[];
 }
 
+/** Per-turn overrides. A chat binds fresh hooks and a fresh signal each turn. */
+export interface TurnOptions {
+  signal?: AbortSignal;
+  onText?: (delta: string) => void;
+  onStep?: (step: TraceStep) => void;
+}
+
 export interface Session {
   readonly messages: AgentMessage[];
   readonly steps: TraceStep[];
   readonly usage: Usage;
   readonly costUsd: number;
-  send(text: string): Promise<TurnResult>;
+  send(text: string, turn?: TurnOptions): Promise<TurnResult>;
   toTrace(): Promise<LiveTrace>;
 }
 
@@ -58,12 +65,16 @@ export function createSession(
   const messages: AgentMessage[] = [];
   const steps: TraceStep[] = [];
   const usage: Usage = { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0 };
-  const ctx = { cwd: options.cwd, signal: options.signal ?? new AbortController().signal };
 
   let firstPrompt = "";
   let lastText = "";
 
-  async function send(text: string): Promise<TurnResult> {
+  async function send(text: string, turnOptions: TurnOptions = {}): Promise<TurnResult> {
+    const signal = turnOptions.signal ?? options.signal;
+    const onText = turnOptions.onText ?? options.onText;
+    const onStep = turnOptions.onStep ?? options.onStep;
+    const ctx = { cwd: options.cwd, signal: signal ?? new AbortController().signal };
+
     if (firstPrompt === "") firstPrompt = text;
     messages.push({ role: "user", content: [{ type: "text", text }] });
 
@@ -71,13 +82,13 @@ export function createSession(
     let turnText = "";
 
     for (let turn = 0; turn < maxTurns; turn += 1) {
-      if (options.signal?.aborted) break;
+      if (signal?.aborted) break;
       const response = await provider.complete({
         model,
         messages,
         tools,
-        onText: options.onText,
-        signal: options.signal,
+        onText,
+        signal,
       });
 
       usage.inputTokens += response.usage.inputTokens;
@@ -130,7 +141,7 @@ export function createSession(
           };
           steps.push(step);
           turnSteps.push(step);
-          options.onStep?.(step);
+          onStep?.(step);
           results.push({ type: "tool_result", callId: use.id, content: JSON.stringify(output) });
         } catch (error) {
           results.push({

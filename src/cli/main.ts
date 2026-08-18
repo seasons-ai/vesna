@@ -17,8 +17,10 @@ import { authPath, isExpired, loadAuth, saveAuth } from "../auth/store";
 import { configDir, credentialSource, listProfiles } from "./auth";
 import { loadConfig, type VesnaConfig } from "./config";
 import { colorSupported, resolveTheme, type Theme } from "../tui/theme";
+import { runChat } from "./chat";
 import { buildContext } from "./context";
 import { EXIT } from "./exit";
+import { formatParameter } from "./format";
 import { diagnose } from "./doctor";
 import { planRun, summarizeFlow } from "./inspect";
 
@@ -34,17 +36,9 @@ function parseFlags(args: string[]): Record<string, string> {
   return flags;
 }
 
-/**
- * Renders a proposal line. The arrow points at the exact template the flow
- * language accepts, because that is what a human copies into the file.
- */
-export function formatParameter(parameter: ProposedParameter): string {
-  const sites = parameter.sites.map((site) => `${site.nodeId}.${site.field}`).join(", ");
-  return `"${parameter.literal}"  ->  \${inputs.${parameter.suggestedName}}   at ${sites}`;
-}
-
 const USAGE = [
   "usage:",
+  "  vesna chat                              talk to the agent, then /crystallize",
   "  vesna do \"<task>\"                       solve a task live and record a trace",
   "  vesna run <flow> [--map rows.csv] [--<input> <value>]",
   "  vesna heal <run-id> --flow <flow>",
@@ -213,6 +207,10 @@ export async function main(argv: string[]): Promise<number> {
 
   const { registry, store, config, provider, theme } = await buildContext(root);
   const permit = (node: { use: string }) => config.permissions.nodes.includes(node.use);
+
+  if (command === "chat") {
+    return await runChat({ registry, provider, store, config, theme, root });
+  }
 
   if (command === "do" && target) {
     const started = Date.now();

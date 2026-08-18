@@ -21,7 +21,28 @@ tests, but it is early. See [What is not built yet](#what-is-not-built-yet).
 
 ## The thing it does
 
-Solve something once, live:
+Talk to it, get it right, then freeze it:
+
+```console
+$ vesna chat
+vesna · claude-opus-5 · /help for commands, ctrl-c to interrupt
+
+› read reports/acme.txt and write a summary to out/acme.md
+  · read      12ms
+  · write      4ms
+
+Wrote the summary.
+
+› /crystallize client-report
+  "reports/acme.txt"  ->  ${inputs.source}   at read_1.path
+  wrote .vesna/flows/client-report.yaml
+```
+
+`/crystallize` is the point of the conversation: you iterate until the agent
+does the thing correctly, then that exact run becomes a flow you can replay over
+two hundred rows without a model in the loop.
+
+Or in one shot, without the conversation:
 
 ```console
 $ vesna do "summarise reports/acme.txt into out/acme.md"

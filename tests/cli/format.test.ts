@@ -1,5 +1,5 @@
 import { test, expect } from "bun:test";
-import { formatParameter } from "../../src/cli/main";
+import { formatParameter } from "../../src/cli/format";
 import { resolveInput } from "../../src/expr/resolve";
 
 const parameter = {
