@@ -5,6 +5,7 @@ import type { Flow, FlowNode } from "../flow/types";
 import type { Registry } from "../registry/types";
 import type { EngineError } from "./errors";
 import { topologicalOrder } from "./order";
+import { effectOf, type Receipt } from "./receipt";
 
 export type NodeStatus = "ok" | "held" | "failed";
 
@@ -14,6 +15,7 @@ export interface NodeOutcome {
   output?: unknown;
   error?: EngineError;
   assertions: AssertionOutcome[];
+  receipt?: Receipt;
   durationMs: number;
 }
 
@@ -27,6 +29,8 @@ export interface RunOptions {
   signal?: AbortSignal;
   permit?: (node: FlowNode) => boolean;
   retries?: number;
+  /** Receipts already recorded for this row; external nodes present here are not re-run. */
+  receipts?: Record<string, Receipt>;
 }
 
 export async function runFlow(
@@ -67,6 +71,38 @@ export async function runFlow(
     }
 
     const definition = registry.get(node.use)!;
+    const effect = effectOf(node, definition);
+    const existing = options.receipts?.[id];
+
+    // The receipt invariant: an external effect that already happened is never
+    // repeated. Its recorded output is reused and re-checked instead.
+    if (effect === "external" && existing) {
+      const replayed = evaluateAssertions(node.assert ?? [], { ...scope, out: existing.output });
+      const replayFailed = replayed.filter((outcome) => !outcome.passed);
+      if (replayFailed.length > 0) {
+        outcomes.push({
+          id,
+          status: "held",
+          output: existing.output,
+          error: { class: "assert_failed", message: replayFailed.map((f) => f.detail).join("; ") },
+          assertions: replayed,
+          receipt: existing,
+          durationMs: 0,
+        });
+        return { status: "held", nodes: outcomes };
+      }
+      scope[id] = existing.output;
+      outcomes.push({
+        id,
+        status: "ok",
+        output: existing.output,
+        assertions: replayed,
+        receipt: existing,
+        durationMs: 0,
+      });
+      continue;
+    }
+
     let output: unknown;
     let lastError: unknown;
     let succeeded = false;
@@ -107,8 +143,18 @@ export async function runFlow(
       return { status: "held", nodes: outcomes };
     }
 
+    const receipt: Receipt | undefined =
+      effect === "external" ? { nodeId: id, at: new Date().toISOString(), output } : undefined;
+
     scope[id] = output;
-    outcomes.push({ id, status: "ok", output, assertions, durationMs: Date.now() - started });
+    outcomes.push({
+      id,
+      status: "ok",
+      output,
+      assertions,
+      receipt,
+      durationMs: Date.now() - started,
+    });
   }
 
   return { status: "ok", nodes: outcomes };
