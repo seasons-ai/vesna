@@ -3,6 +3,12 @@
   "version": "0.1.0",
   "type": "module",
   "private": true,
+  "license": "Apache-2.0",
+  "description": "An agent that turns its own work into deterministic, reviewable workflows.",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/lookoff-dev/vesna.git"
+  },
   "bin": {
     "vesna": "./bin/vesna"
   },

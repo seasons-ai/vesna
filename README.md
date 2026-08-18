@@ -223,3 +223,10 @@ The engine is tested against a fake registry, so DAG execution, fan-out,
 `held`/`heal` and the receipt invariant all run in milliseconds and offline. The
 crystallizer is tested against fixture traces. Only the provider adapter touches
 the network, and nothing in the suite does.
+
+---
+
+## Licence
+
+[Apache License 2.0](LICENSE). Contributions are welcome — see
+[CONTRIBUTING.md](CONTRIBUTING.md); writing a node is the shortest path in.
