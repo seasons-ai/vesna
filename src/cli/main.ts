@@ -108,10 +108,13 @@ export async function main(argv: string[]): Promise<void> {
       console.log("no runs recorded yet");
       return;
     }
+    const width = Math.max(...health.map((node) => node.nodeId.length));
     for (const node of health) {
-      const rate = (node.assertionPassRate * 100).toFixed(0);
+      const rate = `${(node.assertionPassRate * 100).toFixed(0)}%`.padStart(4);
       const cost = node.avgCostUsd.toFixed(4);
-      console.log(`${node.nodeId}  runs ${node.runs}  asserts ${rate}%  $${cost}/run`);
+      console.log(
+        `${node.nodeId.padEnd(width)}  runs ${node.runs}  asserts ${rate}  $${cost}/run`,
+      );
     }
     return;
   }
