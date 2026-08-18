@@ -6,7 +6,16 @@ import { DEFAULT_MODEL } from "../providers/types";
 
 export type ProviderId = "anthropic" | "openai";
 
-export type AuthMode = "key" | "subscription";
+/**
+ * `codex` reuses the credentials the Codex CLI already holds, so there is no
+ * sign-in flow and no client identity to supply; `subscription` is Vesna's own
+ * OAuth, for whoever brings one.
+ */
+export type AuthMode = "key" | "subscription" | "codex";
+
+/** What the Codex subscription endpoint serves today. */
+export const CODEX_DEFAULT_MODEL = "gpt-5.6-sol";
+const AUTH_MODES: AuthMode[] = ["key", "subscription", "codex"];
 
 export interface VesnaConfig {
   provider: ProviderId;
@@ -34,10 +43,11 @@ export async function loadConfig(root: string): Promise<VesnaConfig> {
     raw = {};
   }
   const provider: ProviderId = raw.provider === "openai" ? "openai" : "anthropic";
+  const auth: AuthMode = AUTH_MODES.includes(raw.auth) ? raw.auth : "key";
   return {
     provider,
-    auth: raw.auth === "subscription" ? "subscription" : "key",
-    model: raw.model ?? (provider === "anthropic" ? DEFAULT_MODEL : "gpt-4o-mini"),
+    auth,
+    model: raw.model ?? defaultModel(provider, auth),
     baseUrl: raw.baseUrl,
     theme: raw.theme ?? "vesna",
     prices: raw.prices ?? {},
@@ -45,4 +55,9 @@ export async function loadConfig(root: string): Promise<VesnaConfig> {
     // Permissions are the registry: no node, no capability.
     permissions: { nodes: raw.permissions?.nodes ?? ["read", "write", "shell", "script", "llm"] },
   };
+}
+
+function defaultModel(provider: ProviderId, auth: AuthMode): string {
+  if (provider === "anthropic") return DEFAULT_MODEL;
+  return auth === "codex" ? CODEX_DEFAULT_MODEL : "gpt-4o-mini";
 }

@@ -94,6 +94,8 @@ export interface ResponsesProviderOptions {
   id?: string;
   /** Sent as chatgpt-account-id when the endpoint requires it. */
   accountId?: string;
+  /** The subscription endpoint serves streaming responses only. */
+  alwaysStream?: boolean;
   maxTokens?: number;
 }
 
@@ -104,6 +106,7 @@ export function createResponsesProvider(options: ResponsesProviderOptions): Prov
     id: options.id ?? "responses",
     async complete(request: CompletionRequest): Promise<CompletionResult> {
       const token = await options.token();
+      const onText = request.onText ?? (options.alwaysStream ? () => {} : undefined);
 
       const response = await fetch(`${baseUrl}/responses`, {
         method: "POST",
@@ -117,11 +120,14 @@ export function createResponsesProvider(options: ResponsesProviderOptions): Prov
           model: request.model,
           ...(request.system ? { instructions: request.system } : {}),
           input: toResponsesInput(request.messages),
+          // The subscription endpoint rejects anything else, and not retaining
+          // turns server-side is the right default for the API path too.
+          store: false,
           ...(request.tools ? { tools: toResponsesTools(request.tools) } : {}),
           ...(request.maxTokens ?? options.maxTokens
             ? { max_output_tokens: request.maxTokens ?? options.maxTokens }
             : {}),
-          ...(request.onText ? { stream: true } : {}),
+          ...(onText ? { stream: true } : {}),
         }),
       });
 
@@ -130,10 +136,10 @@ export function createResponsesProvider(options: ResponsesProviderOptions): Prov
         throw new Error(`${this.id} returned ${response.status}: ${detail}`);
       }
 
-      // Streaming carries the finished response in `response.completed`, so the
-      // fragments of a function call never have to be reassembled by hand.
-      const body: any = request.onText
-        ? await readStreamedResponse(response, request.onText, this.id)
+      // Each item is delivered whole when it finishes, so the fragments of a
+      // function call never have to be reassembled by hand.
+      const body: any = onText
+        ? await readStreamedResponse(response, onText, this.id)
         : await response.json();
 
       const usage = body.usage ?? {};
@@ -161,6 +167,7 @@ async function readStreamedResponse(
   if (!response.body) throw new Error(`${id} returned an empty stream`);
 
   let final: any = null;
+  const items: { index: number; item: any }[] = [];
 
   for await (const payload of parseSseLines(response.body)) {
     let event: any;
@@ -172,6 +179,8 @@ async function readStreamedResponse(
 
     if (event.type === "response.output_text.delta" && typeof event.delta === "string") {
       onText(event.delta);
+    } else if (event.type === "response.output_item.done" && event.item) {
+      items.push({ index: event.output_index ?? items.length, item: event.item });
     } else if (event.type === "response.completed") {
       final = event.response;
     } else if (event.type === "response.failed" || event.type === "response.incomplete") {
@@ -181,5 +190,12 @@ async function readStreamedResponse(
   }
 
   if (final === null) throw new Error(`${id} stream ended without a completed response`);
+
+  // With store:false the completed event carries an empty output, so the items
+  // gathered on the way are the only record of the turn.
+  if (!Array.isArray(final.output) || final.output.length === 0) {
+    items.sort((a, b) => a.index - b.index);
+    return { ...final, output: items.map((entry) => entry.item) };
+  }
   return final;
 }

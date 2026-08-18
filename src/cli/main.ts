@@ -14,11 +14,12 @@ import { progressBar } from "../tui/render";
 import { createStdioPrompt, isInteractive } from "../tui/stdio";
 import { browserLogin } from "../auth/login";
 import { authPath, isExpired, loadAuth, saveAuth } from "../auth/store";
+import { codexAuthPath, readCodexAuth } from "../auth/codex";
 import { configDir, credentialSource, listProfiles } from "./auth";
 import { loadConfig, type VesnaConfig } from "./config";
 import { colorSupported, resolveTheme, type Theme } from "../tui/theme";
 import { runChat } from "./chat";
-import { buildContext } from "./context";
+import { buildContext, CODEX_BASE_URL } from "./context";
 import { EXIT } from "./exit";
 import { formatParameter } from "./format";
 import { diagnose } from "./doctor";
@@ -124,6 +125,26 @@ async function authCommand(
 
   {
     console.log(`provider:   ${theme.paint("accent", config.provider)}  model ${config.model}`);
+
+    if (config.provider === "openai" && config.auth === "codex") {
+      const path = codexAuthPath(process.env, homedir());
+      const auth = await readCodexAuth(path);
+      console.log(`endpoint:   ${config.baseUrl ?? CODEX_BASE_URL}`);
+      if (auth?.accessToken === undefined) {
+        console.log(`credential: ${theme.paint("held", "no codex subscription token")}`);
+        console.log("");
+        console.log("  codex login");
+        return EXIT.error;
+      }
+      const expired = auth.expiresAt !== undefined && auth.expiresAt <= Date.now();
+      console.log(
+        `credential: borrowed from codex  ${
+          expired ? theme.paint("held", "expired — run `codex login`") : theme.paint("ok", "valid")
+        }`,
+      );
+      console.log(theme.paint("dim", `            ${path} (read-only)`));
+      return expired ? EXIT.error : EXIT.ok;
+    }
 
     if (config.provider === "openai" && config.auth === "subscription") {
       const path = authPath(process.env, homedir());

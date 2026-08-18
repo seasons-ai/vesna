@@ -184,3 +184,86 @@ test("without onText the request stays non-streaming", async () => {
     server.stop(true);
   }
 });
+
+test("alwaysStream streams even when nobody is listening for deltas", async () => {
+  const host = sseServer([
+    'data: {"type":"response.output_text.delta","delta":"hi"}\n\n',
+    'data: {"type":"response.completed","response":{"output":[{"type":"message","role":"assistant",' +
+      '"content":[{"type":"output_text","text":"hi"}]}]}}\n\n',
+  ]);
+  try {
+    const result = await createResponsesProvider({
+      baseUrl: host.url,
+      token: async () => "t",
+      alwaysStream: true,
+    }).complete({ model: "m", messages: [{ role: "user", content: [] }] });
+
+    expect(host.body().stream).toBe(true);
+    expect(result.content).toEqual([{ type: "text", text: "hi" }]);
+  } finally {
+    host.server.stop(true);
+  }
+});
+
+test("responses are never retained server-side", async () => {
+  const host = sseServer([
+    'data: {"type":"response.completed","response":{"output":[]}}\n\n',
+  ]);
+  try {
+    await createResponsesProvider({ baseUrl: host.url, token: async () => "t" }).complete({
+      model: "m",
+      messages: [{ role: "user", content: [] }],
+      onText: () => {},
+    });
+    expect(host.body().store).toBe(false);
+  } finally {
+    host.server.stop(true);
+  }
+});
+
+test("with store:false the completed event carries an empty output, so items are collected as they finish", async () => {
+  // Verified against the live subscription endpoint: response.completed arrives
+  // with output:[] there, and the turn exists only in the per-item events.
+  const host = sseServer([
+    'data: {"type":"response.output_item.done","output_index":1,"item":' +
+      '{"type":"function_call","call_id":"c1","name":"read","arguments":"{\\"path\\":\\"a.txt\\"}"}}\n\n',
+    'data: {"type":"response.output_item.done","output_index":0,"item":' +
+      '{"type":"message","role":"assistant","content":[{"type":"output_text","text":"Reading."}]}}\n\n',
+    'data: {"type":"response.completed","response":{"output":[],"usage":{"input_tokens":13,"output_tokens":8}}}\n\n',
+  ]);
+  try {
+    const result = await createResponsesProvider({
+      baseUrl: host.url,
+      token: async () => "t",
+      alwaysStream: true,
+    }).complete({ model: "m", messages: [{ role: "user", content: [] }] });
+
+    // Ordered by output_index, not by arrival.
+    expect(result.content).toEqual([
+      { type: "text", text: "Reading." },
+      { type: "tool_call", id: "c1", name: "read", input: { path: "a.txt" } },
+    ]);
+    expect(result.usage.inputTokens).toBe(13);
+  } finally {
+    host.server.stop(true);
+  }
+});
+
+test("a populated completed output still wins, so the stored path is unaffected", async () => {
+  const host = sseServer([
+    'data: {"type":"response.output_item.done","output_index":0,"item":' +
+      '{"type":"message","role":"assistant","content":[{"type":"output_text","text":"partial"}]}}\n\n',
+    'data: {"type":"response.completed","response":{"output":[{"type":"message","role":"assistant",' +
+      '"content":[{"type":"output_text","text":"final"}]}]}}\n\n',
+  ]);
+  try {
+    const result = await createResponsesProvider({
+      baseUrl: host.url,
+      token: async () => "t",
+      alwaysStream: true,
+    }).complete({ model: "m", messages: [{ role: "user", content: [] }] });
+    expect(result.content).toEqual([{ type: "text", text: "final" }]);
+  } finally {
+    host.server.stop(true);
+  }
+});
