@@ -73,3 +73,30 @@ test("validateInputs rejects a missing required input", () => {
   expect(() => validateInputs(flow, {})).toThrow(ContractError);
   expect(() => validateInputs(flow, { client: "Acme" })).not.toThrow();
 });
+
+test("a template inside an inline mapping explains itself instead of dumping YAML internals", () => {
+  const broken = `
+name: f
+inputs: {}
+nodes:
+  - { id: a, use: read, in: { path: reports/\${inputs.client}.txt } }
+`;
+  let message = "";
+  try {
+    parseFlow(broken);
+  } catch (error) {
+    message = (error as Error).message;
+  }
+  expect(message).toContain("${");
+  expect(message.toLowerCase()).toContain("quote");
+});
+
+test("the same template parses fine when quoted", () => {
+  const fixed = `
+name: f
+inputs: {}
+nodes:
+  - { id: a, use: read, in: { path: "reports/\${inputs.client}.txt" } }
+`;
+  expect(parseFlow(fixed).nodes[0]!.in.path).toBe("reports/${inputs.client}.txt");
+});

@@ -11,7 +11,22 @@ export class ContractError extends Error {
 }
 
 export function parseFlow(source: string): Flow {
-  const raw = parseYaml(source);
+  let raw: any;
+  try {
+    raw = parseYaml(source);
+  } catch (error) {
+    // `${...}` opens a nested structure inside an inline YAML mapping, so a
+    // template there fails to parse with a message about YAML internals that
+    // says nothing about the actual mistake.
+    if (source.includes("${")) {
+      throw new ContractError(
+        `${(error as Error).message}\n\n` +
+          "A \${...} template inside an inline { } mapping must be quoted, " +
+          'for example: in: { path: "reports/${inputs.client}.txt" }',
+      );
+    }
+    throw new ContractError((error as Error).message);
+  }
   if (raw === null || typeof raw !== "object") throw new ContractError("flow must be a mapping");
   if (typeof raw.name !== "string" || raw.name.length === 0) {
     throw new ContractError("flow requires a name");
