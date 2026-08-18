@@ -19,6 +19,8 @@ export interface SessionOptions {
   permit?: (type: string) => boolean;
   prices?: Record<string, ModelPrice>;
   onStep?: (step: TraceStep) => void;
+  /** Called as the model produces text, so a chat can render while it types. */
+  onText?: (delta: string) => void;
 }
 
 export interface TurnResult {
@@ -67,7 +69,12 @@ export function createSession(
     let turnText = "";
 
     for (let turn = 0; turn < maxTurns; turn += 1) {
-      const response = await provider.complete({ model, messages, tools });
+      const response = await provider.complete({
+        model,
+        messages,
+        tools,
+        onText: options.onText,
+      });
 
       usage.inputTokens += response.usage.inputTokens;
       usage.outputTokens += response.usage.outputTokens;

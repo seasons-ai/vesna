@@ -136,3 +136,73 @@ test("no api key means no authorization header, which is how local hosts work", 
     host.stop();
   }
 });
+
+test("streaming: deltas arrive live and the turn assembles correctly", async () => {
+  const frames = [
+    'data: {"model":"gpt-test","choices":[{"delta":{"content":"Read"}}]}\n\n',
+    'data: {"choices":[{"delta":{"content":"ing it."}}]}\n\n',
+    'data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"c1","function":{"name":"read","arguments":"{\\"path\\""}}]}}]}\n\n',
+    'data: {"choices":[{"delta":{"tool_calls":[{"index":0,"function":{"arguments":":\\"a.txt\\"}"}}]},"finish_reason":"tool_calls"}]}\n\n',
+    'data: {"usage":{"prompt_tokens":11,"completion_tokens":4}}\n\n',
+    "data: [DONE]\n\n",
+  ];
+  let sentBody: any;
+  const server = Bun.serve({
+    port: 0,
+    async fetch(request) {
+      sentBody = await request.json();
+      return new Response(
+        new ReadableStream({
+          start(controller) {
+            const encoder = new TextEncoder();
+            for (const frame of frames) controller.enqueue(encoder.encode(frame));
+            controller.close();
+          },
+        }),
+        { headers: { "content-type": "text/event-stream" } },
+      );
+    },
+  });
+
+  try {
+    const deltas: string[] = [];
+    const result = await createOpenAICompatibleProvider({
+      baseUrl: `http://localhost:${server.port}/v1`,
+    }).complete({
+      model: "gpt-test",
+      messages: [{ role: "user", content: [{ type: "text", text: "read a.txt" }] }],
+      onText: (delta) => deltas.push(delta),
+    });
+
+    expect(sentBody.stream).toBe(true);
+    expect(deltas).toEqual(["Read", "ing it."]);
+    expect(result.content).toEqual([
+      { type: "text", text: "Reading it." },
+      { type: "tool_call", id: "c1", name: "read", input: { path: "a.txt" } },
+    ]);
+    expect(result.stopReason).toBe("tool_calls");
+    expect(result.usage.inputTokens).toBe(11);
+  } finally {
+    server.stop(true);
+  }
+});
+
+test("without onText the request is not a stream", async () => {
+  let sentBody: any;
+  const server = Bun.serve({
+    port: 0,
+    async fetch(request) {
+      sentBody = await request.json();
+      return Response.json({ choices: [{ message: { role: "assistant", content: "ok" } }] });
+    },
+  });
+  try {
+    await createOpenAICompatibleProvider({ baseUrl: `http://localhost:${server.port}/v1` }).complete({
+      model: "m",
+      messages: [{ role: "user", content: [{ type: "text", text: "hi" }] }],
+    });
+    expect(sentBody.stream).toBeUndefined();
+  } finally {
+    server.stop(true);
+  }
+});

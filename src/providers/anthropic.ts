@@ -56,6 +56,9 @@ export function createAnthropicProvider(options: { apiKey?: string } = {}): Prov
         messages: toAnthropicMessages(request.messages) as any,
       });
 
+      // The stream was already open; the deltas were simply being discarded.
+      if (request.onText) stream.on("text", (delta: string) => request.onText!(delta));
+
       const message = await stream.finalMessage();
 
       return {

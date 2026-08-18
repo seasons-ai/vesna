@@ -7,6 +7,7 @@ import type {
   ToolSpec,
 } from "./types";
 import { textOf } from "./types";
+import { accumulateChatStream } from "./sse";
 
 /**
  * Speaks the OpenAI chat-completions dialect over plain fetch. That protocol is
@@ -123,12 +124,29 @@ export function createOpenAICompatibleProvider(options: OpenAICompatibleOptions 
           max_tokens: request.maxTokens ?? options.maxTokens ?? 8192,
           messages: toOpenAIMessages(request.messages, request.system),
           ...(request.tools ? { tools: toOpenAITools(request.tools) } : {}),
+          ...(request.onText ? { stream: true, stream_options: { include_usage: true } } : {}),
         }),
       });
 
       if (!response.ok) {
         const detail = (await response.text()).slice(0, 400);
         throw new Error(`${this.id} returned ${response.status}: ${detail}`);
+      }
+
+      if (request.onText) {
+        if (!response.body) throw new Error(`${this.id} returned an empty stream`);
+        const streamed = await accumulateChatStream(response.body, request.onText);
+        return {
+          content: fromOpenAIMessage(streamed.message),
+          stopReason: streamed.finishReason,
+          model: streamed.model ?? request.model,
+          usage: {
+            inputTokens: streamed.usage.prompt_tokens ?? 0,
+            outputTokens: streamed.usage.completion_tokens ?? 0,
+            cacheReadTokens: streamed.usage.prompt_tokens_details?.cached_tokens ?? 0,
+            cacheWriteTokens: 0,
+          },
+        };
       }
 
       const body: any = await response.json();

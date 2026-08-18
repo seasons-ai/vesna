@@ -31,6 +31,8 @@ export interface CompletionRequest {
   messages: AgentMessage[];
   tools?: ToolSpec[];
   maxTokens?: number;
+  /** Called with each text delta. Providers without streaming never call it. */
+  onText?: (delta: string) => void;
 }
 
 export interface CompletionResult {
