@@ -1,5 +1,5 @@
 node_modules/
 dist/
-.agent/traces/
+.vesna/traces/
 *.log
 .DS_Store

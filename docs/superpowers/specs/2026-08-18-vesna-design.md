@@ -119,7 +119,7 @@ nodes:
     in: { to: $.inputs.client, body: $.summary.text }
 ```
 
-Flow files live in `.agent/flows/` and are committed to git, so a change to an
+Flow files live in `.vesna/flows/` and are committed to git, so a change to an
 automation arrives as a reviewable diff.
 
 ### 4.4 Nodes are the single extension point
@@ -170,7 +170,7 @@ flows can be authored by hand.
 ### 5.1 Project layout
 
 ```
-.agent/
+.vesna/
   flows/       *.yaml — crystals, committed and reviewed in PRs
   nodes/       project-local nodes
   memory/      markdown artifacts
@@ -227,7 +227,7 @@ wakes the model for held rows only, on the failed node only, with the expectatio
 and the actual value in context. On success Vesna offers to update the node, and
 the next run is deterministic again.
 
-Per-row state is persisted under `.agent/traces/<run-id>/`, so `heal` survives a
+Per-row state is persisted under `.vesna/traces/<run-id>/`, so `heal` survives a
 closed terminal.
 
 ### 6.4 The receipt invariant

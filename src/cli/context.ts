@@ -17,7 +17,7 @@ export async function buildContext(root: string) {
   const registry = createRegistry();
   registerBuiltins(registry);
   registry.register(createLlmNode(provider, config.prices));
-  const store = createTraceStore(join(root, ".agent", "traces"));
+  const store = createTraceStore(join(root, ".vesna", "traces"));
   const theme = resolveTheme(config.theme, {
     color: colorSupported(process.env, Boolean(process.stdout.isTTY)),
   });

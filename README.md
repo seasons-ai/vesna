@@ -42,7 +42,7 @@ $ vesna crystallize live_msyz1k_a7f2c9 --name client-report
 Proposed parameters — confirm before applying:
   "reports/acme.txt"  ->  ${inputs.path}   at read_1.path
   "out/acme.md"  ->  ${inputs.write_2_path}   at write_2.path
-Wrote .agent/flows/client-report.yaml
+Wrote .vesna/flows/client-report.yaml
 ```
 
 In a terminal, `crystallize` walks the proposed parameters with you — accept,
@@ -107,7 +107,7 @@ each adapter translates at the edge — so a flow written against one model runs
 against another.
 
 ```yaml
-# .agent/config.yaml
+# .vesna/config.yaml
 provider: anthropic
 model: claude-opus-5
 ```
@@ -194,7 +194,7 @@ nodes:
 larger string interpolates. Both contribute to execution order, so a node that
 reads `out/${parse.name}.md` runs after `parse`.
 
-Flow files live in `.agent/flows/` and are committed, so a change to an
+Flow files live in `.vesna/flows/` and are committed, so a change to an
 automation arrives as a reviewable diff.
 
 ### Assertions make failure loud
@@ -269,7 +269,7 @@ class honestly — it is what the receipt rule keys on.
 ## Layout
 
 ```
-.agent/
+.vesna/
   flows/       *.yaml — crystals, committed and reviewed in pull requests
   traces/      runs, cost, assertion outcomes — gitignored
   config.yaml  model and permissions

@@ -20,7 +20,7 @@ export interface VesnaConfig {
 export async function loadConfig(root: string): Promise<VesnaConfig> {
   let raw: any = {};
   try {
-    raw = parseYaml(await readFile(join(root, ".agent", "config.yaml"), "utf8")) ?? {};
+    raw = parseYaml(await readFile(join(root, ".vesna", "config.yaml"), "utf8")) ?? {};
   } catch {
     raw = {};
   }

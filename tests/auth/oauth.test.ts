@@ -1,5 +1,5 @@
 import { test, expect } from "bun:test";
-import { authorizeUrl, exchangeCode, generatePkce } from "../../src/auth/oauth";
+import { authorizeUrl, exchangeCode, generatePkce, refreshTokens } from "../../src/auth/oauth";
 
 test("the verifier and challenge follow RFC 7636 S256", async () => {
   const pkce = generatePkce();
@@ -94,6 +94,48 @@ test("a rejected exchange reports the provider's own error", async () => {
         verifier: "v",
       }),
     ).rejects.toThrow(/invalid_grant/);
+  } finally {
+    server.stop(true);
+  }
+});
+
+test("a refresh exchanges the refresh token for a new access token", async () => {
+  const seen: string[] = [];
+  const server = Bun.serve({
+    port: 0,
+    async fetch(request) {
+      seen.push(await request.text());
+      return Response.json({ access_token: "new-at", refresh_token: "new-rt", expires_in: 60 });
+    },
+  });
+  try {
+    const tokens = await refreshTokens({
+      issuer: `http://localhost:${server.port}`,
+      clientId: "cid",
+      refreshToken: "old-rt",
+    });
+    const sent = new URLSearchParams(seen[0]!);
+    expect(sent.get("grant_type")).toBe("refresh_token");
+    expect(sent.get("refresh_token")).toBe("old-rt");
+    expect(tokens.accessToken).toBe("new-at");
+    expect(tokens.refreshToken).toBe("new-rt");
+  } finally {
+    server.stop(true);
+  }
+});
+
+test("a refresh that keeps the old token does not lose it", async () => {
+  const server = Bun.serve({
+    port: 0,
+    fetch: () => Response.json({ access_token: "new-at", expires_in: 60 }),
+  });
+  try {
+    const tokens = await refreshTokens({
+      issuer: `http://localhost:${server.port}`,
+      clientId: "cid",
+      refreshToken: "keep-me",
+    });
+    expect(tokens.refreshToken).toBe("keep-me");
   } finally {
     server.stop(true);
   }

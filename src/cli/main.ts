@@ -54,7 +54,7 @@ const USAGE = [
 ].join("\n");
 
 async function loadFlowFile(root: string, name: string) {
-  return parseFlow(await readFile(join(root, ".agent", "flows", `${name}.yaml`), "utf8"));
+  return parseFlow(await readFile(join(root, ".vesna", "flows", `${name}.yaml`), "utf8"));
 }
 
 export async function main(argv: string[]): Promise<number> {
@@ -178,8 +178,8 @@ export async function main(argv: string[]): Promise<number> {
 
     const flow = applyParameters(proposal.flow, proposal.parameters, accepted);
 
-    await mkdir(join(root, ".agent", "flows"), { recursive: true });
-    const path = join(root, ".agent", "flows", `${flow.name}.yaml`);
+    await mkdir(join(root, ".vesna", "flows"), { recursive: true });
+    const path = join(root, ".vesna", "flows", `${flow.name}.yaml`);
     await writeFile(path, toYaml(flow));
     console.log(theme.paint("ok", `Wrote ${path}`));
     console.log(theme.paint("dim", `next: vesna run ${flow.name} --dry-run`));
@@ -239,7 +239,7 @@ export async function main(argv: string[]): Promise<number> {
   if (command === "flows") {
     let files: string[];
     try {
-      files = (await readdir(join(root, ".agent", "flows"))).filter((f) => f.endsWith(".yaml"));
+      files = (await readdir(join(root, ".vesna", "flows"))).filter((f) => f.endsWith(".yaml"));
     } catch {
       files = [];
     }
@@ -248,7 +248,7 @@ export async function main(argv: string[]): Promise<number> {
       return EXIT.ok;
     }
     for (const file of files.sort()) {
-      const flow = parseFlow(await readFile(join(root, ".agent", "flows", file), "utf8"));
+      const flow = parseFlow(await readFile(join(root, ".vesna", "flows", file), "utf8"));
       const summary = summarizeFlow(flow);
       const inputs = summary.inputs
         .map((input) => (input.required ? input.name : `${input.name}?`))

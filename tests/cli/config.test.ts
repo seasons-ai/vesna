@@ -20,11 +20,11 @@ test("defaults to claude-opus-5 when there is no config file", async () => {
   });
 });
 
-test("reads model and permissions from .agent/config.yaml", async () => {
+test("reads model and permissions from .vesna/config.yaml", async () => {
   await withRoot(async (root) => {
-    await mkdir(join(root, ".agent"), { recursive: true });
+    await mkdir(join(root, ".vesna"), { recursive: true });
     await writeFile(
-      join(root, ".agent", "config.yaml"),
+      join(root, ".vesna", "config.yaml"),
       "model: claude-sonnet-5\npermissions:\n  nodes: [read, write]\n",
     );
     const config = await loadConfig(root);
@@ -43,9 +43,9 @@ test("defaults to the anthropic provider", async () => {
 
 test("an openai-compatible endpoint is configured by provider and baseUrl", async () => {
   await withRoot(async (root) => {
-    await mkdir(join(root, ".agent"), { recursive: true });
+    await mkdir(join(root, ".vesna"), { recursive: true });
     await writeFile(
-      join(root, ".agent", "config.yaml"),
+      join(root, ".vesna", "config.yaml"),
       [
         "provider: openai",
         "model: llama3.1",

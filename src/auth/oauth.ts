@@ -78,3 +78,35 @@ export async function exchangeCode(params: ExchangeParams): Promise<Tokens> {
       typeof body.expires_in === "number" ? Date.now() + body.expires_in * 1000 : undefined,
   };
 }
+
+export interface RefreshParams {
+  issuer: string;
+  clientId: string;
+  refreshToken: string;
+}
+
+export async function refreshTokens(params: RefreshParams): Promise<Tokens> {
+  const response = await fetch(new URL("/oauth/token", params.issuer), {
+    method: "POST",
+    headers: { "content-type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({
+      grant_type: "refresh_token",
+      client_id: params.clientId,
+      refresh_token: params.refreshToken,
+    }),
+  });
+
+  const text = await response.text();
+  if (!response.ok) throw new Error(`token refresh failed (${response.status}): ${text}`);
+
+  const body = JSON.parse(text);
+  return {
+    accessToken: body.access_token,
+    // Providers may rotate the refresh token or keep the old one. Losing it
+    // here would force the user to sign in again on the next expiry.
+    refreshToken: body.refresh_token ?? params.refreshToken,
+    idToken: body.id_token,
+    expiresAt:
+      typeof body.expires_in === "number" ? Date.now() + body.expires_in * 1000 : undefined,
+  };
+}

@@ -56,7 +56,7 @@ test("do -> crystallize -> run -> heal composes end to end, with no network", as
 
     const registry = createRegistry();
     registerBuiltins(registry);
-    const store = createTraceStore(join(root, ".agent", "traces"));
+    const store = createTraceStore(join(root, ".vesna", "traces"));
 
     // 1. Solve it live.
     const trace = await runLive(
