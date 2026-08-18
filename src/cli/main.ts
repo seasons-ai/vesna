@@ -81,9 +81,8 @@ export async function main(argv: string[]): Promise<void> {
       console.log("  (none found)");
     }
     for (const parameter of proposal.parameters) {
-      console.log(
-        `  ${parameter.nodeId}.${parameter.field} = "${parameter.literal}"  ->  $.inputs.${parameter.suggestedName}`,
-      );
+      const sites = parameter.sites.map((s) => `${s.nodeId}.${s.field}`).join(", ");
+      console.log(`  "${parameter.literal}"  ->  \${{inputs.${parameter.suggestedName}}}   at ${sites}`);
     }
 
     await mkdir(join(root, ".agent", "flows"), { recursive: true });

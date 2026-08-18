@@ -3,11 +3,18 @@ import type { Flow, FlowNode } from "../flow/types";
 import type { LiveTrace } from "../loop/trace";
 import { reachableSteps } from "./reachability";
 
-export interface ProposedParameter {
+export interface ParameterSite {
   nodeId: string;
   field: string;
+}
+
+export interface ProposedParameter {
+  /** The literal observed in the trace. */
   literal: string;
+  /** A unique name for the flow input this literal would become. */
   suggestedName: string;
+  /** Every place the literal appeared. One literal is one input, used in many places. */
+  sites: ParameterSite[];
 }
 
 export interface Proposal {
@@ -42,13 +49,17 @@ export function synthesizeAssertions(output: unknown): Assertion[] {
  */
 export function proposeFlow(trace: LiveTrace, name: string): Proposal {
   const steps = reachableSteps(trace);
-  const parameters: ProposedParameter[] = [];
+
+  // One literal is one input, however many places it appears in.
+  const byLiteral = new Map<string, ParameterSite[]>();
 
   const nodes: FlowNode[] = steps.map((step, index) => {
     const id = `${step.nodeType}_${index + 1}`;
     for (const [field, value] of Object.entries(step.input)) {
       if (typeof value === "string" && value.length > 0 && trace.prompt.includes(value)) {
-        parameters.push({ nodeId: id, field, literal: value, suggestedName: field });
+        const sites = byLiteral.get(value) ?? [];
+        sites.push({ nodeId: id, field });
+        byLiteral.set(value, sites);
       }
     }
     return {
@@ -58,6 +69,23 @@ export function proposeFlow(trace: LiveTrace, name: string): Proposal {
       assert: synthesizeAssertions(step.output),
     };
   });
+
+  // Names must be unique: two different literals on a `path` field would
+  // otherwise both propose `$.inputs.path` and silently collapse into one input.
+  const taken = new Set<string>();
+  const parameters: ProposedParameter[] = [];
+
+  for (const [literal, sites] of byLiteral) {
+    const first = sites[0]!;
+    const candidates = [first.field, `${first.nodeId}_${first.field}`];
+    let suggestedName = candidates.find((candidate) => !taken.has(candidate));
+    for (let suffix = 2; suggestedName === undefined; suffix += 1) {
+      const candidate = `${first.field}_${suffix}`;
+      if (!taken.has(candidate)) suggestedName = candidate;
+    }
+    taken.add(suggestedName);
+    parameters.push({ literal, suggestedName, sites });
+  }
 
   return { flow: { name, inputs: {}, nodes }, parameters };
 }
