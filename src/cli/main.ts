@@ -1,4 +1,5 @@
 import { mkdir, readFile, readdir, writeFile } from "node:fs/promises";
+import { homedir } from "node:os";
 import { join } from "node:path";
 import { stringify as toYaml } from "yaml";
 import { applyParameters } from "../crystallize/apply";
@@ -11,6 +12,7 @@ import { runLive } from "../loop/loop";
 import { confirmParameters } from "../tui/prompt";
 import { progressBar } from "../tui/render";
 import { createStdioPrompt, isInteractive } from "../tui/stdio";
+import { configDir, credentialSource, listProfiles } from "./auth";
 import { buildContext } from "./context";
 import { EXIT } from "./exit";
 import { diagnose } from "./doctor";
@@ -45,6 +47,7 @@ const USAGE = [
   "  vesna crystallize <trace-id|file> --name <flow>",
   "  vesna flows                             list crystallised flows",
   "  vesna traces                            list recorded live traces",
+  "  vesna auth                              show which model credentials will be used",
   "  vesna doctor",
   "",
   "  --dry-run on `run` validates and prints the plan without executing",
@@ -179,6 +182,34 @@ export async function main(argv: string[]): Promise<number> {
     await writeFile(path, toYaml(flow));
     console.log(theme.paint("ok", `Wrote ${path}`));
     console.log(theme.paint("dim", `next: vesna run ${flow.name} --dry-run`));
+    return EXIT.ok;
+  }
+
+  if (command === "auth") {
+    const dir = configDir(process.env, process.platform, homedir());
+    const profiles = await listProfiles(dir);
+    const source = credentialSource(process.env, profiles);
+
+    const label =
+      source.kind === "profile"
+        ? theme.paint("ok", `OAuth profile "${source.profile}"`)
+        : source.kind === "api_key"
+          ? theme.paint("ok", "ANTHROPIC_API_KEY")
+          : source.kind === "auth_token"
+            ? theme.paint("ok", "ANTHROPIC_AUTH_TOKEN")
+            : theme.paint("held", "none");
+
+    console.log(`credential: ${label}`);
+    console.log(theme.paint("dim", `            ${source.note}`));
+    console.log(theme.paint("dim", `profiles:   ${profiles.length > 0 ? profiles.join(", ") : "none"} (${dir})`));
+
+    if (source.kind === "none" || source.kind === "missing_profile") {
+      console.log("");
+      console.log("Vesna reads whatever the Anthropic SDK reads. Either:");
+      console.log("  export ANTHROPIC_API_KEY=...");
+      console.log("  ant auth login          # OAuth, refreshed automatically, no static key");
+      return EXIT.error;
+    }
     return EXIT.ok;
   }
 

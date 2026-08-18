@@ -100,8 +100,33 @@ bun install
 bun test
 ```
 
-Set `ANTHROPIC_API_KEY` for anything that calls a model. Nothing else does —
-the engine, the fan-out, and the repair path all run offline.
+### Credentials
+
+Only `vesna do` calls a model. The engine, the fan-out, and the repair path all
+run offline, so most of Vesna needs no credentials at all.
+
+Vesna reads whatever the Anthropic SDK reads, in the SDK's own order:
+
+```bash
+export ANTHROPIC_API_KEY=...   # a static key
+ant auth login                 # or OAuth: refreshed automatically, no key to manage
+```
+
+`vesna auth` reports which one will actually be used — including the common trap
+where a stale `ANTHROPIC_API_KEY` silently shadows an OAuth profile you thought
+you were using.
+
+```console
+$ vesna auth
+credential: OAuth profile "default"
+            OAuth profile from `ant auth login`
+profiles:   default (~/.config/anthropic)
+```
+
+Subscription credentials from Claude Pro or Max are a different mechanism and
+are not supported: a consumer subscription covers Anthropic's own products, not
+third-party software. `ant auth login` gives the same key-free experience through
+the developer platform.
 
 ---
 
