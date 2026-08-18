@@ -32,3 +32,32 @@ test("reads model and permissions from .agent/config.yaml", async () => {
     expect(config.permissions.nodes).toEqual(["read", "write"]);
   });
 });
+
+test("defaults to the anthropic provider", async () => {
+  await withRoot(async (root) => {
+    const config = await loadConfig(root);
+    expect(config.provider).toBe("anthropic");
+    expect(config.baseUrl).toBeUndefined();
+  });
+});
+
+test("an openai-compatible endpoint is configured by provider and baseUrl", async () => {
+  await withRoot(async (root) => {
+    await mkdir(join(root, ".agent"), { recursive: true });
+    await writeFile(
+      join(root, ".agent", "config.yaml"),
+      [
+        "provider: openai",
+        "model: llama3.1",
+        "baseUrl: http://localhost:11434/v1",
+        "prices:",
+        '  llama3.1: { input: 0, output: 0 }',
+      ].join("\n"),
+    );
+    const config = await loadConfig(root);
+    expect(config.provider).toBe("openai");
+    expect(config.model).toBe("llama3.1");
+    expect(config.baseUrl).toBe("http://localhost:11434/v1");
+    expect(config.prices["llama3.1"]).toEqual({ input: 0, output: 0 });
+  });
+});

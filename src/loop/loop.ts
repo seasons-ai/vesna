@@ -1,5 +1,13 @@
-import { estimateCostUsd } from "../providers/cost";
-import { DEFAULT_MODEL, type Provider, type Usage } from "../providers/types";
+import { estimateCostUsd, type ModelPrice } from "../providers/cost";
+import {
+  DEFAULT_MODEL,
+  textOf,
+  toolCallsOf,
+  type AgentMessage,
+  type ContentBlock,
+  type Provider,
+  type Usage,
+} from "../providers/types";
 import { toolSpecs } from "../registry/registry";
 import type { Registry } from "../registry/types";
 import { fingerprint, type LiveTrace, type TraceStep } from "./trace";
@@ -9,6 +17,8 @@ export interface LiveOptions {
   model?: string;
   maxTurns?: number;
   permit?: (type: string) => boolean;
+  /** Prices for models Vesna does not ship rates for. */
+  prices?: Record<string, ModelPrice>;
   /** Called after each tool call so a front end can render progress. */
   onStep?: (step: TraceStep) => void;
 }
@@ -27,7 +37,9 @@ export async function runLive(
   const model = options.model ?? DEFAULT_MODEL;
   const maxTurns = options.maxTurns ?? 24;
   const tools = toolSpecs(registry);
-  const messages: any[] = [{ role: "user", content: prompt }];
+  const messages: AgentMessage[] = [
+    { role: "user", content: [{ type: "text", text: prompt }] },
+  ];
   const steps: TraceStep[] = [];
   const usage: Usage = {
     inputTokens: 0,
@@ -46,24 +58,21 @@ export async function runLive(
     usage.cacheReadTokens += response.usage.cacheReadTokens;
     usage.cacheWriteTokens += response.usage.cacheWriteTokens;
 
-    const toolUses = response.content.filter((block: any) => block.type === "tool_use");
-    finalText = response.content
-      .filter((block: any) => block.type === "text")
-      .map((block: any) => block.text)
-      .join("");
+    const toolUses = toolCallsOf(response.content);
+    finalText = textOf(response.content);
 
     if (toolUses.length === 0) break;
 
     messages.push({ role: "assistant", content: response.content });
-    const results: any[] = [];
+    const results: ContentBlock[] = [];
 
-    for (const use of toolUses as any[]) {
+    for (const use of toolUses) {
       if (options.permit && !options.permit(use.name)) {
         results.push({
           type: "tool_result",
-          tool_use_id: use.id,
+          callId: use.id,
           content: `permission denied for ${use.name}`,
-          is_error: true,
+          isError: true,
         });
         continue;
       }
@@ -72,9 +81,9 @@ export async function runLive(
       if (!definition) {
         results.push({
           type: "tool_result",
-          tool_use_id: use.id,
+          callId: use.id,
           content: `unknown tool ${use.name}`,
-          is_error: true,
+          isError: true,
         });
         continue;
       }
@@ -91,13 +100,13 @@ export async function runLive(
         };
         steps.push(step);
         options.onStep?.(step);
-        results.push({ type: "tool_result", tool_use_id: use.id, content: JSON.stringify(output) });
+        results.push({ type: "tool_result", callId: use.id, content: JSON.stringify(output) });
       } catch (error) {
         results.push({
           type: "tool_result",
-          tool_use_id: use.id,
+          callId: use.id,
           content: (error as Error).message,
-          is_error: true,
+          isError: true,
         });
       }
     }
@@ -110,7 +119,7 @@ export async function runLive(
     steps,
     finalText,
     usage,
-    costUsd: estimateCostUsd(model, usage),
+    costUsd: estimateCostUsd(model, usage, options.prices ?? {}),
     environment: await fingerprint(options.cwd),
   };
 }

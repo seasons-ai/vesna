@@ -1,10 +1,43 @@
 import Anthropic from "@anthropic-ai/sdk";
 import {
   DEFAULT_MODEL,
+  type AgentMessage,
   type CompletionRequest,
   type CompletionResult,
+  type ContentBlock,
   type Provider,
 } from "./types";
+
+/** Neutral content -> Anthropic wire content. */
+export function toAnthropicMessages(messages: AgentMessage[]): any[] {
+  return messages.map((message) => ({
+    role: message.role,
+    content: message.content.map((block) => {
+      if (block.type === "text") return { type: "text", text: block.text };
+      if (block.type === "tool_call") {
+        return { type: "tool_use", id: block.id, name: block.name, input: block.input };
+      }
+      return {
+        type: "tool_result",
+        tool_use_id: block.callId,
+        content: block.content,
+        ...(block.isError ? { is_error: true } : {}),
+      };
+    }),
+  }));
+}
+
+/** Anthropic wire content -> neutral content. Unknown block types are dropped. */
+export function fromAnthropicContent(content: any[]): ContentBlock[] {
+  const blocks: ContentBlock[] = [];
+  for (const block of content) {
+    if (block?.type === "text") blocks.push({ type: "text", text: block.text });
+    else if (block?.type === "tool_use") {
+      blocks.push({ type: "tool_call", id: block.id, name: block.name, input: block.input ?? {} });
+    }
+  }
+  return blocks;
+}
 
 export function createAnthropicProvider(options: { apiKey?: string } = {}): Provider {
   const client = new Anthropic(options.apiKey ? { apiKey: options.apiKey } : {});
@@ -20,13 +53,13 @@ export function createAnthropicProvider(options: { apiKey?: string } = {}): Prov
         thinking: { type: "adaptive" },
         ...(request.system ? { system: request.system } : {}),
         ...(request.tools ? { tools: request.tools as any } : {}),
-        messages: request.messages,
+        messages: toAnthropicMessages(request.messages) as any,
       });
 
       const message = await stream.finalMessage();
 
       return {
-        content: message.content,
+        content: fromAnthropicContent(message.content as any[]),
         stopReason: message.stop_reason,
         model: message.model,
         usage: {

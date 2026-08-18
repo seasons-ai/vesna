@@ -17,11 +17,11 @@ const usage = { inputTokens: 100, outputTokens: 50, cacheReadTokens: 0, cacheWri
 
 /** Stands in for the model: read the report, write a summary, then stop. */
 function scriptedAgent(): Provider {
-  const turns = [
-    [{ type: "tool_use", id: "u1", name: "read", input: { path: "reports/acme.txt" } }],
+  const turns: any[][] = [
+    [{ type: "tool_call", id: "u1", name: "read", input: { path: "reports/acme.txt" } }],
     [
       {
-        type: "tool_use",
+        type: "tool_call",
         id: "u2",
         name: "write",
         input: { path: "out/acme.md", text: "revenue: 120" },
@@ -37,7 +37,7 @@ function scriptedAgent(): Provider {
       index += 1;
       return {
         content,
-        stopReason: content.some((b: any) => b.type === "tool_use") ? "tool_use" : "end_turn",
+        stopReason: content.some((b: any) => b.type === "tool_call") ? "tool_use" : "end_turn",
         usage,
         model: request.model,
       };

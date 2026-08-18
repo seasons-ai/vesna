@@ -100,6 +100,34 @@ bun install
 bun test
 ```
 
+### Models
+
+Vesna talks to two provider families. The internal message shape is its own, and
+each adapter translates at the edge — so a flow written against one model runs
+against another.
+
+```yaml
+# .agent/config.yaml
+provider: anthropic
+model: claude-opus-5
+```
+
+The second adapter speaks the OpenAI chat-completions protocol, which means one
+adapter covers **OpenAI, AIMLAPI, OpenRouter, DeepSeek, Together, vLLM and
+Ollama** — anything that implements it:
+
+```yaml
+provider: openai
+model: llama3.1
+baseUrl: http://localhost:11434/v1   # Ollama; omit for api.openai.com
+prices:
+  llama3.1: { input: 0, output: 0 }  # USD per million tokens
+```
+
+Vesna ships prices only for models whose rates it can state accurately. For
+anything else, `prices` is where you supply them — a cost report built on an
+invented number is worse than no cost report.
+
 ### Credentials
 
 Only `vesna do` calls a model. The engine, the fan-out, and the repair path all
@@ -111,6 +139,9 @@ Vesna reads whatever the Anthropic SDK reads, in the SDK's own order:
 export ANTHROPIC_API_KEY=...   # a static key
 ant auth login                 # or OAuth: refreshed automatically, no key to manage
 ```
+
+For the OpenAI-compatible provider, set `OPENAI_API_KEY` — or point `baseUrl` at
+a local host, which needs no credential at all.
 
 `vesna auth` reports which one will actually be used — including the common trap
 where a stale `ANTHROPIC_API_KEY` silently shadows an OAuth profile you thought

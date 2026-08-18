@@ -69,6 +69,7 @@ export async function main(argv: string[]): Promise<number> {
     const trace = await runLive(target, provider, registry, {
       cwd: root,
       model: flags.model ?? config.model,
+      prices: config.prices,
       permit: (type) => config.permissions.nodes.includes(type),
       onStep: (step) =>
         console.log(
@@ -186,6 +187,28 @@ export async function main(argv: string[]): Promise<number> {
   }
 
   if (command === "auth") {
+    console.log(`provider:   ${theme.paint("accent", config.provider)}  model ${config.model}`);
+
+    if (config.provider === "openai") {
+      const local = config.baseUrl !== undefined && /localhost|127\.0\.0\.1/.test(config.baseUrl);
+      const key = process.env.OPENAI_API_KEY;
+      console.log(`endpoint:   ${config.baseUrl ?? "https://api.openai.com/v1"}`);
+      if (key) {
+        console.log(`credential: ${theme.paint("ok", "OPENAI_API_KEY")}`);
+        return EXIT.ok;
+      }
+      if (local) {
+        console.log(
+          `credential: ${theme.paint("ok", "none needed")} ${theme.paint("dim", "(local endpoint)")}`,
+        );
+        return EXIT.ok;
+      }
+      console.log(`credential: ${theme.paint("held", "none")}`);
+      console.log("");
+      console.log("  export OPENAI_API_KEY=...   # or point baseUrl at a local host");
+      return EXIT.error;
+    }
+
     const dir = configDir(process.env, process.platform, homedir());
     const profiles = await listProfiles(dir);
     const source = credentialSource(process.env, profiles);

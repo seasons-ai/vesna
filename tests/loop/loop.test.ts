@@ -14,7 +14,7 @@ function scriptedProvider(turns: any[][]): Provider {
       index += 1;
       return {
         content,
-        stopReason: content.some((b: any) => b.type === "tool_use") ? "tool_use" : "end_turn",
+        stopReason: content.some((b: any) => b.type === "tool_call") ? "tool_use" : "end_turn",
         usage,
         model: request.model,
       };
@@ -36,7 +36,7 @@ function registryWithEcho() {
 
 test("executes a requested tool and records it as a trace step", async () => {
   const provider = scriptedProvider([
-    [{ type: "tool_use", id: "t1", name: "echo", input: { value: "hi" } }],
+    [{ type: "tool_call", id: "t1", name: "echo", input: { value: "hi" } }],
     [{ type: "text", text: "all done" }],
   ]);
 
@@ -50,7 +50,7 @@ test("executes a requested tool and records it as a trace step", async () => {
 
 test("accumulates usage and cost across turns", async () => {
   const provider = scriptedProvider([
-    [{ type: "tool_use", id: "t1", name: "echo", input: { value: "hi" } }],
+    [{ type: "tool_call", id: "t1", name: "echo", input: { value: "hi" } }],
     [{ type: "text", text: "done" }],
   ]);
   const trace = await runLive("do it", provider, registryWithEcho(), { cwd: "." });
@@ -60,7 +60,7 @@ test("accumulates usage and cost across turns", async () => {
 test("stops at maxTurns instead of looping forever", async () => {
   const provider = scriptedProvider(
     Array.from({ length: 20 }, () => [
-      { type: "tool_use", id: "t", name: "echo", input: { value: "x" } },
+      { type: "tool_call", id: "t", name: "echo", input: { value: "x" } },
     ]),
   );
   const trace = await runLive("loop", provider, registryWithEcho(), {
@@ -80,7 +80,7 @@ test("records an environment fingerprint with names but no env values", async ()
 
 test("a denied tool returns an error result instead of executing", async () => {
   const provider = scriptedProvider([
-    [{ type: "tool_use", id: "t1", name: "echo", input: { value: "hi" } }],
+    [{ type: "tool_call", id: "t1", name: "echo", input: { value: "hi" } }],
     [{ type: "text", text: "ok" }],
   ]);
   const trace = await runLive("do it", provider, registryWithEcho(), {
