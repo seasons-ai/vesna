@@ -19,7 +19,7 @@ async function withDir(fn: (dir: string) => Promise<void>) {
 test("registers the built-in node types", () => {
   const registry = createRegistry();
   registerBuiltins(registry);
-  expect(registry.list().sort()).toEqual(["read", "script", "shell", "write"]);
+  expect(registry.list().sort()).toEqual(["edit", "glob", "grep", "read", "script", "shell", "write"]);
 });
 
 test("write then read round-trips a file", async () => {
