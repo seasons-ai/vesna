@@ -898,10 +898,13 @@ carries the surface it belongs on:
     ),
     cursor: {
       row: Math.min(inputTop + cursor.row, rows - 1),
-      col: Math.min(prompt.length + cursor.col, cols),
+      col: Math.min(PROMPT.length + cursor.col, cols),
     },
   };
 ```
+
+`PROMPT` is still the module constant at this point; Task 7 is what replaces it
+with a per-frame value. Do not rename it here.
 
 - [ ] **Step 4: Run to verify it passes**
 
@@ -1508,6 +1511,7 @@ and supply the empty state in `currentView()`:
       header: header(deps, glyphs),
       transcript: transcript.lines(),
       empty: emptyState({ theme, glyphs, cols: size.cols, rows: size.rows }),
+      panel: theme.panel,
       editor,
       hint: hint(theme, busy, confirmExit),
       status: status(deps, session, busy, tick),
