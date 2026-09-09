@@ -152,3 +152,17 @@ test("leaving resets the colour before handing the terminal back", () => {
   const output = host.writes.join("");
   expect(output.indexOf("\x1b[0m")).toBeLessThan(output.indexOf("\x1b[?1049l"));
 });
+
+test("a row repaints when only its surface changed, not its text", () => {
+  const PANEL = "\x1b[48;5;235m";
+  const host = fake();
+  const screen = createScreen(host.terminal, { surface: SURFACE });
+  const rows = ["a", "b"];
+  screen.draw({ lines: rows, surfaces: [undefined, undefined], cursor: { row: 0, col: 0 } });
+  screen.draw({ lines: rows, surfaces: [undefined, PANEL], cursor: { row: 0, col: 0 } });
+
+  // The panel boundary slides across blank rows as the input box grows; a diff
+  // keyed on the bare text would leave the old surface behind.
+  expect(host.last()).toContain(`\x1b[2;1H\x1b[2K${PANEL}b`);
+  expect(host.last()).not.toContain("\x1b[1;1H\x1b[2K");
+});

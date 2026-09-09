@@ -1,5 +1,6 @@
 import type { EditorState } from "./editor";
 import type { Glyphs } from "./glyphs";
+import type { Role } from "./theme";
 import { visibleWidth, wrapAnsi } from "./wrap";
 
 /**
@@ -23,6 +24,17 @@ export interface ViewState {
   scroll: number;
   /** An SGR establishing the input box's own background, or "" for none. */
   panel?: string;
+  /**
+   * The theme's own `paint`, passed in rather than imported.
+   *
+   * Vesna owns the canvas, so text that sets no foreground of its own inherits
+   * whatever the user's terminal profile uses — near-black on a dark theme for
+   * a reader on a light profile. Folding a foreground into the surface cannot
+   * fix it: a painted run closes with SGR 39, which restores the terminal's
+   * default rather than the line's opening colour. So the frame paints its own
+   * text at source, through a callback that keeps this module pure.
+   */
+  paint: (role: Role, text: string) => string;
   glyphs: Glyphs;
   /** Shown, centred, only while the transcript is empty. */
   empty?: string[];
@@ -72,12 +84,15 @@ export function layout(view: ViewState, size: { rows: number; cols: number }): F
     lines.push(...windowOf(wrapped, body, view.scroll));
   }
 
-  lines.push(view.glyphs.rule.repeat(cols));
+  lines.push(view.paint("rule", view.glyphs.rule.repeat(cols)));
 
   const shown = input.slice(0, inputRows);
   const inputFirstRow = lines.length;
   for (const [index, line] of shown.entries()) {
-    lines.push(fit(`${index === 0 ? prompt : " ".repeat(prompt.length)}${line}`, cols));
+    const lead =
+      index === 0 ? view.paint("petal", prompt) : " ".repeat(prompt.length);
+    const typed = line === "" ? "" : view.paint("text", line);
+    lines.push(fit(`${lead}${typed}`, cols));
   }
   const inputLastRow = lines.length - 1;
 
@@ -174,14 +189,24 @@ function statusLine(hint: string, status: string, cols: number): string {
   const statusWidth = visibleWidth(status);
   if (statusWidth >= cols) return fit(status, cols);
 
+  // One column short of the window leaves no room for a hint at all, only for
+  // the single space that keeps the two halves apart.
   const room = cols - statusWidth - 1;
-  const trimmed = visibleWidth(hint) <= room ? hint : fit(hint, room);
+  const trimmed = room <= 0 ? "" : visibleWidth(hint) <= room ? hint : fit(hint, room);
   const gap = cols - visibleWidth(trimmed) - statusWidth;
   return `${trimmed}${" ".repeat(Math.max(1, gap))}${status}`;
 }
 
-/** Truncate to the visible width, keeping escape codes out of the count. */
+/**
+ * Truncate to the visible width, keeping escape codes out of the count.
+ *
+ * A width of zero or less means there is no room at all, and the answer is
+ * nothing. `wrapAnsi` escapes early on a non-positive width and would hand
+ * back the whole string, which is how the status line came to emit a row twice
+ * as wide as the window.
+ */
 function fit(text: string, cols: number): string {
+  if (cols <= 0) return "";
   if (visibleWidth(text) <= cols) return text;
   return wrapAnsi(text, cols)[0] ?? "";
 }

@@ -76,6 +76,9 @@ export async function runApp(deps: AppDeps, io: AppIo): Promise<number> {
       status: status(deps, session, busy, tick, glyphs),
       scroll,
       panel: theme.panel,
+      // The layout paints its own rule, prompt and input text through this,
+      // rather than importing the theme and giving up its purity.
+      paint: (role, text) => theme.paint(role, text),
       glyphs,
     };
   }
@@ -189,10 +192,12 @@ export async function runApp(deps: AppDeps, io: AppIo): Promise<number> {
       try {
         await runTurn(session, input.text, transcript, turn.signal, draw);
       } catch (error) {
-        // An abort is the user's own doing, not a failure to report at length.
+        // An abort is the user's own doing, and reads as a warning. A provider
+        // that fell over is a failure, and gets the colour that says so.
+        const aborted = turn.signal.aborted;
         transcript.notice(
-          turn.signal.aborted ? "interrupted" : (error as Error).message,
-          "warn",
+          aborted ? "interrupted" : (error as Error).message,
+          aborted ? "warn" : "error",
         );
       } finally {
         clearInterval(spinner);
@@ -312,7 +317,9 @@ async function command(
 
     for (const parameter of proposal.parameters) transcript.notice(formatParameter(parameter), "muted");
     for (const line of describeDropped(proposal.dropped, theme)) transcript.notice(line.trim(), "muted");
-    transcript.notice(`wrote ${path}`, "ok");
+    // Warm petal marks live work; cold ice marks what has been crystallised.
+    // This line is the moment the metaphor is about.
+    transcript.notice(`wrote ${path}`, "ice");
     transcript.notice(`trace ${traceId} ${glyphs.bullet} vesna run ${flow.name} --dry-run`, "muted");
   }
 

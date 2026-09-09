@@ -2,6 +2,8 @@ import { test, expect } from "bun:test";
 import { createTranscript } from "../../src/tui/transcript";
 import { UNICODE_GLYPHS } from "../../src/tui/glyphs";
 import { resolveTheme } from "../../src/tui/theme";
+import { fg24 } from "../../src/tui/color";
+import { PALETTES } from "../../src/tui/palette";
 
 const theme = resolveTheme("mono", { depth: 0 });
 
@@ -80,4 +82,19 @@ test("clearing drops everything", () => {
   transcript.user("x");
   transcript.clear();
   expect(transcript.lines()).toEqual([]);
+});
+
+test("the user's own words and the streamed answer are painted, not left bare", () => {
+  // Vesna owns the canvas, so text that establishes no foreground of its own
+  // falls back to whatever the user's terminal profile happens to use — which
+  // on a light profile is near-black on the dark `vesna` background.
+  const painted = resolveTheme("vesna", { depth: 24 });
+  const text = fg24(PALETTES.vesna!.tokens.text);
+  const transcript = createTranscript(painted, UNICODE_GLYPHS);
+
+  transcript.user("what does this do?");
+  expect(transcript.lines()[0]).toContain(text);
+
+  transcript.delta("It reads the file.");
+  expect(transcript.lines().at(-1)).toContain(text);
 });

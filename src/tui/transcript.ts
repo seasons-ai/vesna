@@ -29,6 +29,13 @@ export function createTranscript(theme: Theme, glyphs: Glyphs): Transcript {
     streaming = false;
   };
 
+  /**
+   * The conversation is the frame's most important text, and on a canvas Vesna
+   * owns it cannot be left at the terminal's default foreground: a dark theme
+   * under a light profile would render it near-black on near-black.
+   */
+  const body = (text: string) => (text === "" ? "" : theme.paint("text", text));
+
   return {
     lines: () => [...lines],
 
@@ -39,8 +46,8 @@ export function createTranscript(theme: Theme, glyphs: Glyphs): Transcript {
 
     user(text) {
       const [first, ...rest] = text.split("\n");
-      push(`${theme.paint("petal", glyphs.prompt)} ${first ?? ""}`);
-      for (const line of rest) push(`  ${line}`);
+      push(`${theme.paint("petal", glyphs.prompt)} ${body(first ?? "")}`);
+      for (const line of rest) push(`  ${body(line)}`);
       push("");
     },
 
@@ -50,7 +57,7 @@ export function createTranscript(theme: Theme, glyphs: Glyphs): Transcript {
           lines.push("");
           streaming = true;
         }
-        lines[lines.length - 1] += part;
+        lines[lines.length - 1] += body(part);
       }
       streaming = true;
     },

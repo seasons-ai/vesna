@@ -3,6 +3,13 @@ import { layout, type ViewState } from "../../src/tui/layout";
 import { visibleWidth } from "../../src/tui/wrap";
 import { createEditor } from "../../src/tui/editor";
 import { UNICODE_GLYPHS } from "../../src/tui/glyphs";
+import { fg24 } from "../../src/tui/color";
+import { PALETTES, type Token } from "../../src/tui/palette";
+import { resolveTheme } from "../../src/tui/theme";
+
+/** The default theme at full depth, for the tests that care about colour. */
+const painted = resolveTheme("vesna", { depth: 24 });
+const fg = (token: Token) => fg24(PALETTES.vesna!.tokens[token]);
 
 function view(overrides: Partial<ViewState> = {}): ViewState {
   return {
@@ -13,6 +20,8 @@ function view(overrides: Partial<ViewState> = {}): ViewState {
     status: "$0.00",
     scroll: 0,
     glyphs: UNICODE_GLYPHS,
+    // Most tests are about arithmetic, so the default paints nothing.
+    paint: (_role, text) => text,
     ...overrides,
   };
 }
@@ -169,4 +178,50 @@ test("with no panel every row falls back to the canvas", () => {
   const surfaces = frame.surfaces ?? [];
   expect(surfaces).toHaveLength(frame.lines.length);
   expect(surfaces.every((surface) => surface === undefined)).toBe(true);
+});
+
+test("the rule, the prompt glyph and the input text are painted by the theme", () => {
+  const editor = { ...createEditor(), text: "typed", cursor: 5 };
+  const frame = layout(
+    view({ editor, paint: (role, text) => painted.paint(role, text) }),
+    size,
+  );
+
+  // Nothing here knows about the theme module; the frame is painted through
+  // the callback the view carries, which keeps `layout` a pure function.
+  const rule = frame.lines.find((line) => line.includes("\u2500"))!;
+  expect(rule).toContain(fg("rule"));
+
+  const box = frame.lines.find((line) => line.includes("typed"))!;
+  expect(box).toContain(fg("petal"));
+  expect(box).toContain(fg("text"));
+});
+
+test("painting does not cost the frame its width invariant", () => {
+  const editor = { ...createEditor(), text: "typed", cursor: 5 };
+  for (const rows of [1, 2, 3, 4, 10, 40]) {
+    for (const cols of [8, 20, 30, 120]) {
+      const frame = layout(
+        view({ editor, transcript: ["x".repeat(200)], paint: (role, text) => painted.paint(role, text) }),
+        { rows, cols },
+      );
+      for (const line of frame.lines) expect(visibleWidth(line)).toBe(cols);
+    }
+  }
+});
+
+test("a status that nearly fills the line cannot push the frame over its width", () => {
+  // Not a narrow-terminal curiosity: `room` reaches zero whenever the status
+  // is one column short of the window, and an unguarded `fit` then returns the
+  // whole hint. A line wider than the window wraps in a real terminal and
+  // desynchronises the differential redraw for good.
+  const hint = "/help \u00b7 alt-enter newline \u00b7 ctrl-c twice to leave";
+  for (const status of ["1.2k tok \u00b7 $0.0412", "0 tok \u00b7 $0.0000", "$0.00"]) {
+    for (let cols = 1; cols <= 60; cols += 1) {
+      const frame = layout(view({ hint, status }), { rows: 10, cols });
+      for (const line of frame.lines) {
+        expect(`${cols}: ${visibleWidth(line)}`).toBe(`${cols}: ${cols}`);
+      }
+    }
+  }
 });

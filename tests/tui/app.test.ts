@@ -5,7 +5,10 @@ import { join } from "node:path";
 import { runApp, type AppDeps } from "../../src/tui/app";
 import type { Terminal } from "../../src/tui/screen";
 import { resolveTheme } from "../../src/tui/theme";
+import { fg24 } from "../../src/tui/color";
+import { PALETTES, type Token } from "../../src/tui/palette";
 import { createRegistry } from "../../src/registry/registry";
+import type { NodeDef } from "../../src/registry/types";
 import { createTraceStore } from "../../src/store/trace";
 import type { CompletionRequest, CompletionResult, Provider } from "../../src/providers/types";
 import type { VesnaConfig } from "../../src/cli/config";
@@ -19,15 +22,20 @@ function fakeTerminal(rows = 12, cols = 46) {
   const terminal: Terminal = {
     size: () => ({ rows, cols }),
     write(text) {
-      const pattern = /\x1b\[(\d+);1H\x1b\[2K([^\x1b]*)/g;
+      // A row's payload runs until the next cursor move. Stopping at the first
+      // escape instead would drop every painted line on the floor, which is
+      // how a frame with no foreground at all survived nine reviews.
+      const pattern = /\x1b\[(\d+);1H\x1b\[2K((?:(?!\x1b\[\d+;\d+H)[\s\S])*)/g;
       for (const match of text.matchAll(pattern)) {
         grid[Number(match[1]) - 1] = match[2]!;
       }
     },
   };
-  // Escape codes are colour; the tests care about the words.
-  const plain = () => grid.join("\n").replace(/\x1b\[[0-9;]*m/g, "");
-  return { terminal, screen: plain };
+  /** The frame as written, escape codes and all, for assertions about colour. */
+  const raw = () => grid.join("\n");
+  // Escape codes are colour; most tests care about the words.
+  const plain = () => raw().replace(/\x1b\[[0-9;]*m/g, "");
+  return { terminal, screen: plain, raw };
 }
 
 function keyboard() {
@@ -116,7 +124,7 @@ function halfway(first: string, second: string) {
   };
 }
 
-async function deps(p: Provider): Promise<AppDeps> {
+async function deps(p: Provider, overrides: Partial<AppDeps> = {}): Promise<AppDeps> {
   const root = await mkdtemp(join(tmpdir(), "vesna-app-"));
   const config: VesnaConfig = {
     provider: "openai",
@@ -136,15 +144,39 @@ async function deps(p: Provider): Promise<AppDeps> {
     config,
     theme: resolveTheme("mono", { depth: 0 }),
     root,
+    ...overrides,
   };
 }
 
-async function start(p: Provider, size = { rows: 12, cols: 46 }) {
+async function start(
+  p: Provider,
+  size = { rows: 12, cols: 46 },
+  overrides: Partial<AppDeps> = {},
+) {
   const host = fakeTerminal(size.rows, size.cols);
   const input = keyboard();
-  const finished = runApp(await deps(p), { terminal: host.terminal, input });
+  const finished = runApp(await deps(p, overrides), { terminal: host.terminal, input });
   await until(() => host.screen().includes("vesna"), "the first frame");
   return { ...host, input, finished };
+}
+
+/** The default theme at full depth: what a contributor actually looks at. */
+const PAINTED = resolveTheme("vesna", { depth: 24 });
+
+/** The exact foreground the `vesna` palette emits for a token. */
+function fg(token: Token): string {
+  return fg24(PALETTES.vesna!.tokens[token]);
+}
+
+/**
+ * The row whose *visible* text contains `needle`, returned with its escapes
+ * intact. Matching on the raw row directly would miss, because a painted run
+ * closes before the padding that follows it.
+ */
+function rowWith(host: { screen(): string; raw(): string }, needle: string): string {
+  const index = host.screen().split("\n").findIndex((row) => row.includes(needle));
+  if (index < 0) throw new Error(`no row contains ${JSON.stringify(needle)}`);
+  return host.raw().split("\n")[index]!;
 }
 
 test("the header names the model and how it is authenticated", async () => {
@@ -326,4 +358,123 @@ test("the empty screen greets you and then gets out of the way", async () => {
   await until(() => app.screen().includes("answered"), "the answer");
   expect(app.screen()).not.toContain("freeze what worked");
   await quit(app);
+});
+
+/**
+ * Everything below runs the app on a real theme at a real depth. Every other
+ * test here uses `mono` at depth 0, where `paint` is the identity function —
+ * which is exactly why a frame that painted backgrounds and no foregrounds
+ * looked fine to the suite and unreadable on a terminal.
+ */
+
+test("the frame paints its own canvas when the theme is real", async () => {
+  const app = await start(reply("hi"), { rows: 12, cols: 46 }, { theme: PAINTED });
+  expect(app.raw()).toContain(PAINTED.surface);
+  await quit(app);
+});
+
+test("the answer and the user's own words carry a foreground, not the terminal's", async () => {
+  const app = await start(reply("All done."), { rows: 12, cols: 46 }, { theme: PAINTED });
+  app.input.type("do it\r");
+  await until(() => app.screen().includes("All done."), "the answer");
+
+  expect(rowWith(app, "All done.")).toContain(fg("text"));
+  const asked = rowWith(app, "do it");
+  expect(asked).toContain(fg("petal")); // the marker
+  expect(asked).toContain(fg("text")); // and the words after it
+  await quit(app);
+});
+
+test("the separator and the input line carry a foreground too", async () => {
+  const app = await start(reply("hi"), { rows: 12, cols: 46 }, { theme: PAINTED });
+  app.input.type("draft");
+  await until(() => app.screen().includes("› draft"), "the typed text");
+
+  expect(rowWith(app, "─")).toContain(fg("rule"));
+
+  const box = rowWith(app, "draft");
+  expect(box).toContain(fg("petal")); // the prompt glyph
+  expect(box).toContain(fg("text")); // what is being typed
+  await quit(app);
+});
+
+test("a genuine failure is painted error, which an interruption is not", async () => {
+  const app = await start(
+    provider(async () => {
+      throw new Error("the provider fell over");
+    }),
+    { rows: 12, cols: 60 },
+    { theme: PAINTED },
+  );
+  app.input.type("go\r");
+  await until(() => app.screen().includes("the provider fell over"), "the failure notice");
+  const row = rowWith(app, "the provider fell over");
+  expect(row).toContain(fg("error"));
+  expect(row).not.toContain(fg("warn"));
+  await quit(app);
+});
+
+test("an interruption stays warn, because it is the user's own doing", async () => {
+  const turn = halfway("work", "ing");
+  const app = await start(turn.provider, { rows: 12, cols: 60 }, { theme: PAINTED });
+  app.input.type("go\r");
+  await until(() => app.screen().includes("work"), "the turn to start");
+  app.input.type("\x03");
+  await until(
+    () => app.screen().split("\n").some((row) => row.trim() === "interrupted"),
+    "the interruption notice",
+  );
+  const row = rowWith(app, "interrupted");
+  expect(row).toContain(fg("warn"));
+  expect(row).not.toContain(fg("error"));
+  await quit(app);
+});
+
+/** A node the fake model can call, so a turn leaves a step worth freezing. */
+const ECHO: NodeDef = {
+  type: "echo",
+  effect: "pure",
+  description: "echoes its input",
+  inputSchema: { type: "object", properties: { path: { type: "string" } } },
+  run: async (input) => input,
+};
+
+/** Calls the tool once, then answers. */
+function usesATool(): Provider {
+  let calls = 0;
+  return provider(async () => {
+    calls += 1;
+    if (calls > 1) return done("finished");
+    return {
+      content: [{ type: "tool_call", id: "call-1", name: "echo", input: { path: "a.txt" } }],
+      stopReason: "tool_use",
+      model: "fake",
+      usage: { inputTokens: 1, outputTokens: 1, cacheReadTokens: 0, cacheWriteTokens: 0 },
+    };
+  });
+}
+
+test("crystallising is painted ice, the cold half of frost and blossom", async () => {
+  const registry = createRegistry();
+  registry.register(ECHO);
+  const base = await deps(usesATool(), { registry, theme: PAINTED });
+  const host = fakeTerminal(20, 90);
+  const input = keyboard();
+  const finished = runApp(
+    { ...base, config: { ...base.config, permissions: { nodes: ["echo"] } } },
+    { terminal: host.terminal, input },
+  );
+  await until(() => host.screen().includes("vesna"), "the first frame");
+
+  input.type("go\r");
+  await until(() => host.screen().includes("finished"), "the answer");
+  input.type("/crystallize report\r");
+  await until(() => host.screen().includes("wrote "), "the crystallise notice");
+
+  const row = rowWith(host, "wrote ");
+  expect(row).toContain(fg("ice"));
+  expect(row).not.toContain(fg("ok"));
+
+  input.type("\x03\x03\x03");
+  await finished;
 });
