@@ -29,6 +29,8 @@ export interface AppDeps {
   config: VesnaConfig;
   theme: Theme;
   root: string;
+  /** The project's own instructions, from .vesna/AGENTS.md. */
+  notes?: string;
 }
 
 export interface AppIo {
@@ -331,6 +333,7 @@ function newSession(deps: AppDeps): Session {
     cwd: deps.root,
     model: deps.config.model,
     prices: deps.config.prices,
+    notes: deps.notes,
     permit: (type) => deps.config.permissions.nodes.includes(type),
   });
 }

@@ -23,6 +23,7 @@ export interface ChatDeps {
   config: VesnaConfig;
   theme: Theme;
   root: string;
+  notes?: string;
 }
 
 function banner(deps: ChatDeps): string {
@@ -124,6 +125,7 @@ function newSession(deps: ChatDeps): Session {
     cwd: deps.root,
     model: deps.config.model,
     prices: deps.config.prices,
+    notes: deps.notes,
     permit: (type) => deps.config.permissions.nodes.includes(type),
   });
 }

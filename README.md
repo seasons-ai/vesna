@@ -346,6 +346,21 @@ and piped output carries no escape codes at all.
 
 ---
 
+## Telling the agent about your project
+
+Drop a `.vesna/AGENTS.md` next to your config and it is appended to the agent's
+system prompt, every turn:
+
+```markdown
+Run `bun test` before you claim anything works.
+Never edit files under `migrations/` — they are generated.
+```
+
+The rest of the prompt is built from the registry rather than written by hand,
+so it describes exactly the nodes this project allows and never promises one it
+has withheld. `permissions.nodes` is the single switch: a node that is not
+permitted is not offered to the model at all.
+
 ## Themes
 
 `vesna` (default), `hanami`, `washi`, and `mono`. Set one in `.vesna/config.yaml`:

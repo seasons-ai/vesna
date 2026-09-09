@@ -10,6 +10,7 @@ import {
 } from "../providers/types";
 import { toolSpecs } from "../registry/registry";
 import type { Registry } from "../registry/types";
+import { systemPrompt } from "./prompt";
 import { fingerprint, type LiveTrace, type TraceStep } from "./trace";
 
 export interface SessionOptions {
@@ -18,6 +19,8 @@ export interface SessionOptions {
   maxTurns?: number;
   permit?: (type: string) => boolean;
   prices?: Record<string, ModelPrice>;
+  /** The project's own instructions, from .vesna/AGENTS.md. */
+  notes?: string;
   onStep?: (step: TraceStep) => void;
   /** Called as the model produces text, so a chat can render while it types. */
   onText?: (delta: string) => void;
@@ -60,7 +63,20 @@ export function createSession(
 ): Session {
   const model = options.model ?? DEFAULT_MODEL;
   const maxTurns = options.maxTurns ?? 24;
-  const tools = toolSpecs(registry);
+  // Offering a node the project forbids buys a wasted turn and a confusing
+  // "permission denied": if it cannot be called, it is not a tool it has.
+  const tools = toolSpecs(registry).filter(
+    (tool) => options.permit === undefined || options.permit(tool.name),
+  );
+
+  // Built once: identical across turns, which is what makes it cacheable.
+  const system = systemPrompt({
+    cwd: options.cwd,
+    platform: process.platform,
+    now: new Date(),
+    tools,
+    notes: options.notes,
+  });
 
   const messages: AgentMessage[] = [];
   const steps: TraceStep[] = [];
@@ -85,6 +101,7 @@ export function createSession(
       if (signal?.aborted) break;
       const response = await provider.complete({
         model,
+        system,
         messages,
         tools,
         onText,

@@ -10,6 +10,7 @@ import { authPath } from "../auth/store";
 import { homedir } from "node:os";
 import { createRegistry } from "../registry/registry";
 import { createTraceStore } from "../store/trace";
+import { readProjectNotes } from "../loop/prompt";
 import { colorDepth, resolveTheme } from "../tui/theme";
 import { loadConfig, type VesnaConfig } from "./config";
 
@@ -63,5 +64,7 @@ export async function buildContext(root: string) {
   const theme = resolveTheme(config.theme, {
     depth: colorDepth(process.env, Boolean(process.stdout.isTTY)),
   });
-  return { registry, store, config, provider, theme };
+  // Read once here so both `chat` and `do` get the same instructions.
+  const notes = await readProjectNotes(root);
+  return { registry, store, config, provider, theme, notes };
 }

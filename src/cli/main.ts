@@ -221,11 +221,11 @@ export async function main(argv: string[]): Promise<number> {
     }
   }
 
-  const { registry, store, config, provider, theme } = await buildContext(root);
+  const { registry, store, config, provider, theme, notes } = await buildContext(root);
   const permit = (node: { use: string }) => config.permissions.nodes.includes(node.use);
 
   if (command === "chat") {
-    const deps = { registry, provider, store, config, theme, root };
+    const deps = { registry, provider, store, config, theme, root, notes };
     // The line-based chat stays available for dumb terminals and for piping.
     if (flags.plain !== undefined || !process.stdout.isTTY) return await runChat(deps);
     return await runTui(deps);
@@ -237,6 +237,7 @@ export async function main(argv: string[]): Promise<number> {
       cwd: root,
       model: flags.model ?? config.model,
       prices: config.prices,
+      notes,
       permit: (type) => config.permissions.nodes.includes(type),
       onStep: (step) =>
         console.log(
