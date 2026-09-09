@@ -20,10 +20,14 @@ export interface ViewState {
   status: string;
   /** Lines scrolled back from the bottom of the conversation. */
   scroll: number;
+  /** An SGR establishing the input box's own background, or "" for none. */
+  panel?: string;
 }
 
 export interface Frame {
   lines: string[];
+  /** Parallel to `lines`; an entry overrides the canvas for that row. */
+  surfaces?: (string | undefined)[];
   cursor: { row: number; col: number };
 }
 
@@ -51,23 +55,46 @@ export function layout(view: ViewState, size: { rows: number; cols: number }): F
   lines.push("─".repeat(cols));
 
   const shown = input.slice(0, inputRows);
+  const inputFirstRow = lines.length;
   for (const [index, line] of shown.entries()) {
     lines.push(fit(`${index === 0 ? PROMPT : " ".repeat(PROMPT.length)}${line}`, cols));
   }
+  const inputLastRow = lines.length - 1;
 
   lines.push(statusLine(view.hint, view.status, cols));
 
   const cursor = cursorAt(view.editor, inner, inputRows);
   const inputTop = 1 + Math.max(0, transcriptRows) + 1;
 
+  const kept = lines.slice(0, rows);
+  const panel = view.panel !== undefined && view.panel !== "" ? view.panel : undefined;
+
   return {
-    // A window too small for the layout still gets exactly the rows it has.
-    lines: lines.slice(0, rows),
+    // A window too small for the layout still gets exactly the rows it has,
+    // and every one of them is exactly as wide as the window.
+    lines: kept.map((line) => pad(line, cols)),
+    // The input box is lifted off the canvas, so the eye finds where to type
+    // without a border drawn around it.
+    surfaces: kept.map((_, index) =>
+      panel !== undefined && index >= inputFirstRow && index <= inputLastRow
+        ? panel
+        : undefined,
+    ),
     cursor: {
       row: Math.min(inputTop + cursor.row, rows - 1),
       col: Math.min(PROMPT.length + cursor.col, cols),
     },
   };
+}
+
+/**
+ * Owning the canvas means owning every cell. A line shorter than the window
+ * lets the user's own background show through, and the frame looks torn rather
+ * than designed.
+ */
+function pad(line: string, cols: number): string {
+  const width = visibleWidth(line);
+  return width >= cols ? line : line + " ".repeat(cols - width);
 }
 
 /**

@@ -173,7 +173,7 @@ test("the box is empty again after sending", async () => {
   // The message moved into the conversation; the box below it is blank.
   const rows = app.screen().split("\n");
   expect(rows.some((row) => row.startsWith("› hello"))).toBe(true);
-  expect(rows[rows.length - 2]).toBe("› ");
+  expect(rows[rows.length - 2]?.trim()).toBe("›");
   await quit(app);
 });
 
@@ -196,7 +196,7 @@ test("ctrl-c during a turn interrupts it and says so", async () => {
   app.input.type("\x03");
   // The hint line says "ctrl-c interrupt" throughout, so match the notice itself.
   await until(
-    () => app.screen().split("\n").includes("  interrupted"),
+    () => app.screen().split("\n").some((row) => row.trim() === "interrupted"),
     "the interruption notice",
   );
   expect(app.screen()).not.toContain("working");
