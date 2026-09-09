@@ -16,6 +16,7 @@ import { browserLogin } from "../auth/login";
 import { authPath, isExpired, loadAuth, saveAuth } from "../auth/store";
 import { codexAuthPath, readCodexAuth } from "../auth/codex";
 import { inspectCredential, problem, remedy, usable } from "./preflight";
+import { chooseStarter, writeStarterConfig } from "./init";
 import { loadConfig, type VesnaConfig } from "./config";
 import { colorDepth, resolveTheme, type Theme } from "../tui/theme";
 import { runChat } from "./chat";
@@ -30,6 +31,7 @@ import { planRun, summarizeFlow } from "./inspect";
 
 const USAGE = [
   "usage:",
+  "  vesna init                              write a starter .vesna/config.yaml here",
   "  vesna chat [--plain]                    full-screen chat; --plain for a dumb terminal",
   "  vesna do \"<task>\"                       solve a task live and record a trace",
   "  vesna run <flow> [--map rows.csv] [--<input> <value>]",
@@ -196,6 +198,17 @@ export async function main(argv: string[]): Promise<number> {
     depth: colorDepth(process.env, Boolean(process.stdout.isTTY)),
   });
   if (command === "auth") return await authCommand(target, earlyConfig, earlyTheme, root);
+
+  if (command === "init") {
+    const starter = await chooseStarter(process.env, homedir());
+    const path = await writeStarterConfig(root, starter);
+    console.log(earlyTheme.paint("ok", `Wrote ${path}`));
+    console.log(
+      earlyTheme.paint("muted", `            ${starter.provider} / ${starter.auth}, chosen from what is on this machine`),
+    );
+    console.log(earlyTheme.paint("muted", "next: vesna auth"));
+    return EXIT.ok;
+  }
 
   // Nothing below can reach a model without a credential, and learning that
   // from an SDK error names a provider the user never chose.
