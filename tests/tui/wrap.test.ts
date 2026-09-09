@@ -3,6 +3,7 @@ import { visibleWidth, wrapAnsi } from "../../src/tui/wrap";
 
 const RED = "\x1b[38;5;203m";
 const RESET = "\x1b[0m";
+const FG_RESET = "\x1b[39m";
 
 test("width ignores escape codes, so colour never shifts the layout", () => {
   expect(visibleWidth(`${RED}abc${RESET}`)).toBe(3);
@@ -37,11 +38,14 @@ test("an empty line survives wrapping, so paragraph spacing is kept", () => {
 });
 
 test("colour is reopened on the next line so a wrap cannot lose it", () => {
-  const lines = wrapAnsi(`${RED}alpha beta${RESET}`, 6);
+  const lines = wrapAnsi(`${RED}alpha beta${FG_RESET}`, 6);
   expect(lines).toHaveLength(2);
   for (const line of lines) {
     expect(line.startsWith(RED)).toBe(true);
-    expect(line.endsWith(RESET)).toBe(true);
+    // The foreground closes on its own; a full reset here would kill any
+    // background the line is drawn on.
+    expect(line.endsWith(FG_RESET)).toBe(true);
+    expect(line).not.toContain(RESET);
   }
   expect(lines.map(visibleWidth)).toEqual([5, 4]);
 });

@@ -62,20 +62,25 @@ export function createScreen(
         lastSize = size;
       }
 
-      let out = CURSOR_HIDE;
-      for (const [index, line] of frame.lines.entries()) {
-        if (previous[index] === line) continue;
-        // The canvas is re-established per line: a reset inside painted text
-        // would otherwise drop the background for everything after it.
+      // The canvas is re-established per line: a reset inside painted text
+      // would otherwise drop the background for everything after it. The
+      // diff is keyed on this composed payload, not the bare text, so a row
+      // whose surface changes but whose text does not — a panel boundary
+      // sliding across blank rows — still repaints.
+      const rendered = frame.lines.map((line, index) => {
         const behind = frame.surfaces?.[index] ?? surface;
-        out += behind === ""
-          ? `${moveTo(index, 0)}${CLEAR_LINE}${line}`
-          : `${moveTo(index, 0)}${CLEAR_LINE}${behind}${line}${RESET}`;
+        return behind === "" ? line : `${behind}${line}${RESET}`;
+      });
+
+      let out = CURSOR_HIDE;
+      for (const [index, payload] of rendered.entries()) {
+        if (previous[index] === payload) continue;
+        out += `${moveTo(index, 0)}${CLEAR_LINE}${payload}`;
       }
       out += `${moveTo(frame.cursor.row, frame.cursor.col)}${CURSOR_SHOW}`;
 
       terminal.write(out);
-      previous = [...frame.lines];
+      previous = rendered;
     },
   };
 }

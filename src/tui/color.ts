@@ -6,6 +6,8 @@
  */
 
 export const RESET = "\x1b[0m";
+/** Closes the foreground only, deliberately leaving any background in place. */
+export const FG_RESET = "\x1b[39m";
 
 export interface Rgb {
   r: number;

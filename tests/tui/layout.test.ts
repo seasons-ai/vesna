@@ -132,11 +132,13 @@ test("lines stay full width at every window size", () => {
 });
 
 test("padding is plain space, so a wrapped colour cannot bleed into it", () => {
-  const painted = "\x1b[38;5;217mpetal\x1b[0m";
+  const painted = "\x1b[38;5;217mpetal\x1b[39m";
   const frame = layout(view({ transcript: [painted] }), size);
   const row = frame.lines.find((line) => line.includes("petal"))!;
   expect(row.endsWith(" ")).toBe(true);
-  expect(row).toContain("\x1b[0m");
+  // The foreground closes before the padding; a full reset here would kill
+  // the line's own background too.
+  expect(row).toContain("\x1b[39m");
 });
 
 test("there is one surface entry per line, so the screen can pair them up", () => {

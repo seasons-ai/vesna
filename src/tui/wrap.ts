@@ -6,8 +6,9 @@
  * bleeds its colour into the rest of the screen.
  */
 
+import { FG_RESET, RESET } from "./color";
+
 const SGR = /\x1b\[[0-9;]*m/y;
-const RESET = "\x1b[0m";
 
 /** Zero-width: combining marks and joiners. */
 const ZERO_WIDTH = /[\p{Mn}\p{Me}​-‏﻿]/u;
@@ -82,7 +83,7 @@ function cells(text: string): Cell[] {
   let color = "";
   for (const piece of pieces(text)) {
     if (piece.escape) {
-      color = piece.char === RESET ? "" : piece.char;
+      color = piece.char === RESET || piece.char === FG_RESET ? "" : piece.char;
       continue;
     }
     out.push({ char: piece.char, width: charWidth(piece.char), color });
@@ -152,7 +153,7 @@ function render(line: Cell[]): string {
       text += line[index]!.char;
       index += 1;
     }
-    out += color === "" ? text : `${color}${text}${RESET}`;
+    out += color === "" ? text : `${color}${text}${FG_RESET}`;
   }
   return out;
 }

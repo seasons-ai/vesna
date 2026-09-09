@@ -44,12 +44,20 @@ test("an unknown theme name falls back to vesna rather than failing", () => {
 
 test("at 24 bits a role paints the exact hex from the palette", () => {
   const theme = resolveTheme("vesna", { depth: 24 });
-  expect(theme.paint("petal", "x")).toBe("\x1b[38;2;243;175;194mx\x1b[0m");
+  expect(theme.paint("petal", "x")).toBe("\x1b[38;2;243;175;194mx\x1b[39m");
 });
 
 test("at 8 bits the same role paints its approximation", () => {
   const theme = resolveTheme("vesna", { depth: 8 });
-  expect(theme.paint("petal", "x")).toBe("\x1b[38;5;217mx\x1b[0m");
+  expect(theme.paint("petal", "x")).toBe("\x1b[38;5;217mx\x1b[39m");
+});
+
+test("painted text never emits a full reset, so it cannot kill a background it sits on", () => {
+  for (const name of themeNames()) {
+    for (const depth of [8, 24] as const) {
+      expect(resolveTheme(name, { depth }).paint("petal", "x")).not.toContain("\x1b[0m");
+    }
+  }
 });
 
 test("at depth 0 nothing is painted and the text is untouched", () => {

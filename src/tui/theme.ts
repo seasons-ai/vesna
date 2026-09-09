@@ -1,4 +1,4 @@
-import { bg24, bg8, fg24, fg8, nearest256, RESET } from "./color";
+import { bg24, bg8, fg24, fg8, FG_RESET, nearest256 } from "./color";
 import { MONO, PALETTES, type Token } from "./palette";
 
 export type Role = Token;
@@ -73,7 +73,7 @@ export function resolveTheme(
       : "",
     paint(role, text) {
       if (!paints) return text;
-      return `${foreground(palette.tokens[role])}${text}${RESET}`;
+      return `${foreground(palette.tokens[role])}${text}${FG_RESET}`;
     },
   };
 }
