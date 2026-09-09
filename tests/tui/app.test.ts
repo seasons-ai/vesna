@@ -151,7 +151,7 @@ async function deps(p: Provider, overrides: Partial<AppDeps> = {}): Promise<AppD
 
 async function start(
   p: Provider,
-  size = { rows: 12, cols: 46 },
+  size: { rows: number; cols: number } = { rows: 12, cols: 46 },
   overrides: Partial<AppDeps> = {},
 ) {
   const host = fakeTerminal(size.rows, size.cols);
@@ -263,7 +263,9 @@ test("/help lists the commands rather than sending them to the model", async () 
     throw new Error("the model should not have been called");
   }));
   app.input.type("/help\r");
-  await until(() => app.screen().includes("/crystallize"), "the help listing");
+  // The listing is taller than a 12-row window, so check the newest line: the
+  // rest is reachable by scrolling, which is the point of having scrolling.
+  await until(() => app.screen().includes("alt-enter"), "the help listing");
   expect(asked).toBe(false);
   await quit(app);
 });
@@ -652,5 +654,77 @@ test("at the bottom there is no indicator to distract from the answer", async ()
   app.input.type("hello\r");
   await until(() => app.screen().includes("answered"), "the answer");
   expect(app.screen()).not.toMatch(/more below/);
+  await quit(app);
+});
+
+test("clicking the button under an answer copies the markdown the model sent", async () => {
+  const copied: string[] = [];
+  const app = await start(reply("## Result\n\n- one"), undefined, { copy: (text) => void copied.push(text) });
+  app.input.type("go\r");
+  await until(() => app.screen().includes("Result"), "the answer");
+
+  const rows = app.screen().split("\n");
+  const row = rows.map((line) => line.includes("copy")).lastIndexOf(true);
+  expect(row).toBeGreaterThan(0);
+
+  app.input.type(`\x1b[<0;2;${row + 1}M`);
+  await until(() => copied.length > 0, "the copy");
+  expect(copied[0]).toBe("## Result\n\n- one");
+  await quit(app);
+});
+
+test("copying says so, so the click is not silent", async () => {
+  const app = await start(reply("answered"), undefined, { copy: () => {} });
+  app.input.type("go\r");
+  await until(() => app.screen().includes("answered"), "the answer");
+  const row = app.screen().split("\n").map((l) => l.includes("copy")).lastIndexOf(true);
+  app.input.type(`\x1b[<0;2;${row + 1}M`);
+  await until(() => /copied/i.test(app.screen()), "the confirmation");
+  await quit(app);
+});
+
+test("a click on ordinary text copies nothing", async () => {
+  const copied: string[] = [];
+  const app = await start(reply("answered"), undefined, { copy: (text) => void copied.push(text) });
+  app.input.type("go\r");
+  await until(() => app.screen().includes("answered"), "the answer");
+  const row = app.screen().split("\n").findIndex((line) => line.includes("answered"));
+  app.input.type(`\x1b[<0;2;${row + 1}M`);
+  await new Promise((resolve) => setTimeout(resolve, 40));
+  expect(copied).toEqual([]);
+  await quit(app);
+});
+
+test("the user's own message can be copied back too", async () => {
+  const copied: string[] = [];
+  const app = await start(reply("answered"), undefined, { copy: (text) => void copied.push(text) });
+  app.input.type("my exact words\r");
+  await until(() => app.screen().includes("answered"), "the answer");
+
+  const rows = app.screen().split("\n");
+  const row = rows.findIndex((line) => line.includes("copy"));
+  app.input.type(`\x1b[<0;2;${row + 1}M`);
+  await until(() => copied.length > 0, "the copy");
+  expect(copied[0]).toBe("my exact words");
+  await quit(app);
+});
+
+test("/copy takes the last answer without needing a mouse", async () => {
+  const copied: string[] = [];
+  const app = await start(reply("the answer text"), undefined, { copy: (text) => void copied.push(text) });
+  app.input.type("go\r");
+  await until(() => app.screen().includes("the answer text"), "the answer");
+  app.input.type("/copy\r");
+  await until(() => copied.length > 0, "the copy");
+  expect(copied[0]).toBe("the answer text");
+  await quit(app);
+});
+
+test("/copy with nothing to copy says so instead of copying blank", async () => {
+  const copied: string[] = [];
+  const app = await start(reply("x"), undefined, { copy: (text) => void copied.push(text) });
+  app.input.type("/copy\r");
+  await until(() => /nothing to copy/i.test(app.screen()), "the refusal");
+  expect(copied).toEqual([]);
   await quit(app);
 });

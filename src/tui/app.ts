@@ -16,11 +16,12 @@ import { createEditor, applyKey, type EditorState } from "./editor";
 import { emptyState } from "./emptystate";
 import { resolveGlyphs, type Glyphs } from "./glyphs";
 import { decodeKeys, type Key } from "./keys";
-import { layout, type ViewState } from "./layout";
+import { layout, type Frame, type ViewState } from "./layout";
 import { wrapAnsi } from "./wrap";
 import { spinnerFrame } from "./render";
 import { createScreen, type Terminal } from "./screen";
 import type { Theme } from "./theme";
+import { copyToClipboard, systemCopyIo } from "./clipboard";
 import { createTranscript, type Transcript } from "./transcript";
 
 export interface AppDeps {
@@ -32,6 +33,8 @@ export interface AppDeps {
   root: string;
   /** The project's own instructions, from .vesna/AGENTS.md. */
   notes?: string;
+  /** Puts text on the clipboard. Injected so a test never touches the real one. */
+  copy?: (text: string) => void | Promise<void>;
 }
 
 export interface AppIo {
@@ -69,9 +72,14 @@ export async function runApp(deps: AppDeps, io: AppIo): Promise<number> {
 
   const submissions = createQueue<string>();
 
+  // The frame a click lands on is the one the user is looking at, so the
+  // mapping from row to message has to be the one most recently drawn.
+  let shown: Frame | null = null;
+
   const draw = () => {
     if (quitting) return;
-    screen.draw(layout(currentView(), screen.size()));
+    shown = layout(currentView(), screen.size());
+    screen.draw(shown);
   };
 
   /** Never scroll past the top, and never past the newest line. */
@@ -89,6 +97,7 @@ export async function runApp(deps: AppDeps, io: AppIo): Promise<number> {
     return {
       header: header(deps, glyphs),
       transcript: transcript.lines(Math.max(1, size.cols)),
+      targets: transcript.copyTargets(Math.max(1, size.cols)),
       empty: emptyState({ theme, glyphs, cols: size.cols, rows: size.rows }),
       editor,
       hint: hint(theme, busy, confirmExit, glyphs),
@@ -100,6 +109,16 @@ export async function runApp(deps: AppDeps, io: AppIo): Promise<number> {
       paint: (role, text) => theme.paint(role, text),
       glyphs,
     };
+  }
+
+  async function copy(text: string): Promise<void> {
+    try {
+      await (deps.copy ?? defaultCopy)(text);
+      transcript.notice("copied", "ok");
+    } catch (error) {
+      transcript.notice(`could not copy: ${(error as Error).message}`, "error");
+    }
+    draw();
   }
 
   function dispatch(key: Key): void {
@@ -146,6 +165,15 @@ export async function runApp(deps: AppDeps, io: AppIo): Promise<number> {
         const page = Math.max(1, Math.floor(conversationRows(screen.size().rows) * PAGE_FRACTION));
         scroll = clampScroll(scroll + (key.type === "page-up" ? page : -page));
         draw();
+        return;
+      }
+
+      case "click": {
+        const id = shown?.targets?.[key.row];
+        if (id === undefined) return;
+        const text = transcript.rawOf(id);
+        if (text === undefined) return;
+        void copy(text);
         return;
       }
 
@@ -204,7 +232,7 @@ export async function runApp(deps: AppDeps, io: AppIo): Promise<number> {
 
       if (input.kind === "command") {
         if (input.name === "exit") break;
-        session = await command(input.name, input.argument, deps, session, transcript, glyphs);
+        session = await command(input.name, input.argument, deps, session, transcript, glyphs, copy);
         transcript.endTurn();
         draw();
         continue;
@@ -292,6 +320,7 @@ async function command(
   session: Session,
   transcript: Transcript,
   glyphs: Glyphs,
+  onCopy: (text: string) => Promise<void>,
 ): Promise<Session> {
   const { theme } = deps;
 
@@ -312,6 +341,16 @@ async function command(
       `${usage.inputTokens} in ${glyphs.bullet} ${usage.outputTokens} out ${glyphs.bullet} $${session.costUsd.toFixed(4)}`,
       "muted",
     );
+    return session;
+  }
+
+  if (name === "copy") {
+    const answer = transcript.lastAnswer();
+    if (answer === undefined) {
+      transcript.notice("nothing to copy yet", "warn");
+      return session;
+    }
+    await onCopy(answer);
     return session;
   }
 
@@ -440,4 +479,11 @@ function createQueue<T>() {
       });
     },
   };
+}
+
+/** The real clipboard, used when nothing was injected. */
+async function defaultCopy(text: string): Promise<void> {
+  const result = await copyToClipboard(text, systemCopyIo());
+  if (result === "empty") throw new Error("nothing to copy");
+  if (result === "too-large") throw new Error("too large for this terminal");
 }

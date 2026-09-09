@@ -15,6 +15,8 @@ export interface Glyphs {
   gutter: string;
   /** A list item in rendered prose, distinct from the tool-step bullet. */
   listItem: string;
+  /** Marks the button that copies a message. */
+  copy: string;
   spinner: readonly string[];
 }
 
@@ -25,6 +27,7 @@ export const UNICODE_GLYPHS: Glyphs = {
   bullet: "·",
   gutter: "│",
   listItem: "•",
+  copy: "⧉",
   spinner: ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"],
 };
 
@@ -35,6 +38,7 @@ export const ASCII_GLYPHS: Glyphs = {
   bullet: "-",
   gutter: "|",
   listItem: "*",
+  copy: "+",
   spinner: ["|", "/", "-", "\\"],
 };
 

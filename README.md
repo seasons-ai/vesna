@@ -346,6 +346,16 @@ and piped output carries no escape codes at all.
 
 ---
 
+## Copying a message
+
+Every message carries a `⧉ copy` button on the line beneath it — click it and
+the message goes to the clipboard as it was written, markdown and all, not as
+it was drawn on screen. `/copy` does the same for the last answer without a
+mouse.
+
+Over ssh a subprocess would only reach the far machine's clipboard, so Vesna
+falls back to OSC 52 and asks the terminal itself.
+
 ## Telling the agent about your project
 
 Drop a `.vesna/AGENTS.md` next to your config and it is appended to the agent's

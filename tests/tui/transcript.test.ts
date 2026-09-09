@@ -14,13 +14,14 @@ test("a fresh transcript is empty", () => {
 test("a user message is marked so it is distinguishable from the answer", () => {
   const transcript = createTranscript(theme, UNICODE_GLYPHS);
   transcript.user("read a.txt");
-  expect(transcript.lines(80)).toEqual(["› read a.txt", ""]);
+  // The line after a message is its copy button, not a bare gap.
+  expect(transcript.lines(80)).toEqual(["› read a.txt", "  ⧉ copy"]);
 });
 
 test("a multi-line user message keeps its shape", () => {
   const transcript = createTranscript(theme, UNICODE_GLYPHS);
   transcript.user("one\ntwo");
-  expect(transcript.lines(80)).toEqual(["› one", "  two", ""]);
+  expect(transcript.lines(80)).toEqual(["› one", "  two", "  ⧉ copy"]);
 });
 
 test("streamed deltas join into a paragraph rather than one line per token", () => {
@@ -61,7 +62,7 @@ test("ending a turn leaves one blank line before the next", () => {
   transcript.delta("Done.");
   transcript.endTurn();
   transcript.user("again");
-  expect(transcript.lines(80)).toEqual(["Done.", "", "› again", ""]);
+  expect(transcript.lines(80)).toEqual(["Done.", "  ⧉ copy", "› again", "  ⧉ copy"]);
 });
 
 test("ending an empty turn does not stack blank lines", () => {
@@ -147,4 +148,60 @@ test("a step between two answers does not merge them into one block", () => {
   expect(out).toContain("First");
   expect(out).toContain("Second");
   expect(out).not.toContain("#");
+});
+
+test("a message can be copied back out exactly as it arrived", () => {
+  const transcript = createTranscript(theme, UNICODE_GLYPHS);
+  transcript.user("read a.txt");
+  transcript.delta("## Done\n\n- read it");
+  transcript.endTurn();
+
+  const ids = transcript.copyTargets(60).filter((id): id is string => id !== undefined);
+  expect(ids).toHaveLength(2);
+  expect(transcript.rawOf(ids[0]!)).toBe("read a.txt");
+  // The markdown the model sent, not the version rendered for the screen.
+  expect(transcript.rawOf(ids[1]!)).toBe("## Done\n\n- read it");
+});
+
+test("the copy button rides the blank line that already followed the message", () => {
+  const transcript = createTranscript(theme, UNICODE_GLYPHS);
+  transcript.user("hi");
+  const lines = transcript.lines(60);
+  const targets = transcript.copyTargets(60);
+
+  expect(targets).toHaveLength(lines.length);
+  const at = targets.findIndex((id) => id !== undefined);
+  expect(at).toBeGreaterThan(0);
+  expect(lines[at]).toContain("copy");
+});
+
+test("a step or a notice is not a message, and offers no copy button", () => {
+  const transcript = createTranscript(theme, UNICODE_GLYPHS);
+  transcript.step("read", 3);
+  transcript.notice("interrupted", "warn");
+  expect(transcript.copyTargets(60).every((id) => id === undefined)).toBe(true);
+});
+
+test("an unknown id yields nothing rather than throwing at a click", () => {
+  expect(createTranscript(theme, UNICODE_GLYPHS).rawOf("nope")).toBeUndefined();
+});
+
+test("clearing forgets what could be copied", () => {
+  const transcript = createTranscript(theme, UNICODE_GLYPHS);
+  transcript.user("hi");
+  const id = transcript.copyTargets(60).find((entry) => entry !== undefined)!;
+  transcript.clear();
+  expect(transcript.rawOf(id)).toBeUndefined();
+});
+
+test("the newest answer is findable without a mouse", () => {
+  const transcript = createTranscript(theme, UNICODE_GLYPHS);
+  transcript.delta("first");
+  transcript.endTurn();
+  transcript.delta("second");
+  expect(transcript.lastAnswer()).toBe("second");
+});
+
+test("with no answer yet there is nothing to copy", () => {
+  expect(createTranscript(theme, UNICODE_GLYPHS).lastAnswer()).toBeUndefined();
 });

@@ -225,3 +225,33 @@ test("a status that nearly fills the line cannot push the frame over its width",
     }
   }
 });
+
+test("a clickable row keeps its identity through the window into the frame", () => {
+  const transcript = ["› hi", "  ⧉ copy", "answer", "  ⧉ copy"];
+  const frame = layout(view({ transcript, targets: [undefined, "m1", undefined, "m2"] }), size);
+
+  const found = frame.targets.filter((id) => id !== undefined);
+  expect(found).toEqual(["m1", "m2"]);
+  // And each id sits on the row that actually shows its button.
+  for (const [row, id] of frame.targets.entries()) {
+    if (id !== undefined) expect(frame.lines[row]).toContain("copy");
+  }
+});
+
+test("there is one target entry per line, so a click can index straight in", () => {
+  const frame = layout(view({ transcript: ["a", "b"], targets: [undefined, "m1"] }), size);
+  expect(frame.targets).toHaveLength(frame.lines.length);
+});
+
+test("a row scrolled out of view carries no target, so a stale click cannot fire", () => {
+  const transcript = Array.from({ length: 100 }, (_, i) => `line ${i}`);
+  const targets = transcript.map((_, i) => (i === 0 ? "top" : undefined));
+  const frame = layout(view({ transcript, targets }), size);
+  expect(frame.targets).not.toContain("top");
+});
+
+test("without any targets the frame still reports one entry per line", () => {
+  const frame = layout(view({ transcript: ["a"] }), size);
+  expect(frame.targets).toHaveLength(frame.lines.length);
+  expect(frame.targets.every((id) => id === undefined)).toBe(true);
+});

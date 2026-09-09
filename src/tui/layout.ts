@@ -22,6 +22,11 @@ export interface ViewState {
   status: string;
   /** Lines scrolled back from the bottom of the conversation. */
   scroll: number;
+  /**
+   * Which message each transcript line can copy, parallel to `transcript`.
+   * Carried through wrapping and scrolling so a click can find its message.
+   */
+  targets?: (string | undefined)[];
   /** An SGR establishing the input box's own background, or "" for none. */
   panel?: string;
   /**
@@ -42,6 +47,8 @@ export interface ViewState {
 
 export interface Frame {
   lines: string[];
+  /** Parallel to `lines`: the message a click on that row would copy. */
+  targets: (string | undefined)[];
   /** Parallel to `lines`; an entry overrides the canvas for that row. */
   surfaces?: (string | undefined)[];
   cursor: { row: number; col: number };
@@ -68,9 +75,21 @@ export function layout(view: ViewState, size: { rows: number; cols: number }): F
   const transcriptRows = rows - overhead - inputRows;
 
   const lines: string[] = [];
-  lines.push(fit(view.header, cols));
+  // One entry per frame row, filled in beside the row it belongs to.
+  const targets: (string | undefined)[] = [];
 
-  const wrapped = view.transcript.flatMap((line) => wrapAnsi(line, cols));
+  lines.push(fit(view.header, cols));
+  targets.push(undefined);
+
+  const wrapped: string[] = [];
+  const wrappedTargets: (string | undefined)[] = [];
+  for (const [index, line] of view.transcript.entries()) {
+    const id = view.targets?.[index];
+    for (const piece of wrapAnsi(line, cols)) {
+      wrapped.push(piece);
+      wrappedTargets.push(id);
+    }
+  }
   const hidden = Math.max(0, wrapped.length - Math.max(0, transcriptRows) - view.scroll);
   const body = Math.max(0, transcriptRows);
   if (wrapped.length === 0 && view.empty !== undefined && view.empty.length > 0) {
@@ -81,11 +100,15 @@ export function layout(view: ViewState, size: { rows: number; cols: number }): F
       ...shown,
       ...Array<string>(Math.max(0, body - above - shown.length)).fill(""),
     );
+    targets.push(...Array<string | undefined>(body).fill(undefined));
   } else {
-    lines.push(...windowOf(wrapped, body, view.scroll));
+    const window = windowOf(wrapped, wrappedTargets, body, view.scroll);
+    lines.push(...window.lines);
+    targets.push(...window.targets);
   }
 
   lines.push(view.paint("rule", view.glyphs.rule.repeat(cols)));
+  targets.push(undefined);
 
   const shown = input.slice(0, inputRows);
   const inputFirstRow = lines.length;
@@ -94,6 +117,7 @@ export function layout(view: ViewState, size: { rows: number; cols: number }): F
       index === 0 ? view.paint("petal", prompt) : " ".repeat(prompt.length);
     const typed = line === "" ? "" : view.paint("text", line);
     lines.push(fit(`${lead}${typed}`, cols));
+    targets.push(undefined);
   }
   const inputLastRow = lines.length - 1;
 
@@ -101,6 +125,7 @@ export function layout(view: ViewState, size: { rows: number; cols: number }): F
   // tell a paused conversation from a finished one.
   const hint = view.scroll > 0 && hidden > 0 ? `${hidden} more below` : view.hint;
   lines.push(statusLine(hint, view.status, cols));
+  targets.push(undefined);
 
   const cursor = cursorAt(view.editor, inner, inputRows);
   const inputTop = 1 + Math.max(0, transcriptRows) + 1;
@@ -112,6 +137,7 @@ export function layout(view: ViewState, size: { rows: number; cols: number }): F
     // A window too small for the layout still gets exactly the rows it has,
     // and every one of them is exactly as wide as the window.
     lines: kept.map((line) => pad(line, cols)),
+    targets: kept.map((_, index) => targets[index]),
     // The input box is lifted off the canvas, so the eye finds where to type
     // without a border drawn around it.
     surfaces: kept.map((_, index) =>
@@ -175,14 +201,23 @@ function cursorAt(editor: EditorState, width: number, inputRows: number): { row:
 }
 
 /** The tail of the conversation, or an earlier window when scrolled back. */
-function windowOf(lines: string[], height: number, scroll: number): string[] {
-  if (height <= 0) return [];
+function windowOf(
+  lines: string[],
+  targets: (string | undefined)[],
+  height: number,
+  scroll: number,
+): { lines: string[]; targets: (string | undefined)[] } {
+  if (height <= 0) return { lines: [], targets: [] };
   const maxScroll = Math.max(0, lines.length - height);
   const end = lines.length - Math.min(scroll, maxScroll);
   const start = Math.max(0, end - height);
-  const window = lines.slice(start, end);
-  // Pad at the top so a short conversation rests on the input box.
-  return [...Array<string>(height - window.length).fill(""), ...window];
+  const pad = height - (end - start);
+  // Pad at the top so a short conversation rests on the input box. A padded
+  // row belongs to no message, so a click there must do nothing.
+  return {
+    lines: [...Array<string>(pad).fill(""), ...lines.slice(start, end)],
+    targets: [...Array<string | undefined>(pad).fill(undefined), ...targets.slice(start, end)],
+  };
 }
 
 /**
