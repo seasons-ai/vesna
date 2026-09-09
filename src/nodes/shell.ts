@@ -1,4 +1,5 @@
 import type { NodeDef } from "../registry/types";
+import { spawnInterruptible } from "./spawn";
 
 export const shellNode: NodeDef<
   { command: string },
@@ -9,16 +10,9 @@ export const shellNode: NodeDef<
   inputSchema: { type: "object", properties: { command: { type: "string" } }, required: ["command"] },
   effect: "write",
   async run(input, ctx) {
-    const proc = Bun.spawn(["/bin/sh", "-c", input.command], {
+    return await spawnInterruptible(["/bin/sh", "-c", input.command], {
       cwd: ctx.cwd,
-      stdout: "pipe",
-      stderr: "pipe",
+      signal: ctx.signal,
     });
-    const [stdout, stderr] = await Promise.all([
-      new Response(proc.stdout).text(),
-      new Response(proc.stderr).text(),
-    ]);
-    const code = await proc.exited;
-    return { stdout, stderr, code };
   },
 };

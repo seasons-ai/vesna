@@ -1,4 +1,5 @@
 import type { NodeDef } from "../registry/types";
+import { spawnInterruptible } from "./spawn";
 
 // Runs the body in a separate process with a fresh environment, its own cwd
 // and a timeout. That is the whole of the containment, and it is worth being
@@ -44,29 +45,15 @@ export const scriptNode: NodeDef<
   async run(input, ctx) {
     const timeoutMs = input.timeoutMs ?? 10_000;
 
-    const proc = Bun.spawn(["bun", "-e", RUNNER], {
+    const { stdout, stderr, code } = await spawnInterruptible(["bun", "-e", RUNNER], {
       cwd: ctx.cwd,
-      stdout: "pipe",
-      stderr: "pipe",
+      signal: ctx.signal,
+      timeoutMs,
       env: {
         PATH: process.env.PATH ?? "/usr/bin:/bin",
         [PAYLOAD_VAR]: JSON.stringify({ body: input.body, args: input.args ?? {} }),
       },
     });
-
-    const timer = setTimeout(() => proc.kill(), timeoutMs);
-    let stdout: string;
-    let stderr: string;
-    let code: number;
-    try {
-      [stdout, stderr] = await Promise.all([
-        new Response(proc.stdout).text(),
-        new Response(proc.stderr).text(),
-      ]);
-      code = await proc.exited;
-    } finally {
-      clearTimeout(timer);
-    }
 
     if (stdout.trim().length === 0) {
       const detail = stderr.trim().split("\n")[0] ?? `exit ${code}`;
