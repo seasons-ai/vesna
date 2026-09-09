@@ -139,8 +139,8 @@ async function deps(p: Provider): Promise<AppDeps> {
   };
 }
 
-async function start(p: Provider) {
-  const host = fakeTerminal();
+async function start(p: Provider, size = { rows: 12, cols: 46 }) {
+  const host = fakeTerminal(size.rows, size.cols);
   const input = keyboard();
   const finished = runApp(await deps(p), { terminal: host.terminal, input });
   await until(() => host.screen().includes("vesna"), "the first frame");
@@ -316,4 +316,14 @@ test("in ASCII mode not one non-ascii byte reaches the screen", async () => {
   expect(host.screen()).toMatch(/^[\x00-\x7f]*$/);
   input.type("\x03\x03\x03");
   await finished;
+});
+
+test("the empty screen greets you and then gets out of the way", async () => {
+  const app = await start(reply("answered"), { rows: 14, cols: 80 });
+  expect(app.screen()).toContain("v e s n a");
+  expect(app.screen()).toContain("freeze what worked");
+  app.input.type("hello\r");
+  await until(() => app.screen().includes("answered"), "the answer");
+  expect(app.screen()).not.toContain("freeze what worked");
+  await quit(app);
 });

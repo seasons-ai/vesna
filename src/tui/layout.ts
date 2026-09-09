@@ -24,6 +24,8 @@ export interface ViewState {
   /** An SGR establishing the input box's own background, or "" for none. */
   panel?: string;
   glyphs: Glyphs;
+  /** Shown, centred, only while the transcript is empty. */
+  empty?: string[];
 }
 
 export interface Frame {
@@ -57,7 +59,18 @@ export function layout(view: ViewState, size: { rows: number; cols: number }): F
   lines.push(fit(view.header, cols));
 
   const wrapped = view.transcript.flatMap((line) => wrapAnsi(line, cols));
-  lines.push(...windowOf(wrapped, Math.max(0, transcriptRows), view.scroll));
+  const body = Math.max(0, transcriptRows);
+  if (wrapped.length === 0 && view.empty !== undefined && view.empty.length > 0) {
+    const shown = view.empty.slice(0, body);
+    const above = Math.max(0, Math.floor((body - shown.length) / 2));
+    lines.push(
+      ...Array<string>(above).fill(""),
+      ...shown,
+      ...Array<string>(Math.max(0, body - above - shown.length)).fill(""),
+    );
+  } else {
+    lines.push(...windowOf(wrapped, body, view.scroll));
+  }
 
   lines.push(view.glyphs.rule.repeat(cols));
 

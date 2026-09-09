@@ -13,6 +13,7 @@ import type { Registry } from "../registry/types";
 import type { TraceStore } from "../store/types";
 import type { VesnaConfig } from "../cli/config";
 import { createEditor, applyKey, type EditorState } from "./editor";
+import { emptyState } from "./emptystate";
 import { resolveGlyphs, type Glyphs } from "./glyphs";
 import { decodeKeys, type Key } from "./keys";
 import { layout, type ViewState } from "./layout";
@@ -65,9 +66,11 @@ export async function runApp(deps: AppDeps, io: AppIo): Promise<number> {
   };
 
   function currentView(): ViewState {
+    const size = screen.size();
     return {
       header: header(deps, glyphs),
       transcript: transcript.lines(),
+      empty: emptyState({ theme, glyphs, cols: size.cols, rows: size.rows }),
       editor,
       hint: hint(theme, busy, confirmExit, glyphs),
       status: status(deps, session, busy, tick, glyphs),
@@ -135,7 +138,6 @@ export async function runApp(deps: AppDeps, io: AppIo): Promise<number> {
   io.setRawMode?.(true);
   screen.enter();
   const stopResize = io.onResize?.(draw);
-  transcript.notice(`vesna - /help for commands`, "muted");
   draw();
 
   // Input is read alongside the turn in progress: an interrupt that only
