@@ -27,6 +27,10 @@ export interface ViewState {
    * Carried through wrapping and scrolling so a click can find its message.
    */
   targets?: (string | undefined)[];
+  /** Conversations to switch to. Asked for, so the first to go when space runs short. */
+  left?: Pane;
+  /** The state of the work in hand. */
+  right?: Pane;
   /** An SGR establishing the input box's own background, or "" for none. */
   panel?: string;
   /**
@@ -45,10 +49,26 @@ export interface ViewState {
   empty?: string[];
 }
 
+/** A column beside the conversation: painted lines and what a click means. */
+export interface Pane {
+  lines: string[];
+  targets?: (string | undefined)[];
+}
+
 export interface Frame {
   lines: string[];
-  /** Parallel to `lines`: the message a click on that row would copy. */
+  /** Parallel to `lines`: the message a click in the conversation would copy. */
   targets: (string | undefined)[];
+  /**
+   * Where each column starts and ends, so a click is resolved by position
+   * rather than by guessing. A row can carry a target in a panel and another
+   * in the conversation at once; one array per row could not say which.
+   */
+  columns: { left: number; right: number };
+  /** Parallel to `lines`, for clicks landing in the left panel. */
+  leftTargets: (string | undefined)[];
+  /** Parallel to `lines`, for clicks landing in the right panel. */
+  rightTargets: (string | undefined)[];
   /** Parallel to `lines`; an entry overrides the canvas for that row. */
   surfaces?: (string | undefined)[];
   cursor: { row: number; col: number };
@@ -57,14 +77,53 @@ export interface Frame {
 /** Past this the box would take over the screen. */
 const MAX_INPUT_ROWS = 8;
 
+/** Below these a panel is a sliver, and the conversation is what matters. */
+const LEFT_MIN = 22;
+const RIGHT_MIN = 24;
+/** The conversation keeps at least this much, whatever was asked for. */
+const CONVERSATION_MIN = 48;
+
+/**
+ * How wide each column may be.
+ *
+ * The left panel goes first when space runs short: it is opened on request and
+ * closed again, while the right one shows the work in hand. Neither is worth
+ * having at a width that cannot hold a filename.
+ */
+export function panelWidths(
+  cols: number,
+  wanted: { left: boolean; right: boolean },
+): { left: number; right: number } {
+  const share = (min: number) => Math.max(min, Math.min(40, Math.round(cols * 0.22)));
+
+  let left = wanted.left ? share(LEFT_MIN) : 0;
+  let right = wanted.right ? share(RIGHT_MIN) : 0;
+
+  // Each panel costs its own width plus the rule beside it.
+  const spent = () => left + right + (left > 0 ? 1 : 0) + (right > 0 ? 1 : 0);
+
+  if (cols - spent() < CONVERSATION_MIN) left = 0;
+  if (cols - spent() < CONVERSATION_MIN) right = 0;
+
+  return { left, right };
+}
+
 /** The prompt glyph plus the space that separates it from typed text. */
 export function promptOf(glyphs: Glyphs): string {
   return `${glyphs.prompt} `;
 }
 
 export function layout(view: ViewState, size: { rows: number; cols: number }): Frame {
-  const cols = Math.max(1, size.cols);
+  const full = Math.max(1, size.cols);
   const rows = Math.max(1, size.rows);
+
+  const widths = panelWidths(full, {
+    left: view.left !== undefined,
+    right: view.right !== undefined,
+  });
+  const rules = (widths.left > 0 ? 1 : 0) + (widths.right > 0 ? 1 : 0);
+  // Everything below lays out the conversation, in the width left over.
+  const cols = Math.max(1, full - widths.left - widths.right - rules);
   const prompt = promptOf(view.glyphs);
   const inner = Math.max(1, cols - prompt.length);
 
@@ -133,33 +192,46 @@ export function layout(view: ViewState, size: { rows: number; cols: number }): F
   const kept = lines.slice(0, rows);
   const panel = view.panel !== undefined && view.panel !== "" ? view.panel : undefined;
 
+  const laid = kept.map((line) => pad(line, cols));
+
+  // Composed at the end rather than woven through: the conversation's own
+  // layout stays exactly what it was when it had the screen to itself.
+  const rule = view.paint("rule", view.glyphs.gutter);
+  const leftAt = (index: number) => pad(view.left?.lines[index] ?? "", widths.left);
+  const rightAt = (index: number) => pad(view.right?.lines[index] ?? "", widths.right);
+
+  const composed = laid.map((line, index) => {
+    const before = widths.left > 0 ? `${leftAt(index)}${rule}` : "";
+    const after = widths.right > 0 ? `${rule}${rightAt(index)}` : "";
+    return `${before}${line}${after}`;
+  });
+
+  const conversationStart = widths.left > 0 ? widths.left + 1 : 0;
+
   return {
     // A window too small for the layout still gets exactly the rows it has,
     // and every one of them is exactly as wide as the window.
-    lines: kept.map((line) => pad(line, cols)),
-    targets: kept.map((_, index) => targets[index]),
+    lines: composed,
+    targets: laid.map((_, index) => targets[index]),
+    columns: { left: conversationStart, right: conversationStart + cols },
+    leftTargets: laid.map((_, index) =>
+      widths.left > 0 ? view.left?.targets?.[index] : undefined,
+    ),
+    rightTargets: laid.map((_, index) =>
+      widths.right > 0 ? view.right?.targets?.[index] : undefined,
+    ),
     // The input box is lifted off the canvas, so the eye finds where to type
     // without a border drawn around it.
-    surfaces: kept.map((_, index) =>
+    surfaces: laid.map((_, index) =>
       panel !== undefined && index >= inputFirstRow && index <= inputLastRow
         ? panel
         : undefined,
     ),
     cursor: {
       row: Math.min(inputTop + cursor.row, rows - 1),
-      col: Math.min(prompt.length + cursor.col, cols),
+      col: Math.min(conversationStart + prompt.length + cursor.col, full),
     },
   };
-}
-
-/**
- * Owning the canvas means owning every cell. A line shorter than the window
- * lets the user's own background show through, and the frame looks torn rather
- * than designed.
- */
-function pad(line: string, cols: number): string {
-  const width = visibleWidth(line);
-  return width >= cols ? line : line + " ".repeat(cols - width);
 }
 
 /**
@@ -248,4 +320,14 @@ function fit(text: string, cols: number): string {
   if (cols <= 0) return "";
   if (visibleWidth(text) <= cols) return text;
   return wrapAnsi(text, cols)[0] ?? "";
+}
+
+/**
+ * Owning the canvas means owning every cell. A line shorter than the window
+ * lets the user's own background show through, and the frame looks torn rather
+ * than designed.
+ */
+function pad(line: string, cols: number): string {
+  const width = visibleWidth(line);
+  return width >= cols ? line : line + " ".repeat(cols - width);
 }

@@ -1,5 +1,5 @@
 import { test, expect } from "bun:test";
-import { layout, type ViewState } from "../../src/tui/layout";
+import { layout, panelWidths, type ViewState } from "../../src/tui/layout";
 import { visibleWidth } from "../../src/tui/wrap";
 import { createEditor } from "../../src/tui/editor";
 import { UNICODE_GLYPHS } from "../../src/tui/glyphs";
@@ -254,4 +254,90 @@ test("without any targets the frame still reports one entry per line", () => {
   const frame = layout(view({ transcript: ["a"] }), size);
   expect(frame.targets).toHaveLength(frame.lines.length);
   expect(frame.targets.every((id) => id === undefined)).toBe(true);
+});
+
+const pane = (lines: string[]) => ({ lines, targets: lines.map(() => undefined) });
+
+test("with no panels the conversation still owns the whole width", () => {
+  expect(panelWidths(100, { left: false, right: false })).toEqual({ left: 0, right: 0 });
+});
+
+test("a panel is given a workable share, never a sliver", () => {
+  const { left, right } = panelWidths(120, { left: true, right: true });
+  expect(left).toBeGreaterThanOrEqual(22);
+  expect(right).toBeGreaterThanOrEqual(24);
+  // And the conversation keeps the majority.
+  expect(120 - left - right - 2).toBeGreaterThan(left + right);
+});
+
+test("a narrow window drops the left panel first — it is the one you asked for", () => {
+  const { left, right } = panelWidths(86, { left: true, right: true });
+  expect(left).toBe(0);
+  expect(right).toBeGreaterThan(0);
+});
+
+test("a very narrow window drops both rather than squeezing the conversation", () => {
+  expect(panelWidths(70, { left: true, right: true })).toEqual({ left: 0, right: 0 });
+});
+
+test("a panel that was not asked for takes no width", () => {
+  expect(panelWidths(140, { left: false, right: true }).left).toBe(0);
+});
+
+test("the conversation is laid out in the space the panels leave", () => {
+  const wide = layout(view({ transcript: ["a word here"] }), { rows: 12, cols: 120 });
+  const withPanels = layout(
+    view({ transcript: ["a word here"], left: pane(["chats"]), right: pane(["garden"]) }),
+    { rows: 12, cols: 120 },
+  );
+  expect(withPanels.lines).toHaveLength(wide.lines.length);
+  for (const line of withPanels.lines) expect(visibleWidth(line)).toBe(120);
+});
+
+test("both panels appear, on their own sides", () => {
+  const frame = layout(
+    view({ transcript: ["talking"], left: pane(["CHATS"]), right: pane(["GARDEN"]) }),
+    { rows: 12, cols: 120 },
+  );
+  // A panel's first line sits beside the header, not beside the first reply.
+  const row = frame.lines.find((line) => line.includes("CHATS"))!;
+  expect(row.indexOf("CHATS")).toBeLessThan(row.indexOf("GARDEN"));
+  expect(frame.lines.join("\n")).toContain("talking");
+});
+
+test("a panel shorter than the window does not leave a ragged edge", () => {
+  const frame = layout(
+    view({ transcript: ["x"], right: pane(["one line only"]) }),
+    { rows: 14, cols: 120 },
+  );
+  for (const line of frame.lines) expect(visibleWidth(line)).toBe(120);
+});
+
+test("the cursor still lands in the input box, not in a panel", () => {
+  const editor = { ...createEditor(), text: "typing", cursor: 6 };
+  const frame = layout(
+    view({ editor, left: pane(["CHATS"]), right: pane(["GARDEN"]) }),
+    { rows: 12, cols: 120 },
+  );
+  const { left } = panelWidths(120, { left: true, right: true });
+  expect(frame.cursor.col).toBe(left + 1 + 2 + 6);
+});
+
+test("a click in the left panel is attributed to the left panel", () => {
+  const left = { lines: ["one", "two"], targets: ["s1", "s2"] };
+  const frame = layout(view({ transcript: ["x"], left }), { rows: 12, cols: 120 });
+  expect(frame.leftTargets.filter((id) => id !== undefined)).toEqual(["s1", "s2"]);
+  expect(frame.targets.filter((id) => id !== undefined)).toEqual([]);
+});
+
+test("a row can carry a target in a panel and another in the conversation", () => {
+  const left = { lines: ["chat"], targets: ["session-1"] };
+  const frame = layout(
+    view({ transcript: ["hi", "  copy"], targets: [undefined, "message-1"], left }),
+    { rows: 14, cols: 120 },
+  );
+  // Resolved by column, so neither one hides the other.
+  expect(frame.leftTargets).toContain("session-1");
+  expect(frame.targets).toContain("message-1");
+  expect(frame.columns.left).toBeGreaterThan(0);
 });

@@ -1,6 +1,5 @@
 import { test, expect } from "bun:test";
-import { createScreen, restoreSequence, type Terminal } from "../../src/tui/screen";
-import type { Frame } from "../../src/tui/layout";
+import { createScreen, restoreSequence, type Drawable, type Terminal } from "../../src/tui/screen";
 
 function fake(rows = 4, cols = 20) {
   const writes: string[] = [];
@@ -11,9 +10,8 @@ function fake(rows = 4, cols = 20) {
   return { terminal, writes, last: () => writes[writes.length - 1] ?? "" };
 }
 
-const frame = (lines: string[], row = 0, col = 0): Frame => ({
+const frame = (lines: string[], row = 0, col = 0): Drawable => ({
   lines,
-  targets: lines.map(() => undefined),
   cursor: { row, col },
 });
 
@@ -133,7 +131,6 @@ test("a row with its own surface gets that one instead of the canvas", () => {
   const host = fake();
   createScreen(host.terminal, { surface: SURFACE }).draw({
     lines: ["a", "b"],
-    targets: [undefined, undefined],
     surfaces: [undefined, PANEL],
     cursor: { row: 0, col: 0 },
   });
@@ -164,8 +161,8 @@ test("a row repaints when only its surface changed, not its text", () => {
   const screen = createScreen(host.terminal, { surface: SURFACE });
   const rows = ["a", "b"];
   const none = [undefined, undefined];
-  screen.draw({ lines: rows, targets: none, surfaces: none, cursor: { row: 0, col: 0 } });
-  screen.draw({ lines: rows, targets: none, surfaces: [undefined, PANEL], cursor: { row: 0, col: 0 } });
+  screen.draw({ lines: rows, surfaces: none, cursor: { row: 0, col: 0 } });
+  screen.draw({ lines: rows, surfaces: [undefined, PANEL], cursor: { row: 0, col: 0 } });
 
   // The panel boundary slides across blank rows as the input box grows; a diff
   // keyed on the bare text would leave the old surface behind.

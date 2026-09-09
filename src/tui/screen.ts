@@ -2,6 +2,14 @@ import { RESET } from "./color";
 import type { Frame } from "./layout";
 
 /**
+ * What the screen needs of a frame. Clicks are resolved by the app, so the
+ * columns and their targets are none of the driver's business.
+ */
+export type Drawable = Pick<Frame, "lines" | "cursor"> & {
+  surfaces?: (string | undefined)[];
+};
+
+/**
  * The only part that talks to a terminal.
  *
  * Redraws are differential — a streaming answer changes one line at a time,
@@ -19,7 +27,7 @@ export interface Screen {
   /** Changes the canvas colour and forces a full repaint onto it. */
   setSurface(surface: string): void;
   leave(): void;
-  draw(frame: Frame): void;
+  draw(frame: Drawable): void;
   size(): { rows: number; cols: number };
 }
 
@@ -81,7 +89,7 @@ export function createScreen(
       terminal.write(restoreSequence({ mouse: options.mouse === true }));
     },
 
-    draw(frame: Frame) {
+    draw(frame: Drawable) {
       const size = terminal.size();
       // Diffing against a frame drawn at another size would leave debris.
       if (size.rows !== lastSize.rows || size.cols !== lastSize.cols) {
