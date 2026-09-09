@@ -3,6 +3,10 @@
   <img alt="Vesna" src="assets/logo-light.svg" width="240">
 </picture>
 
+*The mark alone — for a favicon, an avatar, anywhere the wordmark does not
+fit — ships as the same light/dark pair: `assets/mark.svg` for dark
+backgrounds, `assets/mark-light.svg` for light ones.*
+
 An agent that turns its own work into deterministic, reviewable workflows.
 
 The first time you ask for something, a model does it live: expensive, slow, and
