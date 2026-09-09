@@ -11,7 +11,6 @@ export interface Glyphs {
   prompt: string;
   rule: string;
   bullet: string;
-  cursor: string;
   spinner: readonly string[];
 }
 
@@ -20,7 +19,6 @@ export const UNICODE_GLYPHS: Glyphs = {
   prompt: "›",
   rule: "─",
   bullet: "·",
-  cursor: "▏",
   spinner: ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"],
 };
 
@@ -29,7 +27,6 @@ export const ASCII_GLYPHS: Glyphs = {
   prompt: ">",
   rule: "-",
   bullet: "-",
-  cursor: "_",
   spinner: ["|", "/", "-", "\\"],
 };
 

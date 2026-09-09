@@ -1,6 +1,6 @@
 import { test, expect } from "bun:test";
 import { contrastRatio, nearest256 } from "../../src/tui/color";
-import { MEANINGFUL, PALETTES, type Token } from "../../src/tui/palette";
+import { MEANINGFUL, MEANING, PALETTES, type Token } from "../../src/tui/palette";
 
 const palettes = Object.values(PALETTES);
 
@@ -58,4 +58,16 @@ test("every token is a full six-digit hex, so nothing is half-specified", () => 
 test("vesna is dark and washi is light, as the spec describes them", () => {
   expect(contrastRatio("#000000", PALETTES.vesna!.tokens.bg)).toBeLessThan(2);
   expect(contrastRatio("#FFFFFF", PALETTES.washi!.tokens.bg)).toBeLessThan(1.2);
+});
+
+test("every token declares whether it carries meaning, so a new one cannot slip the guard", () => {
+  // The compiler forces the declaration; this asserts the declaration is what
+  // MEANINGFUL is actually derived from, rather than a second list beside it.
+  const declared = Object.keys(MEANING) as Token[];
+  for (const palette of palettes) {
+    for (const token of Object.keys(palette.tokens) as Token[]) {
+      expect(declared).toContain(token);
+    }
+  }
+  expect([...MEANINGFUL]).toEqual(declared.filter((token) => MEANING[token]));
 });

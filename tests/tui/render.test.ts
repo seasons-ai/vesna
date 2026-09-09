@@ -1,5 +1,5 @@
 import { test, expect } from "bun:test";
-import { progressBar, spinnerFrame, truncate } from "../../src/tui/render";
+import { progressBar, spinnerFrame } from "../../src/tui/render";
 import { ASCII_GLYPHS, UNICODE_GLYPHS } from "../../src/tui/glyphs";
 
 test("a progress bar is exactly the requested width", () => {
@@ -28,10 +28,4 @@ test("the spinner cycles through whichever frames it is given", () => {
   expect(spinnerFrame(0, ASCII_GLYPHS.spinner)).toBe("|");
   expect(spinnerFrame(4, ASCII_GLYPHS.spinner)).toBe("|");
   expect(spinnerFrame(1, UNICODE_GLYPHS.spinner)).toBe("⠙");
-});
-
-test("truncate keeps short text and ellipsises long text to the limit", () => {
-  expect(truncate("short", 10)).toBe("short");
-  expect(truncate("a".repeat(30), 10)).toHaveLength(10);
-  expect(truncate("a".repeat(30), 10).endsWith("…")).toBe(true);
 });

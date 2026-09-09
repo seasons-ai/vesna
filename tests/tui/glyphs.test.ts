@@ -26,7 +26,7 @@ test("the config setting wins over any locale", () => {
 test("no ASCII glyph contains a byte above 127", () => {
   const every = [
     ASCII_GLYPHS.mark, ASCII_GLYPHS.prompt, ASCII_GLYPHS.rule,
-    ASCII_GLYPHS.bullet, ASCII_GLYPHS.cursor, ...ASCII_GLYPHS.spinner,
+    ASCII_GLYPHS.bullet, ...ASCII_GLYPHS.spinner,
   ].join("");
   expect(every).toMatch(/^[\x20-\x7e]+$/);
 });

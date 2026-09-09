@@ -7,9 +7,3 @@ export function progressBar(done: number, total: number, width: number): string 
   const filled = Math.round(ratio * width);
   return "█".repeat(filled) + "·".repeat(width - filled);
 }
-
-export function truncate(text: string, limit: number): string {
-  if (text.length <= limit) return text;
-  if (limit <= 1) return "…".slice(0, limit);
-  return `${text.slice(0, limit - 1)}…`;
-}

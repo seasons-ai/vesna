@@ -24,16 +24,35 @@ export interface Palette {
   tokens: Record<Token, string>;
 }
 
+/**
+ * Whether each token carries meaning, and so must be legible.
+ *
+ * A `Record<Token, boolean>` rather than a list, so the compiler makes the
+ * decision unskippable: adding a token to `Token` fails to build until someone
+ * says which side of the contrast guard it falls on. The spec reserves room
+ * for syntax and diff tokens next, and a new token that quietly escaped the
+ * guard is exactly the sort of thing a first pull request would do.
+ */
+export const MEANING: Record<Token, boolean> = {
+  // Surfaces are never text.
+  bg: false,
+  panel: false,
+  // Decoration: a separator, and non-semantic marks.
+  rule: false,
+  faint: false,
+  text: true,
+  muted: true,
+  petal: true,
+  ice: true,
+  ok: true,
+  warn: true,
+  error: true,
+};
+
 /** Tokens that carry meaning, and so must be legible. */
-export const MEANINGFUL: readonly Token[] = [
-  "text",
-  "muted",
-  "petal",
-  "ice",
-  "ok",
-  "warn",
-  "error",
-];
+export const MEANINGFUL: readonly Token[] = (Object.keys(MEANING) as Token[]).filter(
+  (token) => MEANING[token],
+);
 
 /** A theme name that paints nothing at all. */
 export const MONO = "mono";
