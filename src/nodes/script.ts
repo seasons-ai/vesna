@@ -1,8 +1,12 @@
 import type { NodeDef } from "../registry/types";
 
-// Runs in a separate process with a minimal environment and no network.
-// This is process isolation, not VM isolation — see the security section of
-// the design spec. The body assigns its result to `output`.
+// Runs the body in a separate process with a fresh environment, its own cwd
+// and a timeout. That is the whole of the containment, and it is worth being
+// blunt about what it is not: the child keeps the privileges of the user who
+// started Vesna. node:fs, Bun.file, node:net, node:http and Bun.spawn are all
+// reachable from inside, so overwriting globalThis.fetch below stops the
+// obvious call and nothing more. Real containment needs OS-level isolation,
+// which is not built; until it is, `permissions.nodes` is the actual control.
 //
 // The payload travels in an environment variable rather than argv: argv layout
 // differs between runtimes, and a large script body would eventually exceed the
@@ -12,7 +16,7 @@ const PAYLOAD_VAR = "VESNA_SCRIPT_PAYLOAD";
 const RUNNER = `
 const payload = JSON.parse(process.env.${PAYLOAD_VAR});
 globalThis.fetch = () => {
-  throw new Error("network access is disabled in the script sandbox");
+  throw new Error("fetch is disabled here; note this is a speed bump, not a sandbox");
 };
 const input = payload.args ?? {};
 try {
@@ -33,7 +37,8 @@ export const scriptNode: NodeDef<
   unknown
 > = {
   type: "script",
-  description: "Evaluate a short JavaScript body in a sandbox with no network access. Assign the result to `output`.",
+  description:
+    "Evaluate a short JavaScript body in a separate process with the same privileges as Vesna itself. This is NOT a sandbox: it can read and write any file the user can, and open network connections. Prefer read, write, glob or grep when one of them will do. Assign the result to `output`.",
   inputSchema: { type: "object", properties: { body: { type: "string" }, args: { type: "object" }, timeoutMs: { type: "number" } }, required: ["body"] },
   effect: "pure",
   async run(input, ctx) {

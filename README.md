@@ -21,7 +21,7 @@ row, melts back into live mode, gets repaired, and re-freezes.
 > Vesna is the Slavic goddess of spring — the thing that comes back on its own,
 > every year, unasked and unsupervised. That is what a crystal is meant to become.
 
-**Status: v0.1, a walking skeleton.** It runs end to end and is covered by 456
+**Status: v0.1, a walking skeleton.** It runs end to end and is well covered by
 tests, but it is early. See [What is not built yet](#what-is-not-built-yet).
 
 ---
@@ -397,10 +397,20 @@ Named honestly, because the gap is deliberate rather than an oversight.
 - **Generalisation is not automatic.** Vesna proposes which literals look like
   parameters; you confirm them. Guessing wrong produces a flow that works exactly
   once, and that is an open problem, not a solved one.
-- **The `script` sandbox is process isolation, not VM isolation.** Networking is
-  off and the filesystem is confined to the working directory, but model-authored
-  code still runs on your machine. Scripts appear in pull-request diffs, so review
-  is part of the security model.
+- **`script` is not a sandbox. It runs model-authored code with your own
+  privileges.** An earlier version of this README claimed the filesystem was
+  confined to the working directory and the network was off. Neither is true,
+  and the claim was checked and withdrawn rather than quietly softened. The
+  child process gets a fresh environment, its own `cwd`, and a timeout; that
+  is all. `globalThis.fetch` is overwritten, which stops the obvious call and
+  nothing else — `node:net`, `node:http`, `Bun.connect`, `Bun.spawn`,
+  `node:fs` and `Bun.file` are all reachable, so a script can read any file
+  your user can read and open any connection your user can open.
+
+  Treat the `script` node the way you would treat `eval` on text a model wrote.
+  The real control is `permissions.nodes`: remove `script` and `shell` there and
+  the model is never offered them. Actual containment needs OS-level isolation
+  and is not built.
 - No `watch` command, no flow-calling-flow, no `vesna upgrade` for model changes,
   no container sandbox, no memory directory.
 
@@ -409,7 +419,7 @@ Named honestly, because the gap is deliberate rather than an oversight.
 ## Testing
 
 ```bash
-bun test        # 456 tests, no network access
+bun test        # the whole suite, offline
 bun run typecheck
 ```
 
