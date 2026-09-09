@@ -1,3 +1,4 @@
+import { RESET } from "./color";
 import type { Frame } from "./layout";
 
 /**
@@ -33,7 +34,11 @@ function moveTo(row: number, col: number): string {
   return `\x1b[${row + 1};${col + 1}H`;
 }
 
-export function createScreen(terminal: Terminal): Screen {
+export function createScreen(
+  terminal: Terminal,
+  options: { surface?: string } = {},
+): Screen {
+  const surface = options.surface ?? "";
   let previous: string[] = [];
   let lastSize = { rows: -1, cols: -1 };
 
@@ -41,12 +46,12 @@ export function createScreen(terminal: Terminal): Screen {
     size: () => terminal.size(),
 
     enter() {
-      terminal.write(`${ALT_ON}${CURSOR_HIDE}${PASTE_ON}${CLEAR_ALL}`);
+      terminal.write(`${ALT_ON}${CURSOR_HIDE}${PASTE_ON}${surface}${CLEAR_ALL}`);
       previous = [];
     },
 
     leave() {
-      terminal.write(`${PASTE_OFF}${CURSOR_SHOW}${ALT_OFF}`);
+      terminal.write(`${RESET}${PASTE_OFF}${CURSOR_SHOW}${ALT_OFF}`);
     },
 
     draw(frame: Frame) {
@@ -60,7 +65,12 @@ export function createScreen(terminal: Terminal): Screen {
       let out = CURSOR_HIDE;
       for (const [index, line] of frame.lines.entries()) {
         if (previous[index] === line) continue;
-        out += `${moveTo(index, 0)}${CLEAR_LINE}${line}`;
+        // The canvas is re-established per line: a reset inside painted text
+        // would otherwise drop the background for everything after it.
+        const behind = frame.surfaces?.[index] ?? surface;
+        out += behind === ""
+          ? `${moveTo(index, 0)}${CLEAR_LINE}${line}`
+          : `${moveTo(index, 0)}${CLEAR_LINE}${behind}${line}${RESET}`;
       }
       out += `${moveTo(frame.cursor.row, frame.cursor.col)}${CURSOR_SHOW}`;
 

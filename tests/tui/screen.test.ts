@@ -102,3 +102,53 @@ test("a draw is one write, so the screen cannot tear halfway through", () => {
   screen.draw(frame(["a", "b", "c"]));
   expect(host.writes).toHaveLength(1);
 });
+
+const SURFACE = "\x1b[48;5;234m";
+
+test("entering clears the screen with the canvas colour, not the terminal's", () => {
+  const host = fake();
+  createScreen(host.terminal, { surface: SURFACE }).enter();
+  const output = host.writes.join("");
+  expect(output.indexOf(SURFACE)).toBeLessThan(output.indexOf("\x1b[2J"));
+});
+
+test("each drawn line is written on the canvas and closed afterwards", () => {
+  const host = fake();
+  createScreen(host.terminal, { surface: SURFACE }).draw(frame(["a", "b"]));
+  expect(host.last()).toContain(`\x1b[2K${SURFACE}a\x1b[0m`);
+});
+
+test("the canvas is re-established for every line, so one reset cannot strip the rest", () => {
+  const host = fake();
+  createScreen(host.terminal, { surface: SURFACE }).draw(frame(["a", "b", "c"]));
+  expect(host.last().split(SURFACE)).toHaveLength(4);
+});
+
+test("a row with its own surface gets that one instead of the canvas", () => {
+  const PANEL = "\x1b[48;5;235m";
+  const host = fake();
+  createScreen(host.terminal, { surface: SURFACE }).draw({
+    lines: ["a", "b"],
+    surfaces: [undefined, PANEL],
+    cursor: { row: 0, col: 0 },
+  });
+  expect(host.last()).toContain(`\x1b[2K${SURFACE}a\x1b[0m`);
+  expect(host.last()).toContain(`\x1b[2K${PANEL}b\x1b[0m`);
+});
+
+test("without a surface nothing extra is emitted at all", () => {
+  const host = fake();
+  createScreen(host.terminal).draw(frame(["a"]));
+  expect(host.last()).not.toContain("\x1b[48;");
+  expect(host.last()).toContain("\x1b[2Ka");
+});
+
+test("leaving resets the colour before handing the terminal back", () => {
+  const host = fake();
+  const screen = createScreen(host.terminal, { surface: SURFACE });
+  screen.enter();
+  host.writes.length = 0;
+  screen.leave();
+  const output = host.writes.join("");
+  expect(output.indexOf("\x1b[0m")).toBeLessThan(output.indexOf("\x1b[?1049l"));
+});

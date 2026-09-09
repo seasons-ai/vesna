@@ -43,7 +43,7 @@ const PAGE_FRACTION = 0.8;
 
 export async function runApp(deps: AppDeps, io: AppIo): Promise<number> {
   const { theme } = deps;
-  const screen = createScreen(io.terminal);
+  const screen = createScreen(io.terminal, { surface: theme.surface });
   const transcript = createTranscript(theme);
 
   let editor = createEditor();
@@ -70,6 +70,7 @@ export async function runApp(deps: AppDeps, io: AppIo): Promise<number> {
       hint: hint(theme, busy, confirmExit),
       status: status(deps, session, busy, tick),
       scroll,
+      panel: theme.panel,
     };
   }
 

@@ -56,17 +56,24 @@ test("at depth 0 nothing is painted and the text is untouched", () => {
   const theme = resolveTheme("vesna", { depth: 0 });
   expect(theme.paint("petal", "x")).toBe("x");
   expect(theme.surface).toBe("");
+  expect(theme.panel).toBe("");
 });
 
 test("mono paints nothing even on a truecolor terminal", () => {
   const theme = resolveTheme("mono", { depth: 24 });
   expect(theme.paint("petal", "x")).toBe("x");
   expect(theme.surface).toBe("");
+  expect(theme.panel).toBe("");
 });
 
 test("the surface establishes the canvas background at each depth", () => {
   expect(resolveTheme("vesna", { depth: 24 }).surface).toBe("\x1b[48;2;20;22;31m");
   expect(resolveTheme("vesna", { depth: 8 }).surface).toBe("\x1b[48;5;234m");
+});
+
+test("the panel establishes the input box's own background at each depth", () => {
+  expect(resolveTheme("vesna", { depth: 24 }).panel).toBe("\x1b[48;2;28;32;44m");
+  expect(resolveTheme("vesna", { depth: 8 }).panel).toBe("\x1b[48;5;235m");
 });
 
 test("painting never changes the text itself, only its colour", () => {

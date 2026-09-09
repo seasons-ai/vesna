@@ -38,6 +38,8 @@ export interface Theme {
   paint(role: Role, text: string): string;
   /** SGR that establishes the canvas, or "" when nothing is painted. */
   surface: string;
+  /** SGR that establishes the input box's own background, or "" when nothing is painted. */
+  panel: string;
 }
 
 export function themeNames(): string[] {
@@ -63,6 +65,11 @@ export function resolveTheme(
       ? options.depth === 24
         ? bg24(palette.tokens.bg)
         : bg8(nearest256(palette.tokens.bg))
+      : "",
+    panel: paints
+      ? options.depth === 24
+        ? bg24(palette.tokens.panel)
+        : bg8(nearest256(palette.tokens.panel))
       : "",
     paint(role, text) {
       if (!paints) return text;
