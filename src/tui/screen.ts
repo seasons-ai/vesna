@@ -29,6 +29,9 @@ const PASTE_ON = "\x1b[?2004h";
 const PASTE_OFF = "\x1b[?2004l";
 const CLEAR_LINE = "\x1b[2K";
 const CLEAR_ALL = "\x1b[2J";
+/** Button events plus the SGR encoding, which survives past column 223. */
+const MOUSE_ON = "\x1b[?1000h\x1b[?1006h";
+const MOUSE_OFF = "\x1b[?1006l\x1b[?1000l";
 
 function moveTo(row: number, col: number): string {
   return `\x1b[${row + 1};${col + 1}H`;
@@ -36,9 +39,13 @@ function moveTo(row: number, col: number): string {
 
 export function createScreen(
   terminal: Terminal,
-  options: { surface?: string } = {},
+  options: { surface?: string; mouse?: boolean } = {},
 ): Screen {
   const surface = options.surface ?? "";
+  // Reporting the mouse takes text selection away from the terminal, so it is
+  // opt-in and must be handed back on the way out.
+  const mouse = options.mouse === true ? MOUSE_ON : "";
+  const mouseOff = options.mouse === true ? MOUSE_OFF : "";
   let previous: string[] = [];
   let lastSize = { rows: -1, cols: -1 };
 
@@ -46,12 +53,12 @@ export function createScreen(
     size: () => terminal.size(),
 
     enter() {
-      terminal.write(`${ALT_ON}${CURSOR_HIDE}${PASTE_ON}${surface}${CLEAR_ALL}`);
+      terminal.write(`${ALT_ON}${CURSOR_HIDE}${PASTE_ON}${mouse}${surface}${CLEAR_ALL}`);
       previous = [];
     },
 
     leave() {
-      terminal.write(`${RESET}${PASTE_OFF}${CURSOR_SHOW}${ALT_OFF}`);
+      terminal.write(`${RESET}${mouseOff}${PASTE_OFF}${CURSOR_SHOW}${ALT_OFF}`);
     },
 
     draw(frame: Frame) {

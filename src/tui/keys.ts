@@ -27,6 +27,9 @@ export type Key =
   | { type: "interrupt" }
   | { type: "eof" }
   | { type: "tab" }
+  | { type: "wheel-up" }
+  | { type: "wheel-down" }
+  | { type: "click"; column: number; row: number }
   | { type: "page-up" }
   | { type: "page-down" }
   | { type: "escape" };
@@ -151,6 +154,11 @@ function readEscape(input: string, start: number): { key: Key | null; next: numb
     return { key: { type: "escape" }, next: start + 1 };
   }
 
+  // SGR mouse: CSI < Cb ; Cx ; Cy (M press | m release).
+  if (after === "[" && input[start + 2] === "<") {
+    return readMouse(input, start);
+  }
+
   // CSI: parameter bytes, then one final letter.
   let index = start + 2;
   while (index < input.length && /[0-9;]/.test(input[index]!)) index += 1;
@@ -177,4 +185,38 @@ function readEscape(input: string, start: number): { key: Key | null; next: numb
     if (key.type === "down") return { key: { type: "page-down" }, next };
   }
   return { key, next };
+}
+
+/** Wheel bit in the SGR button code; 64 is up, 65 is down. */
+const WHEEL = 64;
+/** Set while the mouse is merely moving, which is not a click. */
+const MOTION = 32;
+
+function readMouse(input: string, start: number): { key: Key | null; next: number } | null {
+  let index = start + 3;
+  while (index < input.length && /[0-9;]/.test(input[index]!)) index += 1;
+  if (index >= input.length) return null;
+
+  const final = input[index]!;
+  if (final !== "M" && final !== "m") return { key: null, next: index + 1 };
+
+  const parts = input.slice(start + 3, index).split(";").map(Number);
+  const [button, column, row] = parts;
+  const next = index + 1;
+  if (button === undefined || column === undefined || row === undefined) {
+    return { key: null, next };
+  }
+
+  if ((button & WHEEL) !== 0) {
+    // Modifier bits ride alongside the button; the low two bits pick the axis.
+    return { key: { type: (button & 1) === 0 ? "wheel-up" : "wheel-down" }, next };
+  }
+
+  // A release repeats the press, and motion is not a click; either would
+  // double or scatter the action.
+  if (final === "m" || (button & MOTION) !== 0) return { key: null, next };
+  if ((button & 3) !== 0) return { key: null, next };
+
+  // The terminal counts from one; every coordinate in the frame counts from zero.
+  return { key: { type: "click", column: column - 1, row: row - 1 }, next };
 }

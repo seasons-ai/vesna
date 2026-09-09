@@ -71,6 +71,7 @@ export function layout(view: ViewState, size: { rows: number; cols: number }): F
   lines.push(fit(view.header, cols));
 
   const wrapped = view.transcript.flatMap((line) => wrapAnsi(line, cols));
+  const hidden = Math.max(0, wrapped.length - Math.max(0, transcriptRows) - view.scroll);
   const body = Math.max(0, transcriptRows);
   if (wrapped.length === 0 && view.empty !== undefined && view.empty.length > 0) {
     const shown = view.empty.slice(0, body);
@@ -96,7 +97,10 @@ export function layout(view: ViewState, size: { rows: number; cols: number }): F
   }
   const inputLastRow = lines.length - 1;
 
-  lines.push(statusLine(view.hint, view.status, cols));
+  // Scrolled back, the newest text is off-screen: say so, or the user cannot
+  // tell a paused conversation from a finished one.
+  const hint = view.scroll > 0 && hidden > 0 ? `${hidden} more below` : view.hint;
+  lines.push(statusLine(hint, view.status, cols));
 
   const cursor = cursorAt(view.editor, inner, inputRows);
   const inputTop = 1 + Math.max(0, transcriptRows) + 1;

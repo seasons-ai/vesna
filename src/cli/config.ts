@@ -40,6 +40,8 @@ export interface VesnaConfig {
    * plain boolean: unset means "ask the locale", true/false override it.
    */
   ascii?: boolean;
+  /** Report the mouse so the wheel scrolls. Costs terminal text selection. */
+  mouse?: boolean;
 }
 
 export async function loadConfig(root: string): Promise<VesnaConfig> {
@@ -82,6 +84,7 @@ export async function loadConfig(root: string): Promise<VesnaConfig> {
     // Permissions are the registry: no node, no capability.
     permissions: { nodes: raw.permissions?.nodes ?? ["read", "write", "shell", "script", "llm"] },
     ascii: raw.ascii === true ? true : raw.ascii === false ? false : undefined,
+    mouse: raw.mouse === false ? false : undefined,
   };
 }
 

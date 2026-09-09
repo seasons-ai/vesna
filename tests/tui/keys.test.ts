@@ -129,3 +129,41 @@ test("shift with a vertical arrow scrolls rather than browsing history", () => {
   expect(keys(`${ESC}[1;2A`)).toEqual([{ type: "page-up" }]);
   expect(keys(`${ESC}[1;2B`)).toEqual([{ type: "page-down" }]);
 });
+
+test("the wheel is decoded from an SGR mouse report", () => {
+  expect(keys(`${ESC}[<64;10;5M`)).toEqual([{ type: "wheel-up" }]);
+  expect(keys(`${ESC}[<65;10;5M`)).toEqual([{ type: "wheel-down" }]);
+});
+
+test("a left click reports where it landed, in zero-based rows and columns", () => {
+  // The terminal counts from 1; the frame counts from 0.
+  expect(keys(`${ESC}[<0;12;7M`)).toEqual([{ type: "click", column: 11, row: 6 }]);
+});
+
+test("the button release is swallowed, so one click is one event", () => {
+  expect(keys(`${ESC}[<0;12;7m`)).toEqual([]);
+});
+
+test("a drag or a move is ignored rather than mistaken for a click", () => {
+  expect(keys(`${ESC}[<32;12;7M`)).toEqual([]);
+  expect(keys(`${ESC}[<35;12;7M`)).toEqual([]);
+});
+
+test("a right or middle click is ignored — only the left button acts", () => {
+  expect(keys(`${ESC}[<1;5;5M`)).toEqual([]);
+  expect(keys(`${ESC}[<2;5;5M`)).toEqual([]);
+});
+
+test("a mouse report split across two reads survives the join", () => {
+  const first = decodeKeys(`${ESC}[<64;10`);
+  expect(first.keys).toEqual([]);
+  expect(decodeKeys(`${first.rest};5M`).keys).toEqual([{ type: "wheel-up" }]);
+});
+
+test("typing after a wheel event still arrives", () => {
+  expect(keys(`${ESC}[<64;1;1Mhi`)).toEqual([{ type: "wheel-up" }, { type: "text", text: "hi" }]);
+});
+
+test("wheel with a modifier held still scrolls rather than being dropped", () => {
+  expect(keys(`${ESC}[<80;10;5M`)).toEqual([{ type: "wheel-up" }]);
+});

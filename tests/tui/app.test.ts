@@ -599,3 +599,58 @@ test("every visible character in the frame has a foreground in force", async () 
   input.type("\x03\x03\x03");
   await finished;
 });
+
+test("the wheel scrolls the conversation instead of walking the input history", async () => {
+  const app = await start(reply("answered"));
+  for (let i = 0; i < 12; i += 1) {
+    app.input.type(`message ${i}\r`);
+    await until(() => app.screen().includes(`message ${i}`), `message ${i} to land`);
+  }
+  await until(() => !app.screen().includes("message 0"), "the top to scroll away");
+  expect(app.screen()).toContain("message 11");
+
+  // Wheel up: the newest goes off the bottom, without touching the box.
+  for (let i = 0; i < 4; i += 1) app.input.type("\x1b[<64;5;5M");
+  await until(() => !app.screen().includes("message 11"), "the newest to scroll away");
+
+  // Lines are padded to the full canvas width, so compare the content.
+  const rows = app.screen().split("\n");
+  expect(rows[rows.length - 2]!.trimEnd()).toBe("›");
+  await quit(app);
+});
+
+test("wheel down returns to the newest, and stops there", async () => {
+  const app = await start(reply("answered"));
+  for (let i = 0; i < 12; i += 1) {
+    app.input.type(`message ${i}\r`);
+    await until(() => app.screen().includes(`message ${i}`), `message ${i}`);
+  }
+  for (let i = 0; i < 4; i += 1) app.input.type("\x1b[<64;5;5M");
+  await until(() => !app.screen().includes("message 11"), "scrolled up");
+
+  // Far more notches than there is conversation: it must stop at the newest,
+  // not keep going and leave the answer hanging off the top.
+  for (let i = 0; i < 40; i += 1) app.input.type("\x1b[<65;5;5M");
+  await until(() => app.screen().includes("message 11"), "back at the bottom");
+  expect(app.screen()).not.toMatch(/more below/);
+  await quit(app);
+});
+
+test("scrolled back, the frame says how much is below", async () => {
+  const app = await start(reply("answered"));
+  for (let i = 0; i < 12; i += 1) {
+    app.input.type(`message ${i}\r`);
+    await until(() => app.screen().includes(`message ${i}`), `message ${i}`);
+  }
+  for (let i = 0; i < 4; i += 1) app.input.type("\x1b[<64;5;5M");
+  await until(() => /\d+ more below/.test(app.screen()), "the scroll indicator");
+  await quit(app);
+});
+
+test("at the bottom there is no indicator to distract from the answer", async () => {
+  const app = await start(reply("answered"));
+  app.input.type("hello\r");
+  await until(() => app.screen().includes("answered"), "the answer");
+  expect(app.screen()).not.toMatch(/more below/);
+  await quit(app);
+});

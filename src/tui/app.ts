@@ -17,6 +17,7 @@ import { emptyState } from "./emptystate";
 import { resolveGlyphs, type Glyphs } from "./glyphs";
 import { decodeKeys, type Key } from "./keys";
 import { layout, type ViewState } from "./layout";
+import { wrapAnsi } from "./wrap";
 import { spinnerFrame } from "./render";
 import { createScreen, type Terminal } from "./screen";
 import type { Theme } from "./theme";
@@ -42,13 +43,19 @@ export interface AppIo {
   onResize?(handler: () => void): () => void;
 }
 
+/** One notch of the wheel. */
+const WHEEL_LINES = 3;
+
 /** How far page-up moves, as a fraction of the visible conversation. */
 const PAGE_FRACTION = 0.8;
 
 export async function runApp(deps: AppDeps, io: AppIo): Promise<number> {
   const { theme } = deps;
   const glyphs = resolveGlyphs(process.env, deps.config.ascii);
-  const screen = createScreen(io.terminal, { surface: theme.surface });
+  const screen = createScreen(io.terminal, {
+    surface: theme.surface,
+    mouse: deps.config.mouse !== false,
+  });
   const transcript = createTranscript(theme, glyphs);
 
   let editor = createEditor();
@@ -66,6 +73,14 @@ export async function runApp(deps: AppDeps, io: AppIo): Promise<number> {
     if (quitting) return;
     screen.draw(layout(currentView(), screen.size()));
   };
+
+  /** Never scroll past the top, and never past the newest line. */
+  function clampScroll(next: number): number {
+    const size = screen.size();
+    const wrapped = transcript.lines().flatMap((line) => wrapAnsi(line, Math.max(1, size.cols)));
+    const visible = conversationRows(size.rows);
+    return Math.max(0, Math.min(next, Math.max(0, wrapped.length - visible)));
+  }
 
   function currentView(): ViewState {
     const size = screen.size();
@@ -115,10 +130,19 @@ export async function runApp(deps: AppDeps, io: AppIo): Promise<number> {
         }
         return;
 
+      case "wheel-up":
+      case "wheel-down": {
+        // Three lines a notch: what every other scrollable surface does.
+        const step = key.type === "wheel-up" ? WHEEL_LINES : -WHEEL_LINES;
+        scroll = clampScroll(scroll + step);
+        draw();
+        return;
+      }
+
       case "page-up":
       case "page-down": {
         const page = Math.max(1, Math.floor(conversationRows(screen.size().rows) * PAGE_FRACTION));
-        scroll = Math.max(0, scroll + (key.type === "page-up" ? page : -page));
+        scroll = clampScroll(scroll + (key.type === "page-up" ? page : -page));
         draw();
         return;
       }

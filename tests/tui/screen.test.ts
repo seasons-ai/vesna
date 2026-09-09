@@ -166,3 +166,38 @@ test("a row repaints when only its surface changed, not its text", () => {
   expect(host.last()).toContain(`\x1b[2;1H\x1b[2K${PANEL}b`);
   expect(host.last()).not.toContain("\x1b[1;1H\x1b[2K");
 });
+
+test("mouse reporting is turned on when asked, in the SGR encoding", () => {
+  const host = fake();
+  createScreen(host.terminal, { mouse: true }).enter();
+  const out = host.writes.join("");
+  expect(out).toContain("\x1b[?1000h");
+  expect(out).toContain("\x1b[?1006h");
+});
+
+test("mouse reporting stays off by default, so selection keeps working", () => {
+  const host = fake();
+  createScreen(host.terminal).enter();
+  expect(host.writes.join("")).not.toContain("\x1b[?1000h");
+});
+
+test("leaving hands the mouse back before restoring the screen", () => {
+  const host = fake();
+  const screen = createScreen(host.terminal, { mouse: true });
+  screen.enter();
+  host.writes.length = 0;
+  screen.leave();
+  const out = host.writes.join("");
+  expect(out).toContain("\x1b[?1006l");
+  expect(out).toContain("\x1b[?1000l");
+  expect(out.indexOf("\x1b[?1000l")).toBeLessThan(out.indexOf("\x1b[?1049l"));
+});
+
+test("a screen that never enabled the mouse does not disable it either", () => {
+  const host = fake();
+  const screen = createScreen(host.terminal);
+  screen.enter();
+  host.writes.length = 0;
+  screen.leave();
+  expect(host.writes.join("")).not.toContain("\x1b[?1000l");
+});
