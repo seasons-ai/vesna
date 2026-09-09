@@ -1,5 +1,5 @@
 import { test, expect } from "bun:test";
-import { createScreen, type Terminal } from "../../src/tui/screen";
+import { createScreen, restoreSequence, type Terminal } from "../../src/tui/screen";
 import type { Frame } from "../../src/tui/layout";
 
 function fake(rows = 4, cols = 20) {
@@ -200,4 +200,30 @@ test("a screen that never enabled the mouse does not disable it either", () => {
   host.writes.length = 0;
   screen.leave();
   expect(host.writes.join("")).not.toContain("\x1b[?1000l");
+});
+
+test("the restore sequence is exactly what leaving writes", () => {
+  const host = fake();
+  const screen = createScreen(host.terminal, { surface: SURFACE, mouse: true });
+  screen.enter();
+  host.writes.length = 0;
+  screen.leave();
+  expect(host.writes.join("")).toBe(restoreSequence({ mouse: true }));
+});
+
+test("the restore sequence undoes every mode Vesna turns on", () => {
+  const restore = restoreSequence({ mouse: true });
+  for (const mode of ["\x1b[?1006l", "\x1b[?1000l", "\x1b[?2004l", "\x1b[?25h", "\x1b[?1049l"]) {
+    expect(restore).toContain(mode);
+  }
+});
+
+test("without the mouse it does not disable a mode nobody enabled", () => {
+  expect(restoreSequence({ mouse: false })).not.toContain("\x1b[?1000l");
+  expect(restoreSequence({ mouse: false })).toContain("\x1b[?1049l");
+});
+
+test("the alternate screen is left last, so the restores are seen", () => {
+  const restore = restoreSequence({ mouse: true });
+  expect(restore.indexOf("\x1b[?1049l")).toBe(restore.length - "\x1b[?1049l".length);
 });

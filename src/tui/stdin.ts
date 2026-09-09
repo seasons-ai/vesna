@@ -1,5 +1,6 @@
+import { writeSync } from "node:fs";
 import { runApp, type AppDeps, type AppIo } from "./app";
-import type { Terminal } from "./screen";
+import { restoreSequence, type Terminal } from "./screen";
 
 /** The real terminal, wired to this process. */
 export function processIo(): AppIo {
@@ -72,11 +73,54 @@ function chunks(): AsyncIterable<string> {
   };
 }
 
+/**
+ * Hands the terminal back even when the process does not get to finish.
+ *
+ * A killed Vesna would otherwise leave the alternate screen up, the cursor
+ * hidden and the mouse reporting — a shell the user has to `reset` to recover.
+ * The handlers write synchronously, because an exit listener cannot await.
+ */
+function installTerminalGuard(mouse: boolean): () => void {
+  let restored = false;
+  const restore = () => {
+    if (restored) return;
+    restored = true;
+    try {
+      writeSync(1, restoreSequence({ mouse }));
+    } catch {
+      // Nothing useful to do if even this fails; do not mask the real exit.
+    }
+  };
+
+  const onSignal = (signal: NodeJS.Signals) => {
+    restore();
+    process.kill(process.pid, signal);
+  };
+
+  const signals: NodeJS.Signals[] = ["SIGTERM", "SIGHUP", "SIGQUIT"];
+  process.on("exit", restore);
+  for (const signal of signals) {
+    process.once(signal, () => {
+      process.removeListener(signal, onSignal);
+      restore();
+      // Re-raise with the handler gone, so the exit status is the true one.
+      process.kill(process.pid, signal);
+    });
+  }
+
+  return () => {
+    restored = true; // a clean leave() has already restored the terminal
+    process.removeListener("exit", restore);
+  };
+}
+
 export async function runTui(deps: AppDeps): Promise<number> {
   const io = processIo();
+  const release = installTerminalGuard(deps.config.mouse !== false);
   try {
     return await runApp(deps, io);
   } finally {
+    release();
     // Without this the process lingers on an open stdin after the app returns.
     process.stdin.pause();
   }

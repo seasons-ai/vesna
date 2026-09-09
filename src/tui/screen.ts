@@ -37,6 +37,17 @@ function moveTo(row: number, col: number): string {
   return `\x1b[${row + 1};${col + 1}H`;
 }
 
+/**
+ * Everything Vesna turned on, turned off, in reverse. Exported because a
+ * process that is killed never reaches `leave()`, and a terminal left in the
+ * alternate screen with the mouse reporting and no cursor needs `reset` to
+ * recover — the user should never have to.
+ */
+export function restoreSequence(options: { mouse: boolean }): string {
+  const mouseOff = options.mouse ? MOUSE_OFF : "";
+  return `${RESET}${mouseOff}${PASTE_OFF}${CURSOR_SHOW}${ALT_OFF}`;
+}
+
 export function createScreen(
   terminal: Terminal,
   options: { surface?: string; mouse?: boolean } = {},
@@ -58,7 +69,7 @@ export function createScreen(
     },
 
     leave() {
-      terminal.write(`${RESET}${mouseOff}${PASTE_OFF}${CURSOR_SHOW}${ALT_OFF}`);
+      terminal.write(restoreSequence({ mouse: options.mouse === true }));
     },
 
     draw(frame: Frame) {
