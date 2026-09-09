@@ -478,3 +478,123 @@ test("crystallising is painted ice, the cold half of frost and blossom", async (
   input.type("\x03\x03\x03");
   await finished;
 });
+
+/**
+ * The frame's real invariant, which is per character and not per row.
+ *
+ * `paint` closes a run with SGR 39, which restores the TERMINAL's default
+ * foreground, and the screen driver re-establishes only the background for
+ * each row. So a bare span that follows a painted span on the same line has
+ * no foreground at all — the F1 defect exactly, surviving inside a line whose
+ * other half is painted. A per-row check ("does this line carry a foreground
+ * anywhere?") passes on such a line and is what let two of these through.
+ */
+function unpainted(line: string): string {
+  const sgr = /\x1b\[([0-9;]*)m/y;
+  let painted = false;
+  let bare = "";
+  let index = 0;
+
+  while (index < line.length) {
+    sgr.lastIndex = index;
+    const match = sgr.exec(line);
+    if (match !== null) {
+      const codes = (match[1] === "" ? "0" : match[1]!).split(";").map(Number);
+      for (let k = 0; k < codes.length; k += 1) {
+        const code = codes[k]!;
+        // 38 and 48 carry their colour as following parameters; stepping over
+        // them keeps a blue channel of 39 from reading as "close foreground".
+        if (code === 38 || code === 48) {
+          if (code === 38) painted = true;
+          k += codes[k + 1] === 2 ? 4 : codes[k + 1] === 5 ? 2 : 1;
+          k -= 1;
+          continue;
+        }
+        if (code === 0 || code === 39) painted = false;
+        else if ((code >= 30 && code <= 37) || (code >= 90 && code <= 97)) painted = true;
+      }
+      index += match[0].length;
+      continue;
+    }
+    const char = String.fromCodePoint(line.codePointAt(index)!);
+    // A space shows only the background, so it needs no foreground of its own.
+    if (!painted && char.trim() !== "") bare += char;
+    index += char.length;
+  }
+  return bare;
+}
+
+/** Every row of the frame, named, that has a character with no foreground. */
+function bareSpans(host: { raw(): string }, moment: string): string[] {
+  return host
+    .raw()
+    .split("\n")
+    .map((row, index) => ({ index, bare: unpainted(row) }))
+    .filter((row) => row.bare !== "")
+    .map((row) => `${moment} row ${row.index}: ${JSON.stringify(row.bare)}`);
+}
+
+/** Calls a tool, streams an answer, then holds mid-turn until released. */
+function auditTurn() {
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  let calls = 0;
+  return {
+    release,
+    provider: provider(async (request) => {
+      calls += 1;
+      if (calls === 1) {
+        return {
+          content: [{ type: "tool_call", id: "call-1", name: "echo", input: { path: "a.txt" } }],
+          stopReason: "tool_use",
+          model: "fake",
+          usage: { inputTokens: 1, outputTokens: 1, cacheReadTokens: 0, cacheWriteTokens: 0 },
+        };
+      }
+      request.onText?.("Reading the file.");
+      await gate;
+      return done("Reading the file.");
+    }),
+  };
+}
+
+test("every visible character in the frame has a foreground in force", async () => {
+  const registry = createRegistry();
+  registry.register(ECHO);
+  const turn = auditTurn();
+  const base = await deps(turn.provider, { registry, theme: PAINTED });
+  const host = fakeTerminal(16, 76);
+  const input = keyboard();
+  const finished = runApp(
+    { ...base, config: { ...base.config, permissions: { nodes: ["echo"] } } },
+    { terminal: host.terminal, input },
+  );
+
+  const offenders: string[] = [];
+
+  // The header, the empty state, an empty input box, and the idle status.
+  await until(() => host.screen().includes("v e s n a"), "the empty state");
+  offenders.push(...bareSpans(host, "empty state"));
+
+  // Mid-turn: a conversation with a tool step, and the busy status with its
+  // spinner — the one branch of `status` that does not paint its own body.
+  input.type("go\r");
+  await until(() => host.screen().includes("Reading the file."), "the streamed answer");
+  offenders.push(...bareSpans(host, "mid-turn"));
+
+  turn.release();
+  await until(() => !host.screen().includes("ctrl-c interrupt"), "the turn to finish");
+  offenders.push(...bareSpans(host, "after the turn"));
+
+  // The input box with text in it, over a settled conversation.
+  input.type("and again");
+  await until(() => host.screen().includes("› and again"), "the typed text");
+  offenders.push(...bareSpans(host, "typing"));
+
+  expect(offenders).toEqual([]);
+
+  input.type("\x03\x03\x03");
+  await finished;
+});

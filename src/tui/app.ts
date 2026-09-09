@@ -339,7 +339,10 @@ function header(deps: AppDeps, glyphs: Glyphs): string {
   const { theme, config } = deps;
   const mode = config.provider === "openai" ? `${config.provider}/${config.auth}` : config.provider;
   const dot = theme.paint("muted", glyphs.bullet);
-  return `${theme.paint("petal", glyphs.mark)} ${theme.paint("petal", "vesna")} ${dot} ${config.model} ${dot} ${theme.paint("muted", mode)}`;
+  // Every span here paints. A bare one would close the run before it with
+  // SGR 39 and then render at the terminal's own default foreground, because
+  // only the background is re-established per row.
+  return `${theme.paint("petal", glyphs.mark)} ${theme.paint("petal", "vesna")} ${dot} ${theme.paint("text", config.model)} ${dot} ${theme.paint("muted", mode)}`;
 }
 
 function hint(theme: Theme, busy: boolean, confirmExit: boolean, glyphs: Glyphs): string {
@@ -353,8 +356,10 @@ function status(deps: AppDeps, session: Session, busy: boolean, tick: number, gl
   const tokens = usage.inputTokens + usage.outputTokens;
   const cost = `$${session.costUsd.toFixed(4)}`;
   const body = `${formatTokens(tokens)} ${glyphs.bullet} ${cost}`;
+  // The body is painted in both branches, not just the idle one: after the
+  // spinner's own run closes there is no foreground left in force.
   return busy
-    ? `${deps.theme.paint("petal", spinnerFrame(tick, glyphs.spinner))} ${body}`
+    ? `${deps.theme.paint("petal", spinnerFrame(tick, glyphs.spinner))} ${deps.theme.paint("muted", body)}`
     : deps.theme.paint("muted", body);
 }
 
