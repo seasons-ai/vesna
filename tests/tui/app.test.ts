@@ -880,8 +880,16 @@ test("a slash command is control, not conversation, and is never recorded", asyn
   app.input.type("a real question\r");
   await until(() => app.screen().includes("x"), "the answer");
 
-  const stored = await readSession(store, record.id);
-  const said = stored!.events.filter((e) => e.t === "user").map((e) => (e as { text: string }).text);
+  // The app deliberately does not await its own writes, so poll for the line.
+  let said: string[] = [];
+  for (let attempt = 0; attempt < 100; attempt += 1) {
+    const stored = await readSession(store, record.id);
+    said = (stored?.events ?? [])
+      .filter((e) => e.t === "user")
+      .map((e) => (e as { text: string }).text);
+    if (said.length > 0) break;
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  }
   expect(said).toEqual(["a real question"]);
   await quit(app);
 });
@@ -903,5 +911,79 @@ test("the conversation you are in is not offered for resuming", async () => {
   await until(() => /no conversations|resume <number>/.test(app.screen()), "the listing");
   expect(app.screen()).not.toContain("something in the current session\n");
   expect(app.screen()).toMatch(/no conversations from this folder/);
+  await quit(app);
+});
+
+test("ctrl-b opens the conversations column and closes it again", async () => {
+  const store = await mkdtemp(join(tmpdir(), "vesna-pane-"));
+  const base = await deps(reply("x"));
+  const old = await openSession({ root: store, cwd: base.root, model: "m" });
+  await old.append({ t: "user", text: "an old chat" });
+
+  const app = await start(reply("x"), { rows: 20, cols: 130 }, { ...base, sessionsRoot: store });
+  expect(app.screen()).not.toContain("an old chat");
+
+  app.input.type("\x02");
+  await until(() => app.screen().includes("an old chat"), "the column");
+
+  app.input.type("\x02");
+  await until(() => !app.screen().includes("an old chat"), "the column closing");
+  await quit(app);
+});
+
+test("the column is not offered when the window cannot hold it", async () => {
+  const store = await mkdtemp(join(tmpdir(), "vesna-pane-"));
+  const base = await deps(reply("x"));
+  const old = await openSession({ root: store, cwd: base.root, model: "m" });
+  await old.append({ t: "user", text: "an old chat" });
+
+  // Narrow: the conversation matters more than the column.
+  const app = await start(reply("x"), { rows: 20, cols: 70 }, { ...base, sessionsRoot: store });
+  app.input.type("\x02");
+  await new Promise((resolve) => setTimeout(resolve, 60));
+  expect(app.screen()).not.toContain("an old chat");
+  await quit(app);
+});
+
+test("clicking a conversation in the column opens it", async () => {
+  const store = await mkdtemp(join(tmpdir(), "vesna-pane-"));
+  const base = await deps(reply("x"));
+  const old = await openSession({ root: store, cwd: base.root, model: "m" });
+  await old.append({ t: "user", text: "the older question" });
+  await old.append({ t: "answer", raw: "the older answer" });
+
+  const app = await start(reply("x"), { rows: 20, cols: 130 }, { ...base, sessionsRoot: store });
+  app.input.type("\x02");
+  await until(() => app.screen().includes("the older question"), "the column");
+
+  const row = app.screen().split("\n").findIndex((line) => line.includes("the older question"));
+  app.input.type(`\x1b[<0;3;${row + 1}M`);
+  await until(() => app.screen().includes("the older answer"), "the resumed conversation");
+  await quit(app);
+});
+
+test("a click in the conversation still copies, and does not open a chat", async () => {
+  const store = await mkdtemp(join(tmpdir(), "vesna-pane-"));
+  const copied: string[] = [];
+  const base = await deps(reply("an answer"));
+  const old = await openSession({ root: store, cwd: base.root, model: "m" });
+  await old.append({ t: "user", text: "an old chat" });
+
+  const app = await start(reply("an answer"), { rows: 20, cols: 130 }, {
+    ...base,
+    sessionsRoot: store,
+    copy: (text) => void copied.push(text),
+  });
+  app.input.type("go\r");
+  await until(() => app.screen().includes("an answer"), "the answer");
+  app.input.type("\x02");
+  await until(() => app.screen().includes("an old chat"), "the column");
+
+  const rows = app.screen().split("\n");
+  const row = rows.map((line) => line.includes("copy")).lastIndexOf(true);
+  // Well to the right of the column, inside the conversation.
+  app.input.type(`\x1b[<0;40;${row + 1}M`);
+  await until(() => copied.length > 0, "the copy");
+  expect(copied[0]).toBe("an answer");
   await quit(app);
 });

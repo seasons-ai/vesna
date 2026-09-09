@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
-import { appendFile, mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";
+import { appendFile, mkdir, rm, writeFile } from "node:fs/promises";
+import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { AgentMessage } from "../providers/types";
 
@@ -117,18 +118,22 @@ export async function openSession(options: {
   };
 }
 
-export async function listSessions(
-  root: string,
-  options: { cwd?: string } = {},
-): Promise<SessionSummary[]> {
-  const folders =
-    options.cwd === undefined ? await subdirectories(root) : [folderKey(options.cwd)];
+/**
+ * Reading is synchronous on purpose.
+ *
+ * The panel is drawn inside a keypress, and an await there sat unresolved
+ * until the next key arrived — the frame showed an empty list for as long as
+ * the user did nothing. This is a walk over a few small files; doing it
+ * synchronously costs microseconds and removes the whole question.
+ */
+export function listSessionsSync(root: string, options: { cwd?: string } = {}): SessionSummary[] {
+  const folders = options.cwd === undefined ? subdirectories(root) : [folderKey(options.cwd)];
 
   const found: SessionSummary[] = [];
   for (const folder of folders) {
     const path = join(root, folder);
-    for (const id of await subdirectories(path)) {
-      const summary = await readSummary(join(path, id));
+    for (const id of subdirectories(path)) {
+      const summary = readSummary(join(path, id));
       // A session with nothing said in it is a started terminal, not history.
       if (summary !== null && summary.messages > 0) found.push(summary);
     }
@@ -137,19 +142,26 @@ export async function listSessions(
   return found.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
 }
 
-export async function readSession(
+export async function listSessions(
+  root: string,
+  options: { cwd?: string } = {},
+): Promise<SessionSummary[]> {
+  return listSessionsSync(root, options);
+}
+
+export function readSessionSync(
   root: string,
   id: string,
-): Promise<{ summary: SessionSummary; events: SessionEvent[] } | null> {
-  const dir = await locate(root, id);
+): { summary: SessionSummary; events: SessionEvent[] } | null {
+  const dir = locate(root, id);
   if (dir === null) return null;
 
-  const summary = await readSummary(dir);
+  const summary = readSummary(dir);
   if (summary === null) return null;
 
   let text: string;
   try {
-    text = await readFile(join(dir, "events.jsonl"), "utf8");
+    text = readFileSync(join(dir, "events.jsonl"), "utf8");
   } catch {
     text = "";
   }
@@ -166,33 +178,41 @@ export async function readSession(
   return { summary, events };
 }
 
+export async function readSession(
+  root: string,
+  id: string,
+): Promise<{ summary: SessionSummary; events: SessionEvent[] } | null> {
+  return readSessionSync(root, id);
+}
+
 export async function deleteSession(root: string, id: string): Promise<void> {
-  const dir = await locate(root, id);
+  const dir = locate(root, id);
   if (dir === null) return;
   // Removed, not marked: these hold words the user may not want kept.
   await rm(dir, { recursive: true, force: true });
 }
 
-async function locate(root: string, id: string): Promise<string | null> {
-  for (const folder of await subdirectories(root)) {
+function locate(root: string, id: string): string | null {
+  for (const folder of subdirectories(root)) {
     const candidate = join(root, folder, id);
-    if ((await readSummary(candidate)) !== null) return candidate;
+    if (readSummary(candidate) !== null) return candidate;
   }
   return null;
 }
 
-async function readSummary(dir: string): Promise<SessionSummary | null> {
+function readSummary(dir: string): SessionSummary | null {
   try {
-    return JSON.parse(await readFile(join(dir, "meta.json"), "utf8"));
+    return JSON.parse(readFileSync(join(dir, "meta.json"), "utf8"));
   } catch {
     return null;
   }
 }
 
-async function subdirectories(path: string): Promise<string[]> {
+function subdirectories(path: string): string[] {
   try {
-    const entries = await readdir(path, { withFileTypes: true });
-    return entries.filter((entry) => entry.isDirectory()).map((entry) => entry.name);
+    return readdirSync(path, { withFileTypes: true })
+      .filter((entry) => entry.isDirectory())
+      .map((entry) => entry.name);
   } catch {
     return [];
   }

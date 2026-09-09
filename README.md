@@ -384,7 +384,12 @@ node proceeds and one that changes something or reaches outside does not.
 Every chat is written to `~/.vesna/sessions` as it happens — not at exit, so a
 killed terminal loses nothing — and grouped by the folder it was held in.
 
+`ctrl-b`, or `/chats`, opens a column of them beside the conversation; click one
+to reopen it. The column is the first thing to go when the window is too narrow
+to hold it and the conversation both.
+
 ```text
+/chats          show or hide that column
 /history        conversations from this folder
 /history all    every folder
 /resume 2       reopen one, with the model's own memory of it

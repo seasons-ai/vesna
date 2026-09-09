@@ -16,7 +16,8 @@ import { createEditor, applyKey, type EditorState } from "./editor";
 import { emptyState } from "./emptystate";
 import { resolveGlyphs, type Glyphs } from "./glyphs";
 import { decodeKeys, type Key } from "./keys";
-import { layout, type Frame, type ViewState } from "./layout";
+import { layout, panelWidths, type Frame, type ViewState } from "./layout";
+import { chatsPane } from "./panes";
 import { wrapAnsi } from "./wrap";
 import { spinnerFrame } from "./render";
 import { createScreen, type Terminal } from "./screen";
@@ -26,6 +27,7 @@ import { decide, facetOf, type Policy } from "../policy/decide";
 import { rememberAllow, suggestPattern } from "../policy/store";
 import {
   listSessions,
+  listSessionsSync,
   readSession,
   type OpenSession,
   type SessionEvent,
@@ -112,7 +114,20 @@ export async function runApp(deps: AppDeps, io: AppIo): Promise<number> {
 
   function currentView(): ViewState {
     const size = screen.size();
+    const widths = panelWidths(size.cols, { left: showChats, right: false });
+    const paneRows = Math.max(0, size.rows);
+
     return {
+      ...(widths.left > 0
+        ? {
+            left: chatsPane(chats, deps.record?.id, deps.root, {
+              theme,
+              glyphs,
+              width: widths.left,
+              rows: paneRows,
+            }),
+          }
+        : {}),
       header: header(deps, theme, glyphs),
       transcript: transcript.lines(Math.max(1, size.cols)),
       targets: transcript.copyTargets(Math.max(1, size.cols)),
@@ -148,6 +163,21 @@ export async function runApp(deps: AppDeps, io: AppIo): Promise<number> {
   // typed into a box the user cannot see behind the question.
   let awaiting: ((answer: string) => void) | null = null;
   let policy: Policy = deps.policy ?? { mode: "ask", allow: {}, deny: {} };
+
+  // The left column is asked for; the right one shows the work in hand.
+  let showChats = false;
+  let chats: SessionSummary[] = [];
+
+  function refreshChats(): void {
+    if (deps.sessionsRoot === undefined) return;
+    chats = listSessionsSync(deps.sessionsRoot, { cwd: deps.root });
+  }
+
+  function toggleChats(): void {
+    showChats = !showChats;
+    if (showChats) refreshChats();
+    draw();
+  }
 
   /**
    * Asks before an action, and remembers the answer when told to.
@@ -244,14 +274,23 @@ export async function runApp(deps: AppDeps, io: AppIo): Promise<number> {
   }
 
   async function resume(argument: string): Promise<void> {
-    const root = deps.sessionsRoot;
     const which = Number.parseInt(argument.trim(), 10);
-    if (root === undefined || Number.isNaN(which) || listed[which - 1] === undefined) {
+    if (Number.isNaN(which) || listed[which - 1] === undefined) {
       transcript.notice("/resume <number> from the last /history listing", "warn");
       return;
     }
+    await resumeById(listed[which - 1]!.id);
+  }
 
-    const stored = await readSession(root, listed[which - 1]!.id);
+  /** Reopening by id, whether that came from a listing or from a click. */
+  async function resumeById(id: string): Promise<void> {
+    const root = deps.sessionsRoot;
+    if (root === undefined) {
+      transcript.notice("history is not available in this session", "warn");
+      return;
+    }
+
+    const stored = await readSession(root, id);
     if (stored === null) {
       transcript.notice("that conversation is no longer on disk", "warn");
       return;
@@ -273,7 +312,11 @@ export async function runApp(deps: AppDeps, io: AppIo): Promise<number> {
 
     session = newSession(deps, approve, messages);
     scroll = 0;
+    showChats = false;
     transcript.notice(`resumed · ${stored.summary.title}`, "ok");
+    // Called straight from a click as well as from the command loop, so it
+    // cannot rely on someone else redrawing afterwards.
+    draw();
   }
 
   async function copy(text: string): Promise<void> {
@@ -326,6 +369,25 @@ export async function runApp(deps: AppDeps, io: AppIo): Promise<number> {
         }
         return;
 
+      case "click": {
+        const column = key.column;
+        const target =
+          column < (shown?.columns.left ?? 0)
+            ? shown?.leftTargets?.[key.row]
+            : column >= (shown?.columns.right ?? Number.MAX_SAFE_INTEGER)
+              ? shown?.rightTargets?.[key.row]
+              : shown?.targets?.[key.row];
+
+        if (target === undefined) return;
+        if (target.startsWith("session:")) {
+          void resumeById(target.slice("session:".length));
+          return;
+        }
+        const text = transcript.rawOf(target);
+        if (text !== undefined) void copy(text);
+        return;
+      }
+
       case "wheel-up":
       case "wheel-down": {
         // Three lines a notch: what every other scrollable surface does.
@@ -343,14 +405,9 @@ export async function runApp(deps: AppDeps, io: AppIo): Promise<number> {
         return;
       }
 
-      case "click": {
-        const id = shown?.targets?.[key.row];
-        if (id === undefined) return;
-        const text = transcript.rawOf(id);
-        if (text === undefined) return;
-        void copy(text);
+      case "panel-left":
+        toggleChats();
         return;
-      }
 
       case "escape":
         if (turn !== null) turn.abort();
@@ -410,6 +467,11 @@ export async function runApp(deps: AppDeps, io: AppIo): Promise<number> {
 
       if (input.kind === "command") {
         if (input.name === "exit") break;
+
+        if (input.name === "chats") {
+          toggleChats();
+          continue;
+        }
 
         if (input.name === "history") {
           await showHistory(input.argument);

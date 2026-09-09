@@ -30,6 +30,7 @@ export type Key =
   | { type: "wheel-up" }
   | { type: "wheel-down" }
   | { type: "click"; column: number; row: number }
+  | { type: "panel-left" }
   | { type: "page-up" }
   | { type: "page-down" }
   | { type: "escape" };
@@ -52,6 +53,8 @@ const CONTROLS: Record<string, Key> = {
   "\x0b": { type: "kill-to-end" },
   "\x15": { type: "kill-line" },
   "\x17": { type: "kill-word" },
+  // Ctrl-B: ctrl-H is backspace on a great many terminals.
+  "\x02": { type: "panel-left" },
 };
 
 /** Final letters of a CSI sequence, once any modifier has been stripped. */

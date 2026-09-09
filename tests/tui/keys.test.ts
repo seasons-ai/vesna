@@ -167,3 +167,11 @@ test("typing after a wheel event still arrives", () => {
 test("wheel with a modifier held still scrolls rather than being dropped", () => {
   expect(keys(`${ESC}[<80;10;5M`)).toEqual([{ type: "wheel-up" }]);
 });
+
+test("ctrl-b asks for the conversations column", () => {
+  expect(keys("\x02")).toEqual([{ type: "panel-left" }]);
+});
+
+test("ctrl-h is still backspace, because on most terminals that is what it is", () => {
+  expect(keys("\x08")).toEqual([{ type: "backspace" }]);
+});
