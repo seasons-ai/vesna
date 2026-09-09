@@ -151,3 +151,8 @@ test("a writing action is asked about even with nothing to match on", () => {
   const writes = { ...act("deploy", {}), effect: "external" as const };
   expect(decide(writes, policy(), cwd)).toBe("ask");
 });
+
+test("a command given under another name is still a command", () => {
+  // task_verify calls its command `check`; a rule has to be possible for it.
+  expect(facetOf(act("task_verify", { check: "bun test" }), cwd)).toBe("bun test");
+});

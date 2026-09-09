@@ -1073,3 +1073,96 @@ test("both columns can be open at once, on their own sides", async () => {
   expect(row.indexOf("an old chat")).toBeLessThan(row.length / 2);
   await quit(app);
 });
+
+/** A node with a path, and one with nothing a rule could match on. */
+function toolCaller(name: string, input: Record<string, unknown>): Provider {
+  let turn = 0;
+  return {
+    id: "fake",
+    async complete() {
+      turn += 1;
+      return {
+        content:
+          turn === 1
+            ? [{ type: "tool_call" as const, id: "c1", name, input }]
+            : [{ type: "text" as const, text: "finished" }],
+        stopReason: "end_turn",
+        model: "m",
+        usage: { inputTokens: 1, outputTokens: 1, cacheReadTokens: 0, cacheWriteTokens: 0 },
+      };
+    },
+  };
+}
+
+/** The test deps permit no nodes at all; these tests need one. */
+async function allowing(provider: Provider, registry: ReturnType<typeof createRegistry>) {
+  const base = await deps(provider, { registry });
+  return {
+    ...base,
+    config: { ...base.config, permissions: { nodes: ["put"] } },
+    policy: { mode: "ask" as const, allow: {}, deny: {} },
+  };
+}
+
+function writing() {
+  const registry = createRegistry();
+  const ran: string[] = [];
+  registry.register({
+    type: "put",
+    effect: "write",
+    description: "write",
+    inputSchema: { type: "object" },
+    async run(input: any) {
+      ran.push(String(input.path ?? input.check ?? "?"));
+      return {};
+    },
+  });
+  return { registry, ran };
+}
+
+test("pressing a on something with no pattern allows it, never refuses it", async () => {
+  const { registry, ran } = writing();
+  // `check` is not a path and not a command, so no rule can be made from it.
+  const caller = toolCaller("put", { check: "bun test" });
+  const app = await start(caller, { rows: 20, cols: 90 }, await allowing(caller, registry));
+
+  app.input.type("go\r");
+  await until(() => app.screen().includes("[y] allow"), "the question");
+  app.input.type("a");
+  await until(() => /allowed/.test(app.screen()), "the approval");
+
+  expect(app.screen()).not.toMatch(/refused/);
+  expect(ran).toHaveLength(1);
+  await quit(app);
+});
+
+test("a stray key does not decide anything — the question stays up", async () => {
+  const { registry, ran } = writing();
+  const caller = toolCaller("put", { path: "src/a.ts" });
+  const app = await start(caller, { rows: 20, cols: 90 }, await allowing(caller, registry));
+
+  app.input.type("go\r");
+  await until(() => app.screen().includes("[y] allow"), "the question");
+
+  app.input.type("q");
+  await new Promise((resolve) => setTimeout(resolve, 60));
+  expect(app.screen()).not.toMatch(/refused|allowed/);
+
+  app.input.type("y");
+  await until(() => /allowed/.test(app.screen()), "the approval");
+  expect(ran).toEqual(["src/a.ts"]);
+  await quit(app);
+});
+
+test("n still refuses, and the action does not happen", async () => {
+  const { registry, ran } = writing();
+  const caller = toolCaller("put", { path: "src/a.ts" });
+  const app = await start(caller, { rows: 20, cols: 90 }, await allowing(caller, registry));
+
+  app.input.type("go\r");
+  await until(() => app.screen().includes("[y] allow"), "the question");
+  app.input.type("n");
+  await until(() => /refused/.test(app.screen()), "the refusal");
+  expect(ran).toEqual([]);
+  await quit(app);
+});

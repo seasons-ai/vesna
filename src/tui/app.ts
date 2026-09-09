@@ -255,7 +255,13 @@ export async function runApp(deps: AppDeps, io: AppIo): Promise<number> {
     });
     awaiting = null;
 
-    if (answer === "a" && pattern !== "") {
+    if (answer === "a" && pattern === "") {
+      transcript.notice("allowed once — there is nothing here to make a rule from", "ok");
+      draw();
+      return "allow";
+    }
+
+    if (answer === "a") {
       policy = {
         ...policy,
         allow: { ...policy.allow, [action.node]: [...(policy.allow[action.node] ?? []), pattern] },
@@ -408,12 +414,18 @@ export async function runApp(deps: AppDeps, io: AppIo): Promise<number> {
   }
 
   function dispatch(key: Key): void {
-    // A question owns the keyboard until it is answered.
+    // A question owns the keyboard until it is answered. Only the three
+    // answers decide: a stray key must not refuse an action by accident.
     if (awaiting !== null) {
+      const typed = key.type === "text" ? key.text.trim().slice(0, 1).toLowerCase() : "";
       const answer =
-        key.type === "text" ? key.text.trim().slice(0, 1).toLowerCase() :
-        key.type === "interrupt" || key.type === "escape" ? "n" :
-        key.type === "enter" ? "y" : "";
+        typed === "y" || typed === "a" || typed === "n"
+          ? typed
+          : key.type === "interrupt" || key.type === "escape"
+            ? "n"
+            : key.type === "enter"
+              ? "y"
+              : "";
       if (answer !== "") awaiting(answer);
       return;
     }

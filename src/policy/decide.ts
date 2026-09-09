@@ -76,8 +76,12 @@ export function facetOf(action: Action, cwd: string): string | undefined {
     return inside !== "" && !inside.startsWith("..") ? inside : absolute;
   }
 
-  const command = action.input.command;
-  if (typeof command === "string" && command !== "") return command;
+  // Nodes name their command differently — shell calls it `command`, the
+  // verifier calls it `check` — and a rule has to be possible for all of them.
+  for (const field of ["command", "check"]) {
+    const value = action.input[field];
+    if (typeof value === "string" && value !== "") return value;
+  }
 
   return undefined;
 }
