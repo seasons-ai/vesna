@@ -88,6 +88,20 @@ bun run typecheck
 
 ---
 
+## Or: write a theme
+
+Smaller than a node, and just as welcome. A theme is a table of eleven colours
+in `src/tui/palette.ts`, and two guarantees keep every one of them honest:
+
+- every meaningful colour clears 4.5:1 contrast against its own background
+- no two tokens in the palette collapse onto the same 256-colour terminal code
+
+```bash
+bun test tests/tui/palette.test.ts   # the whole review
+```
+
+---
+
 ## Choosing the effect class
 
 This is the one decision worth slowing down for.

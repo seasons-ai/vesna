@@ -1,0 +1,22 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 96" width="320" height="96" role="img" aria-label="Vesna">
+  <title>Vesna</title>
+  <g transform="translate(48 48) scale(0.86)">
+    <g fill="#BE4674">
+      <path d="M0,0 C-15,-13 -14,-31 -8.2,-44 L0,-36 L8.2,-44 C14,-31 15,-13 0,0 Z"/>
+      <path transform="rotate(72)" d="M0,0 C-15,-13 -14,-31 -8.2,-44 L0,-36 L8.2,-44 C14,-31 15,-13 0,0 Z"/>
+      <path transform="rotate(144)" d="M0,0 C-15,-13 -14,-31 -8.2,-44 L0,-36 L8.2,-44 C14,-31 15,-13 0,0 Z"/>
+      <path transform="rotate(216)" d="M0,0 C-15,-13 -14,-31 -8.2,-44 L0,-36 L8.2,-44 C14,-31 15,-13 0,0 Z"/>
+      <path transform="rotate(288)" d="M0,0 C-15,-13 -14,-31 -8.2,-44 L0,-36 L8.2,-44 C14,-31 15,-13 0,0 Z"/>
+    </g>
+    <g stroke="#3C7995" stroke-width="2.4" stroke-linecap="round">
+      <line y1="-7" y2="-31"/>
+      <line transform="rotate(72)" y1="-7" y2="-31"/>
+      <line transform="rotate(144)" y1="-7" y2="-31"/>
+      <line transform="rotate(216)" y1="-7" y2="-31"/>
+      <line transform="rotate(288)" y1="-7" y2="-31"/>
+    </g>
+    <circle r="5.2" fill="#3C7995"/>
+  </g>
+  <text x="108" y="61" font-family="system-ui, -apple-system, Segoe UI, sans-serif"
+        font-size="36" font-weight="500" letter-spacing="2" fill="#3A3038">vesna</text>
+</svg>

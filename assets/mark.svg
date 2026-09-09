@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="-52 -52 104 104" width="104" height="104" role="img" aria-label="Vesna">
+  <title>Vesna</title>
+  <g fill="#F3AFC2">
+    <path d="M0,0 C-15,-13 -14,-31 -8.2,-44 L0,-36 L8.2,-44 C14,-31 15,-13 0,0 Z"/>
+    <path transform="rotate(72)" d="M0,0 C-15,-13 -14,-31 -8.2,-44 L0,-36 L8.2,-44 C14,-31 15,-13 0,0 Z"/>
+    <path transform="rotate(144)" d="M0,0 C-15,-13 -14,-31 -8.2,-44 L0,-36 L8.2,-44 C14,-31 15,-13 0,0 Z"/>
+    <path transform="rotate(216)" d="M0,0 C-15,-13 -14,-31 -8.2,-44 L0,-36 L8.2,-44 C14,-31 15,-13 0,0 Z"/>
+    <path transform="rotate(288)" d="M0,0 C-15,-13 -14,-31 -8.2,-44 L0,-36 L8.2,-44 C14,-31 15,-13 0,0 Z"/>
+  </g>
+  <g stroke="#9FD3E8" stroke-width="2.4" stroke-linecap="round">
+    <line y1="-7" y2="-31"/>
+    <line transform="rotate(72)" y1="-7" y2="-31"/>
+    <line transform="rotate(144)" y1="-7" y2="-31"/>
+    <line transform="rotate(216)" y1="-7" y2="-31"/>
+    <line transform="rotate(288)" y1="-7" y2="-31"/>
+  </g>
+  <circle r="5.2" fill="#9FD3E8"/>
+</svg>

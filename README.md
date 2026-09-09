@@ -1,4 +1,7 @@
-# Vesna
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="assets/logo-dark.svg">
+  <img alt="Vesna" src="assets/logo-light.svg" width="240">
+</picture>
 
 An agent that turns its own work into deterministic, reviewable workflows.
 
@@ -14,7 +17,7 @@ row, melts back into live mode, gets repaired, and re-freezes.
 > Vesna is the Slavic goddess of spring — the thing that comes back on its own,
 > every year, unasked and unsupervised. That is what a crystal is meant to become.
 
-**Status: v0.1, a walking skeleton.** It runs end to end and is covered by 92
+**Status: v0.1, a walking skeleton.** It runs end to end and is covered by 456
 tests, but it is early. See [What is not built yet](#what-is-not-built-yet).
 
 ---
@@ -329,13 +332,29 @@ Permissions are the registry: if no node exists, no capability exists.
 
 ```yaml
 model: claude-opus-5
-theme: vesna          # vesna · ember · dusk · mono
+theme: vesna          # vesna · hanami · washi · mono
 permissions:
   nodes: [read, write, shell, llm]
 ```
 
 Colour follows the usual conventions: `NO_COLOR` wins, `FORCE_COLOR` overrides,
 and piped output carries no escape codes at all.
+
+---
+
+## Themes
+
+`vesna` (default), `hanami`, `washi`, and `mono`. Set one in `.vesna/config.yaml`:
+
+```yaml
+theme: hanami
+```
+
+Warm petal marks what a model is doing live; cold ice marks what has been
+crystallised. A theme is a table of eleven colours, and two tests keep it
+honest — every meaningful colour must clear 4.5:1 against its own background,
+and no two may collapse onto the same 256-colour code. Adding one is a small
+pull request.
 
 ---
 
@@ -358,7 +377,7 @@ Named honestly, because the gap is deliberate rather than an oversight.
 ## Testing
 
 ```bash
-bun test        # 92 tests, no network access
+bun test        # 456 tests, no network access
 bun run typecheck
 ```
 
