@@ -17,7 +17,9 @@ import { emptyState } from "./emptystate";
 import { resolveGlyphs, type Glyphs } from "./glyphs";
 import { decodeKeys, type Key } from "./keys";
 import { layout, panelWidths, type Frame, type ViewState } from "./layout";
-import { chatsPane } from "./panes";
+import { chatsPane, gardenPane } from "./panes";
+import { createSpec, listSpecs, readSpec, specsRoot } from "../spec/store";
+import type { SpecTree } from "../spec/project";
 import { wrapAnsi } from "./wrap";
 import { spinnerFrame } from "./render";
 import { createScreen, type Terminal } from "./screen";
@@ -114,10 +116,24 @@ export async function runApp(deps: AppDeps, io: AppIo): Promise<number> {
 
   function currentView(): ViewState {
     const size = screen.size();
-    const widths = panelWidths(size.cols, { left: showChats, right: false });
+    const widths = panelWidths(size.cols, {
+      left: showChats,
+      // Nothing to show is not a column: the conversation takes the room.
+      right: showGarden && spec !== null,
+    });
     const paneRows = Math.max(0, size.rows);
 
     return {
+      ...(widths.right > 0 && spec !== null
+        ? {
+            right: gardenPane(spec, {
+              theme,
+              glyphs,
+              width: widths.right,
+              rows: paneRows,
+            }),
+          }
+        : {}),
       ...(widths.left > 0
         ? {
             left: chatsPane(chats, deps.record?.id, deps.root, {
@@ -167,6 +183,18 @@ export async function runApp(deps: AppDeps, io: AppIo): Promise<number> {
   // The left column is asked for; the right one shows the work in hand.
   let showChats = false;
   let chats: SessionSummary[] = [];
+  let showGarden = true;
+  let spec: SpecTree | null = null;
+
+  const specs = specsRoot(deps.root);
+
+  function openSpec(slug: string): boolean {
+    const tree = readSpec(specs, slug);
+    if (tree === null) return false;
+    spec = tree;
+    showGarden = true;
+    return true;
+  }
 
   function refreshChats(): void {
     if (deps.sessionsRoot === undefined) return;
@@ -236,6 +264,46 @@ export async function runApp(deps: AppDeps, io: AppIo): Promise<number> {
     transcript.notice("refused", "warn");
     draw();
     return "deny";
+  }
+
+  function specCommand(argument: string): void {
+    const [verb, ...rest] = argument.trim().split(/\s+/);
+    const name = rest.join(" ");
+
+    if (verb === "new") {
+      if (name === "") {
+        transcript.notice("/spec new <name>", "warn");
+        return;
+      }
+      try {
+        const made = createSpec(specs, name);
+        openSpec(made.slug);
+        transcript.notice(`spec ${made.slug}`, "ok");
+      } catch (error) {
+        transcript.notice((error as Error).message, "warn");
+      }
+      return;
+    }
+
+    if (verb === "open") {
+      if (!openSpec(name)) {
+        transcript.notice(`no spec called "${name}" — /spec for the list`, "warn");
+        return;
+      }
+      transcript.notice(`spec ${name}`, "ok");
+      return;
+    }
+
+    const found = listSpecs(specs);
+    if (found.length === 0) {
+      transcript.notice("no specs yet — /spec new <name>", "muted");
+      return;
+    }
+    for (const entry of found) {
+      const here = spec?.id === entry.slug;
+      transcript.notice(`${here ? "* " : "  "}${entry.slug}  ${entry.title}`, here ? "ok" : "muted");
+    }
+    transcript.notice("/spec open <slug>", "muted");
   }
 
   /** The last listing, so /resume can take a number rather than an id. */
@@ -409,6 +477,11 @@ export async function runApp(deps: AppDeps, io: AppIo): Promise<number> {
         toggleChats();
         return;
 
+      case "panel-right":
+        showGarden = !showGarden;
+        draw();
+        return;
+
       case "escape":
         if (turn !== null) turn.abort();
         return;
@@ -467,6 +540,13 @@ export async function runApp(deps: AppDeps, io: AppIo): Promise<number> {
 
       if (input.kind === "command") {
         if (input.name === "exit") break;
+
+        if (input.name === "spec") {
+          specCommand(input.argument);
+          transcript.endTurn();
+          draw();
+          continue;
+        }
 
         if (input.name === "chats") {
           toggleChats();

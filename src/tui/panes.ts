@@ -1,7 +1,8 @@
 import type { Glyphs } from "./glyphs";
 import type { Pane } from "./layout";
-import type { Theme } from "./theme";
+import type { Role, Theme } from "./theme";
 import type { SessionSummary } from "../store/sessions";
+import type { SpecTree, StageState, TaskState } from "../spec/project";
 
 /**
  * What the columns beside the conversation show.
@@ -68,6 +69,111 @@ export function chatsPane(
       text: `${mark} ${theme.paint(here ? "text" : "muted", title)}`,
       ...(here ? {} : { id: `session:${session.id}` }),
     });
+  }
+
+  return sized(lines, options.rows);
+}
+
+/**
+ * The marks. Warm for what is alive or proposed, cold for what is settled —
+ * the same distinction the palette makes, so the glyph and the colour say the
+ * same thing rather than two different things.
+ */
+const STAGE_MARK: Record<StageState, { glyph: string; role: Role }> = {
+  todo: { glyph: "○", role: "faint" },
+  active: { glyph: "❀", role: "petal" },
+  done: { glyph: "◆", role: "ice" },
+};
+
+const TASK_MARK: Record<TaskState, { glyph: string; role: Role }> = {
+  todo: { glyph: "○", role: "faint" },
+  blocked: { glyph: "!", role: "warn" },
+  running: { glyph: "●", role: "petal" },
+  done: { glyph: "✓", role: "ice" },
+  failed: { glyph: "×", role: "error" },
+};
+
+const ASCII_MARKS: Record<string, string> = {
+  "○": "o",
+  "❀": "*",
+  "◆": "#",
+  "●": "@",
+  "✓": "+",
+  "×": "x",
+  "!": "!",
+};
+
+/**
+ * The state of the work in hand.
+ *
+ * Finished stages are collapsed and the active one is opened: a tree that
+ * shows every node at once stops being read. What is blocked stays visible
+ * whatever stage it belongs to, because that is the thing a person can act on.
+ */
+export function gardenPane(tree: SpecTree, options: PaneOptions): Pane {
+  const { theme, glyphs, width } = options;
+  const ascii = glyphs.mark === "*";
+  const mark = (glyph: string) => (ascii ? (ASCII_MARKS[glyph] ?? glyph) : glyph);
+
+  const lines: { text: string; id?: string }[] = [
+    { text: theme.paint("text", truncate(tree.title, width)) },
+    {
+      text: theme.paint(
+        "muted",
+        truncate(`build ${tree.progress.done}/${tree.progress.total}`, width),
+      ),
+    },
+    { text: "" },
+  ];
+
+  for (const { stage, state } of tree.stages) {
+    const { glyph, role } = STAGE_MARK[state];
+    lines.push({
+      text: `${theme.paint(role, mark(glyph))} ${theme.paint(state === "todo" ? "faint" : "text", truncate(stage, width - 2))}`,
+    });
+
+    if (state !== "active") continue;
+
+    if (stage === "spec") {
+      for (const criterion of tree.criteria) {
+        const met = criterion.evidence !== undefined;
+        lines.push({
+          text: `  ${theme.paint(met ? "ice" : "faint", mark(met ? "✓" : "○"))} ${theme.paint(
+            met ? "text" : "muted",
+            truncate(criterion.text, width - 4),
+          )}`,
+        });
+      }
+    }
+
+    if (stage === "build") {
+      for (const task of tree.tasks) {
+        const { glyph: taskGlyph, role: taskRole } = TASK_MARK[task.state];
+        lines.push({
+          text: `  ${theme.paint(taskRole, mark(taskGlyph))} ${theme.paint("text", truncate(task.title, width - 4))}`,
+          id: `task:${task.id}`,
+        });
+        if (task.agent !== undefined) {
+          lines.push({
+            text: `    ${theme.paint("petal", mark("❀"))} ${theme.paint("muted", truncate(task.agent, width - 6))}`,
+          });
+        }
+      }
+    }
+  }
+
+  // Blocked work is what a person can unblock, so it is never folded away.
+  const blocked = tree.tasks.filter((task) => task.state === "blocked" || task.state === "failed");
+  const buildActive = tree.stages.some((s) => s.stage === "build" && s.state === "active");
+  if (blocked.length > 0 && !buildActive) {
+    lines.push({ text: "" });
+    for (const task of blocked) {
+      const { glyph, role } = TASK_MARK[task.state];
+      lines.push({
+        text: `${theme.paint(role, mark(glyph))} ${theme.paint("muted", truncate(task.title, width - 2))}`,
+        id: `task:${task.id}`,
+      });
+    }
   }
 
   return sized(lines, options.rows);

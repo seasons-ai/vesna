@@ -346,6 +346,30 @@ and piped output carries no escape codes at all.
 
 ---
 
+## The garden
+
+A piece of work gets a spec: `/spec new reliable cancellation` opens a column
+on the right showing where it stands — the stages, the acceptance criteria once
+there are any, the tasks and who is working on them.
+
+```text
+/spec                       what there is
+/spec new <name>            start one
+/spec open <slug>           switch to it
+ctrl-g                      show or hide the column
+```
+
+It lives in `.vesna/specs/<slug>/` and is worth committing: a spec describes
+work on this repository, so it belongs beside the code and can be reviewed with
+it. That is the opposite of a conversation, which is personal and lives under
+your home directory.
+
+The column is built by reducing a log of typed events, not by reading prose. So
+the state survives a crash, the reducer is tested without a terminal, and "I
+finished T2" in a chat message is never mistaken for the fact of it. Warm marks
+mean live or proposed, cold ones mean settled — the same distinction the palette
+makes.
+
 ## Permission
 
 `permissions.nodes` decides which tools exist. What each call may actually do

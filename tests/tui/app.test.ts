@@ -987,3 +987,89 @@ test("a click in the conversation still copies, and does not open a chat", async
   expect(copied[0]).toBe("an answer");
   await quit(app);
 });
+
+test("/spec new opens a garden on the right", async () => {
+  const app = await start(reply("x"), { rows: 20, cols: 130 });
+  expect(app.screen()).not.toContain("Reliable cancellation");
+
+  app.input.type("/spec new Reliable cancellation\r");
+  await until(() => app.screen().includes("Reliable cancellation"), "the garden");
+  // The stages are there from the first moment, so you know where you are.
+  expect(app.screen()).toContain("intent");
+  expect(app.screen()).toContain("verify");
+  await quit(app);
+});
+
+test("ctrl-g hides the garden and brings it back", async () => {
+  const app = await start(reply("x"), { rows: 20, cols: 130 });
+  app.input.type("/spec new Some work\r");
+  // "verify" only ever appears in the garden; the title also sits in the
+  // command the user just typed, so it cannot tell the column apart.
+  await until(() => app.screen().includes("verify"), "the garden");
+
+  app.input.type("\x07");
+  await until(() => !app.screen().includes("verify"), "the garden hidden");
+  app.input.type("\x07");
+  await until(() => app.screen().includes("verify"), "the garden back");
+  await quit(app);
+});
+
+test("with no spec there is no column, and the conversation has the room", async () => {
+  const app = await start(reply("an answer"), { rows: 20, cols: 130 });
+  app.input.type("go\r");
+  await until(() => app.screen().includes("an answer"), "the answer");
+  // No divider means no column.
+  expect(app.screen().split("\n")[0]).not.toContain("│");
+  await quit(app);
+});
+
+test("a spec survives being reopened by name", async () => {
+  const app = await start(reply("x"), { rows: 20, cols: 130 });
+  app.input.type("/spec new Cancellation work\r");
+  await until(() => app.screen().includes("verify"), "the garden");
+  app.input.type("\x07");
+  await until(() => !app.screen().includes("verify"), "hidden");
+
+  app.input.type("/spec open cancellation-work\r");
+  await until(() => app.screen().includes("verify"), "reopened");
+  await quit(app);
+});
+
+test("/spec lists what there is and marks the open one", async () => {
+  const app = await start(reply("x"), { rows: 22, cols: 130 });
+  app.input.type("/spec new first thing\r");
+  await until(() => app.screen().includes("first thing"), "the first");
+  app.input.type("/spec new second thing\r");
+  await until(() => app.screen().includes("second thing"), "the second");
+
+  app.input.type("/spec\r");
+  await until(() => app.screen().includes("first-thing"), "the listing");
+  expect(app.screen()).toContain("second-thing");
+  await quit(app);
+});
+
+test("creating the same spec twice is refused, not silently appended to", async () => {
+  const app = await start(reply("x"), { rows: 20, cols: 130 });
+  app.input.type("/spec new same name\r");
+  await until(() => app.screen().includes("same name"), "the first");
+  app.input.type("/spec new same name\r");
+  await until(() => /already exists/.test(app.screen()), "the refusal");
+  await quit(app);
+});
+
+test("both columns can be open at once, on their own sides", async () => {
+  const store = await mkdtemp(join(tmpdir(), "vesna-both-"));
+  const base = await deps(reply("x"));
+  const old = await openSession({ root: store, cwd: base.root, model: "m" });
+  await old.append({ t: "user", text: "an old chat" });
+
+  const app = await start(reply("x"), { rows: 20, cols: 150 }, { ...base, sessionsRoot: store });
+  app.input.type("/spec new Garden work\r");
+  await until(() => app.screen().includes("Garden work"), "the garden");
+  app.input.type("\x02");
+  await until(() => app.screen().includes("an old chat"), "the chats");
+
+  const row = app.screen().split("\n").find((line) => line.includes("an old chat"))!;
+  expect(row.indexOf("an old chat")).toBeLessThan(row.length / 2);
+  await quit(app);
+});
