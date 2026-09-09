@@ -132,3 +132,20 @@ test("outside a repository the failure says so, rather than leaving a directory 
   const notRepo = await mkdtemp(join(tmpdir(), "vesna-plain-"));
   await expect(createWorktree(notRepo, "spec", "T1")).rejects.toThrow(/could not create/);
 });
+
+test("the worktrees directory ignores itself, so nothing can commit a nested checkout", async () => {
+  const repo = await repository();
+  await createWorktree(repo, "spec", "T1");
+
+  const status = await runGit(["status", "--porcelain"], repo);
+  expect(status.stdout.trim()).toBe("");
+});
+
+test("and it keeps ignoring itself once there is real work inside", async () => {
+  const repo = await repository();
+  const tree = await createWorktree(repo, "spec", "T1");
+  await writeFile(join(tree.path, "big.txt"), "a whole checkout\n");
+
+  const status = await runGit(["status", "--porcelain"], repo);
+  expect(status.stdout).not.toContain(".vesna");
+});

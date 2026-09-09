@@ -1,4 +1,4 @@
-import { mkdir, rm } from "node:fs/promises";
+import { mkdir, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 /**
@@ -64,7 +64,7 @@ export async function createWorktree(
     throw new WorktreeError(`branch ${branch} already exists — remove that worktree first`);
   }
 
-  await mkdir(worktreesRoot(repo), { recursive: true });
+  await ensureIgnored(repo);
 
   const made = await git(["worktree", "add", "-b", branch, path, "HEAD"], repo);
   if (made.code !== 0) {
@@ -72,6 +72,20 @@ export async function createWorktree(
   }
 
   return { path, branch };
+}
+
+/**
+ * The directory ignores itself.
+ *
+ * A worktree is a whole checkout, and it lives inside the repository it came
+ * from. Without this, `git status` fills with it and an agent running
+ * `git add -A` can commit a nested copy of the project — which is a mess to
+ * find and a worse one to undo.
+ */
+async function ensureIgnored(repo: string): Promise<void> {
+  const root = worktreesRoot(repo);
+  await mkdir(root, { recursive: true });
+  await writeFile(join(root, ".gitignore"), "*\n");
 }
 
 export async function listWorktrees(
