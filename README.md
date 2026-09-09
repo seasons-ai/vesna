@@ -122,7 +122,7 @@ Scriptable, because "some rows are held" is not the same as "it broke":
 Requires [Bun](https://bun.sh).
 
 ```bash
-git clone https://github.com/lookoff-dev/vesna.git
+git clone https://github.com/seasons-ai/vesna.git
 cd vesna
 bun install
 bun test

@@ -20,7 +20,7 @@ retry something harmless.
 ### 1. Set up
 
 ```bash
-git clone https://github.com/lookoff-dev/vesna.git
+git clone https://github.com/seasons-ai/vesna.git
 cd vesna
 bun install
 bun test          # should be green before you change anything

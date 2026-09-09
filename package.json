@@ -7,7 +7,7 @@
   "description": "An agent that turns its own work into deterministic, reviewable workflows.",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/lookoff-dev/vesna.git"
+    "url": "git+https://github.com/seasons-ai/vesna.git"
   },
   "bin": {
     "vesna": "./bin/vesna"
