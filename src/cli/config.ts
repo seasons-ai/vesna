@@ -18,6 +18,8 @@ export const CODEX_DEFAULT_MODEL = "gpt-5.6-sol";
 const AUTH_MODES: AuthMode[] = ["key", "subscription", "codex"];
 
 export interface VesnaConfig {
+  /** Whether a .vesna/config.yaml was actually found. */
+  configured: boolean;
   provider: ProviderId;
   /** How to authenticate the provider. Only the openai provider has a choice. */
   auth: AuthMode;
@@ -41,15 +43,35 @@ export interface VesnaConfig {
 }
 
 export async function loadConfig(root: string): Promise<VesnaConfig> {
-  let raw: any = {};
+  const path = join(root, ".vesna", "config.yaml");
+
+  let text: string | null = null;
   try {
-    raw = parseYaml(await readFile(join(root, ".vesna", "config.yaml"), "utf8")) ?? {};
+    text = await readFile(path, "utf8");
   } catch {
-    raw = {};
+    // No config is a legitimate state — plenty of commands need none. It is
+    // only a problem once something asks for a model, and the caller decides.
+    text = null;
   }
+
+  let raw: any = {};
+  if (text !== null) {
+    try {
+      raw = parseYaml(text) ?? {};
+    } catch (error) {
+      // Silently falling back to defaults turns a typo into a mystery: the
+      // failure surfaces much later, as a provider that was never configured.
+      throw new Error(`${path} is not valid YAML: ${(error as Error).message}`);
+    }
+    if (typeof raw !== "object" || Array.isArray(raw)) {
+      throw new Error(`${path} must be a mapping of settings, not ${describe(raw)}`);
+    }
+  }
+
   const provider: ProviderId = raw.provider === "openai" ? "openai" : "anthropic";
   const auth: AuthMode = AUTH_MODES.includes(raw.auth) ? raw.auth : "key";
   return {
+    configured: text !== null,
     provider,
     auth,
     model: raw.model ?? defaultModel(provider, auth),
@@ -66,4 +88,9 @@ export async function loadConfig(root: string): Promise<VesnaConfig> {
 function defaultModel(provider: ProviderId, auth: AuthMode): string {
   if (provider === "anthropic") return DEFAULT_MODEL;
   return auth === "codex" ? CODEX_DEFAULT_MODEL : "gpt-4o-mini";
+}
+
+function describe(value: unknown): string {
+  if (Array.isArray(value)) return "a list";
+  return typeof value;
 }

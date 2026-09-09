@@ -127,6 +127,7 @@ function halfway(first: string, second: string) {
 async function deps(p: Provider, overrides: Partial<AppDeps> = {}): Promise<AppDeps> {
   const root = await mkdtemp(join(tmpdir(), "vesna-app-"));
   const config: VesnaConfig = {
+    configured: true,
     provider: "openai",
     auth: "codex",
     model: "test-model",

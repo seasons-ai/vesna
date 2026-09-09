@@ -40,3 +40,34 @@ test("ascii is tri-state: unset means ask the locale", async () => {
 test("a non-boolean ascii is ignored rather than taken as true", async () => {
   expect((await loadConfig(await project("ascii: yes please\n"))).ascii).toBeUndefined();
 });
+
+test("a folder with no config file is reported as unconfigured, not as defaults", async () => {
+  const bare = await mkdtemp(join(tmpdir(), "vesna-bare-"));
+  const config = await loadConfig(bare);
+  expect(config.configured).toBe(false);
+  // The defaults are still there — callers that do not need credentials work.
+  expect(config.provider).toBe("anthropic");
+});
+
+test("a config file that exists marks the project configured", async () => {
+  const config = await loadConfig(await project("provider: openai\nauth: codex\n"));
+  expect(config.configured).toBe(true);
+});
+
+test("an empty config file still counts as configured", async () => {
+  expect((await loadConfig(await project(""))).configured).toBe(true);
+});
+
+test("a config with a YAML syntax error is refused, not silently ignored", async () => {
+  const root = await project("provider: openai\n  auth: [unclosed\n");
+  await expect(loadConfig(root)).rejects.toThrow(/config\.yaml/);
+});
+
+test("the refusal explains what is wrong, so the typo is findable", async () => {
+  const root = await project("theme: \"unterminated\n");
+  await expect(loadConfig(root)).rejects.toThrow(/config\.yaml/);
+});
+
+test("a config whose top level is not a mapping is refused", async () => {
+  await expect(loadConfig(await project("- provider: openai\n"))).rejects.toThrow(/mapping/i);
+});
