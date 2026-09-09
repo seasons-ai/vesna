@@ -1,65 +1,72 @@
-const ESC = "";
-const RESET = `${ESC}[0m`;
+import { bg24, bg8, fg24, fg8, nearest256, RESET } from "./color";
+import { MONO, PALETTES, type Token } from "./palette";
 
-/** 256-colour foreground code. Widely supported, and safer than truecolour. */
-function fg(code: number): string {
-  return `${ESC}[38;5;${code}m`;
-}
+export type Role = Token;
 
-export type Role = "ok" | "warn" | "muted" | "petal" | "text";
-
-export interface ThemeDefinition {
-  name: string;
-  roles: Record<Role, string>;
-}
-
-export const THEMES: Record<string, ThemeDefinition> = {
-  vesna: {
-    name: "vesna",
-    roles: { ok: fg(78), warn: fg(215), muted: fg(245), petal: fg(114), text: fg(252) },
-  },
-  ember: {
-    name: "ember",
-    roles: { ok: fg(180), warn: fg(203), muted: fg(240), petal: fg(209), text: fg(223) },
-  },
-  dusk: {
-    name: "dusk",
-    roles: { ok: fg(110), warn: fg(176), muted: fg(243), petal: fg(147), text: fg(252) },
-  },
-  mono: {
-    name: "mono",
-    roles: { ok: "", warn: "", muted: "", petal: "", text: "" },
-  },
-};
+/** 0 = no colour, 8 = xterm-256, 24 = truecolor. */
+export type ColorDepth = 0 | 8 | 24;
 
 const DEFAULT_THEME = "vesna";
 
 /**
- * Honours the NO_COLOR convention first, then FORCE_COLOR, then whether stdout
- * is a terminal. Piped output and CI logs must stay free of escape codes.
+ * Honours NO_COLOR first, then FORCE_COLOR, then whether stdout is a terminal,
+ * and only then asks how much colour that terminal can show. Piped output and
+ * CI logs must stay free of escape codes.
  */
-export function colorSupported(env: Record<string, string | undefined>, isTTY: boolean): boolean {
-  if (env.NO_COLOR !== undefined && env.NO_COLOR !== "") return false;
-  if (env.TERM === "dumb") return false;
-  if (env.FORCE_COLOR !== undefined && env.FORCE_COLOR !== "" && env.FORCE_COLOR !== "0") {
-    return true;
-  }
-  return isTTY;
+export function colorDepth(
+  env: Record<string, string | undefined>,
+  isTTY: boolean,
+): ColorDepth {
+  const set = (value: string | undefined) => value !== undefined && value !== "";
+
+  if (set(env.NO_COLOR)) return 0;
+  if (env.TERM === "dumb") return 0;
+
+  const forced = set(env.FORCE_COLOR) && env.FORCE_COLOR !== "0";
+  if (!isTTY && !forced) return 0;
+
+  const colorterm = (env.COLORTERM ?? "").toLowerCase();
+  if (colorterm === "truecolor" || colorterm === "24bit") return 24;
+  if ((env.TERM ?? "").endsWith("-direct")) return 24;
+
+  return 8;
 }
 
 export interface Theme {
   name: string;
+  depth: ColorDepth;
   paint(role: Role, text: string): string;
+  /** SGR that establishes the canvas, or "" when nothing is painted. */
+  surface: string;
 }
 
-export function resolveTheme(name: string | undefined, options: { color: boolean }): Theme {
-  const definition = (name && THEMES[name]) || THEMES[DEFAULT_THEME]!;
+export function themeNames(): string[] {
+  return [...Object.keys(PALETTES), MONO];
+}
+
+export function resolveTheme(
+  name: string | undefined,
+  options: { depth: ColorDepth },
+): Theme {
+  const wanted = name ?? DEFAULT_THEME;
+  const paints = wanted !== MONO && options.depth !== 0;
+  const palette = PALETTES[wanted] ?? PALETTES[DEFAULT_THEME]!;
+  const themeName = wanted === MONO ? MONO : palette.name;
+
+  const foreground = (hex: string) =>
+    options.depth === 24 ? fg24(hex) : fg8(nearest256(hex));
+
   return {
-    name: definition.name,
+    name: themeName,
+    depth: options.depth,
+    surface: paints
+      ? options.depth === 24
+        ? bg24(palette.tokens.bg)
+        : bg8(nearest256(palette.tokens.bg))
+      : "",
     paint(role, text) {
-      const code = definition.roles[role];
-      if (!options.color || code === "") return text;
-      return `${code}${text}${RESET}`;
+      if (!paints) return text;
+      return `${foreground(palette.tokens[role])}${text}${RESET}`;
     },
   };
 }

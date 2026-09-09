@@ -131,7 +131,7 @@ async function deps(p: Provider): Promise<AppDeps> {
     provider: p,
     store: createTraceStore(join(root, ".vesna", "traces")),
     config,
-    theme: resolveTheme("mono", { color: false }),
+    theme: resolveTheme("mono", { depth: 0 }),
     root,
   };
 }

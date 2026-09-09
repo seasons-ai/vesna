@@ -17,7 +17,7 @@ import { authPath, isExpired, loadAuth, saveAuth } from "../auth/store";
 import { codexAuthPath, readCodexAuth } from "../auth/codex";
 import { configDir, credentialSource, listProfiles } from "./auth";
 import { loadConfig, type VesnaConfig } from "./config";
-import { colorSupported, resolveTheme, type Theme } from "../tui/theme";
+import { colorDepth, resolveTheme, type Theme } from "../tui/theme";
 import { runChat } from "./chat";
 import { runTui } from "../tui/stdin";
 import { buildContext, CODEX_BASE_URL } from "./context";
@@ -213,7 +213,7 @@ export async function main(argv: string[]): Promise<number> {
   // from config alone, before buildContext tries to construct one.
   const earlyConfig = await loadConfig(root);
   const earlyTheme = resolveTheme(earlyConfig.theme, {
-    color: colorSupported(process.env, Boolean(process.stdout.isTTY)),
+    depth: colorDepth(process.env, Boolean(process.stdout.isTTY)),
   });
   if (command === "auth") return await authCommand(target, earlyConfig, earlyTheme, root);
 

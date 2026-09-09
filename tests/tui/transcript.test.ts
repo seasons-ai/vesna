@@ -2,7 +2,7 @@ import { test, expect } from "bun:test";
 import { createTranscript } from "../../src/tui/transcript";
 import { resolveTheme } from "../../src/tui/theme";
 
-const theme = resolveTheme("mono", { color: false });
+const theme = resolveTheme("mono", { depth: 0 });
 
 test("a fresh transcript is empty", () => {
   expect(createTranscript(theme).lines()).toEqual([]);

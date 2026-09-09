@@ -10,7 +10,7 @@ import { authPath } from "../auth/store";
 import { homedir } from "node:os";
 import { createRegistry } from "../registry/registry";
 import { createTraceStore } from "../store/trace";
-import { colorSupported, resolveTheme } from "../tui/theme";
+import { colorDepth, resolveTheme } from "../tui/theme";
 import { loadConfig, type VesnaConfig } from "./config";
 
 /** The subscription endpoint the Codex CLI talks to. */
@@ -61,7 +61,7 @@ export async function buildContext(root: string) {
   registry.register(createLlmNode(provider, config.prices));
   const store = createTraceStore(join(root, ".vesna", "traces"));
   const theme = resolveTheme(config.theme, {
-    color: colorSupported(process.env, Boolean(process.stdout.isTTY)),
+    depth: colorDepth(process.env, Boolean(process.stdout.isTTY)),
   });
   return { registry, store, config, provider, theme };
 }

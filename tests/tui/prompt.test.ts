@@ -3,7 +3,7 @@ import { confirmParameters, type PromptIO } from "../../src/tui/prompt";
 import { resolveTheme } from "../../src/tui/theme";
 import type { ProposedParameter } from "../../src/crystallize/propose";
 
-const theme = resolveTheme("mono", { color: false });
+const theme = resolveTheme("mono", { depth: 0 });
 
 const parameters: ProposedParameter[] = [
   { literal: "reports/acme.txt", suggestedName: "source", sites: [{ nodeId: "read_1", field: "path" }] },

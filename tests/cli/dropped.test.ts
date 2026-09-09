@@ -2,7 +2,7 @@ import { test, expect } from "bun:test";
 import { describeDropped } from "../../src/cli/dropped";
 import { resolveTheme } from "../../src/tui/theme";
 
-const theme = resolveTheme("vesna", { color: false });
+const theme = resolveTheme("vesna", { depth: 0 });
 
 test("nothing dropped prints nothing at all", () => {
   expect(describeDropped([], theme)).toEqual([]);
