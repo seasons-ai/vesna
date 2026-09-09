@@ -77,7 +77,9 @@ export async function runApp(deps: AppDeps, io: AppIo): Promise<number> {
   /** Never scroll past the top, and never past the newest line. */
   function clampScroll(next: number): number {
     const size = screen.size();
-    const wrapped = transcript.lines().flatMap((line) => wrapAnsi(line, Math.max(1, size.cols)));
+    const wrapped = transcript
+      .lines(Math.max(1, size.cols))
+      .flatMap((line) => wrapAnsi(line, Math.max(1, size.cols)));
     const visible = conversationRows(size.rows);
     return Math.max(0, Math.min(next, Math.max(0, wrapped.length - visible)));
   }
@@ -86,7 +88,7 @@ export async function runApp(deps: AppDeps, io: AppIo): Promise<number> {
     const size = screen.size();
     return {
       header: header(deps, glyphs),
-      transcript: transcript.lines(),
+      transcript: transcript.lines(Math.max(1, size.cols)),
       empty: emptyState({ theme, glyphs, cols: size.cols, rows: size.rows }),
       editor,
       hint: hint(theme, busy, confirmExit, glyphs),

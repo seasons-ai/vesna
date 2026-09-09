@@ -1,12 +1,14 @@
 import type { Glyphs } from "./glyphs";
+import { renderMarkdown } from "./markdown";
 import type { Role, Theme } from "./theme";
 
 /**
- * The conversation as a growing list of painted lines.
+ * The conversation, as entries rather than as finished lines.
  *
- * Streamed text lands character by character, so appending to the line in
- * progress — rather than pushing a line per delta — is what keeps a streaming
- * answer readable.
+ * An answer is kept as the markdown the model actually sent and rendered at
+ * the width of the moment. Rendering as the text arrives is impossible: a
+ * table or a fence is only meaningful once it is complete, and a window can
+ * be resized long after the answer has finished.
  */
 export interface Transcript {
   user(text: string): void;
@@ -16,17 +18,25 @@ export interface Transcript {
   /** Closes the answer and leaves a single blank line behind. */
   endTurn(): void;
   clear(): void;
-  lines(): string[];
+  lines(width: number): string[];
 }
 
+type Entry =
+  /** Painted once, shown verbatim: what the user typed, a step, a notice. */
+  | { kind: "line"; text: string }
+  /** Markdown from the model, rendered on demand. */
+  | { kind: "answer"; raw: string };
+
 export function createTranscript(theme: Theme, glyphs: Glyphs): Transcript {
-  let lines: string[] = [];
-  /** True while the last line is an answer still being streamed into. */
-  let streaming = false;
+  let entries: Entry[] = [];
+
+  // Rendering runs on every frame, including each token of a streamed answer,
+  // so the last result is kept rather than recomputed for an unchanged answer.
+  let cacheKey = "";
+  let cached: string[] = [];
 
   const push = (line: string) => {
-    lines.push(line);
-    streaming = false;
+    entries.push({ kind: "line", text: line });
   };
 
   /**
@@ -37,29 +47,46 @@ export function createTranscript(theme: Theme, glyphs: Glyphs): Transcript {
   const body = (text: string) => (text === "" ? "" : theme.paint("text", text));
 
   return {
-    lines: () => [...lines],
+    lines(width) {
+      const key = `${width}\u0000${entries.map((e) => (e.kind === "line" ? e.text : e.raw)).join("\u0000")}`;
+      if (key === cacheKey) return cached;
+
+      const out: string[] = [];
+      for (const entry of entries) {
+        if (entry.kind === "line") {
+          out.push(entry.text);
+          continue;
+        }
+        out.push(...renderMarkdown(entry.raw, { theme, glyphs, width: Math.max(1, width) }));
+      }
+
+      cacheKey = key;
+      cached = out;
+      return out;
+    },
 
     clear() {
-      lines = [];
-      streaming = false;
+      entries = [];
+      cacheKey = "";
+      cached = [];
     },
 
     user(text) {
       const [first, ...rest] = text.split("\n");
+      // What the user typed is quoted back, never interpreted: a question
+      // about `##` in bash should not come back as a heading.
       push(`${theme.paint("petal", glyphs.prompt)} ${body(first ?? "")}`);
       for (const line of rest) push(`  ${body(line)}`);
       push("");
     },
 
     delta(text) {
-      for (const [index, part] of text.split("\n").entries()) {
-        if (index > 0 || !streaming) {
-          lines.push("");
-          streaming = true;
-        }
-        lines[lines.length - 1] += body(part);
+      const last = entries[entries.length - 1];
+      if (last?.kind === "answer") {
+        last.raw += text;
+        return;
       }
-      streaming = true;
+      entries.push({ kind: "answer", raw: text });
     },
 
     step(nodeType, durationMs, detail) {
@@ -72,8 +99,9 @@ export function createTranscript(theme: Theme, glyphs: Glyphs): Transcript {
     },
 
     endTurn() {
-      if (lines.length === 0) return;
-      if (lines[lines.length - 1] === "") return;
+      const last = entries[entries.length - 1];
+      if (last === undefined) return;
+      if (last.kind === "line" && last.text === "") return;
       push("");
     },
   };

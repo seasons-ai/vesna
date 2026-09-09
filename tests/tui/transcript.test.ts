@@ -8,52 +8,52 @@ import { PALETTES } from "../../src/tui/palette";
 const theme = resolveTheme("mono", { depth: 0 });
 
 test("a fresh transcript is empty", () => {
-  expect(createTranscript(theme, UNICODE_GLYPHS).lines()).toEqual([]);
+  expect(createTranscript(theme, UNICODE_GLYPHS).lines(80)).toEqual([]);
 });
 
 test("a user message is marked so it is distinguishable from the answer", () => {
   const transcript = createTranscript(theme, UNICODE_GLYPHS);
   transcript.user("read a.txt");
-  expect(transcript.lines()).toEqual(["› read a.txt", ""]);
+  expect(transcript.lines(80)).toEqual(["› read a.txt", ""]);
 });
 
 test("a multi-line user message keeps its shape", () => {
   const transcript = createTranscript(theme, UNICODE_GLYPHS);
   transcript.user("one\ntwo");
-  expect(transcript.lines()).toEqual(["› one", "  two", ""]);
+  expect(transcript.lines(80)).toEqual(["› one", "  two", ""]);
 });
 
 test("streamed deltas join into a paragraph rather than one line per token", () => {
   const transcript = createTranscript(theme, UNICODE_GLYPHS);
   for (const delta of ["Read", "ing ", "the ", "file."]) transcript.delta(delta);
-  expect(transcript.lines()).toEqual(["Reading the file."]);
+  expect(transcript.lines(80)).toEqual(["Reading the file."]);
 });
 
 test("a newline inside the stream starts a new line", () => {
   const transcript = createTranscript(theme, UNICODE_GLYPHS);
   transcript.delta("one\ntw");
   transcript.delta("o");
-  expect(transcript.lines()).toEqual(["one", "two"]);
+  expect(transcript.lines(80)).toEqual(["one", "two"]);
 });
 
 test("a tool step is its own line, not part of the answer", () => {
   const transcript = createTranscript(theme, UNICODE_GLYPHS);
   transcript.delta("Reading.");
   transcript.step("read", 12);
-  expect(transcript.lines()).toEqual(["Reading.", "  · read 12ms"]);
+  expect(transcript.lines(80)).toEqual(["Reading.", "  · read 12ms"]);
 });
 
 test("a step carries a detail when there is one worth showing", () => {
   const transcript = createTranscript(theme, UNICODE_GLYPHS);
   transcript.step("read", 12, "a.txt");
-  expect(transcript.lines()).toEqual(["  · read 12ms  a.txt"]);
+  expect(transcript.lines(80)).toEqual(["  · read 12ms  a.txt"]);
 });
 
 test("text streamed after a step starts a fresh line rather than joining it", () => {
   const transcript = createTranscript(theme, UNICODE_GLYPHS);
   transcript.step("read", 1);
   transcript.delta("Done.");
-  expect(transcript.lines()).toEqual(["  · read 1ms", "Done."]);
+  expect(transcript.lines(80)).toEqual(["  · read 1ms", "Done."]);
 });
 
 test("ending a turn leaves one blank line before the next", () => {
@@ -61,27 +61,27 @@ test("ending a turn leaves one blank line before the next", () => {
   transcript.delta("Done.");
   transcript.endTurn();
   transcript.user("again");
-  expect(transcript.lines()).toEqual(["Done.", "", "› again", ""]);
+  expect(transcript.lines(80)).toEqual(["Done.", "", "› again", ""]);
 });
 
 test("ending an empty turn does not stack blank lines", () => {
   const transcript = createTranscript(theme, UNICODE_GLYPHS);
   transcript.endTurn();
   transcript.endTurn();
-  expect(transcript.lines()).toEqual([]);
+  expect(transcript.lines(80)).toEqual([]);
 });
 
 test("a notice is recorded so an error is part of the conversation, not a flash", () => {
   const transcript = createTranscript(theme, UNICODE_GLYPHS);
   transcript.notice("interrupted", "warn");
-  expect(transcript.lines()).toEqual(["  interrupted"]);
+  expect(transcript.lines(80)).toEqual(["  interrupted"]);
 });
 
 test("clearing drops everything", () => {
   const transcript = createTranscript(theme, UNICODE_GLYPHS);
   transcript.user("x");
   transcript.clear();
-  expect(transcript.lines()).toEqual([]);
+  expect(transcript.lines(80)).toEqual([]);
 });
 
 test("the user's own words and the streamed answer are painted, not left bare", () => {
@@ -93,8 +93,58 @@ test("the user's own words and the streamed answer are painted, not left bare", 
   const transcript = createTranscript(painted, UNICODE_GLYPHS);
 
   transcript.user("what does this do?");
-  expect(transcript.lines()[0]).toContain(text);
+  expect(transcript.lines(80)[0]).toContain(text);
 
   transcript.delta("It reads the file.");
-  expect(transcript.lines().at(-1)).toContain(text);
+  expect(transcript.lines(80).at(-1)).toContain(text);
+});
+
+test("an answer is markdown: the hashes are markup, not text to display", () => {
+  const transcript = createTranscript(theme, UNICODE_GLYPHS);
+  transcript.delta("## Findings\n\n- one\n- two");
+  const out = transcript.lines(60).join("\n");
+  expect(out).toContain("Findings");
+  expect(out).not.toContain("##");
+  expect(out).toContain("one");
+});
+
+test("a fenced block inside an answer keeps its own spacing", () => {
+  const transcript = createTranscript(theme, UNICODE_GLYPHS);
+  transcript.delta("here:\n\n```yaml\nnodes:\n  - read\n```");
+  const out = transcript.lines(60).join("\n");
+  expect(out).toContain("  - read");
+  expect(out).not.toContain("```");
+});
+
+test("a half-arrived answer renders as far as it has got", () => {
+  const transcript = createTranscript(theme, UNICODE_GLYPHS);
+  transcript.delta("## Head");
+  expect(transcript.lines(60).join("\n")).toContain("Head");
+  transcript.delta("ing\n\nbody");
+  const out = transcript.lines(60).join("\n");
+  expect(out).toContain("Heading");
+  expect(out).toContain("body");
+});
+
+test("a user message is never treated as markdown — it is quoted back verbatim", () => {
+  const transcript = createTranscript(theme, UNICODE_GLYPHS);
+  transcript.user("what does ## mean in bash?");
+  expect(transcript.lines(60).join("\n")).toContain("## mean in bash?");
+});
+
+test("the answer is rewrapped when the window changes width", () => {
+  const transcript = createTranscript(theme, UNICODE_GLYPHS);
+  transcript.delta("word ".repeat(30));
+  expect(transcript.lines(80).length).toBeLessThan(transcript.lines(24).length);
+});
+
+test("a step between two answers does not merge them into one block", () => {
+  const transcript = createTranscript(theme, UNICODE_GLYPHS);
+  transcript.delta("# First");
+  transcript.step("read", 1);
+  transcript.delta("# Second");
+  const out = transcript.lines(60).join("\n");
+  expect(out).toContain("First");
+  expect(out).toContain("Second");
+  expect(out).not.toContain("#");
 });

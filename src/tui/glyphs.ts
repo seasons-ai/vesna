@@ -11,6 +11,10 @@ export interface Glyphs {
   prompt: string;
   rule: string;
   bullet: string;
+  /** Vertical bar: a code gutter, a quote bar, a column divider. */
+  gutter: string;
+  /** A list item in rendered prose, distinct from the tool-step bullet. */
+  listItem: string;
   spinner: readonly string[];
 }
 
@@ -19,6 +23,8 @@ export const UNICODE_GLYPHS: Glyphs = {
   prompt: "›",
   rule: "─",
   bullet: "·",
+  gutter: "│",
+  listItem: "•",
   spinner: ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"],
 };
 
@@ -27,6 +33,8 @@ export const ASCII_GLYPHS: Glyphs = {
   prompt: ">",
   rule: "-",
   bullet: "-",
+  gutter: "|",
+  listItem: "*",
   spinner: ["|", "/", "-", "\\"],
 };
 
