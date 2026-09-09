@@ -57,11 +57,19 @@ export function emptyState(options: {
   }
 
   if (cols >= EXAMPLES_MIN_COLS && rows >= EXAMPLES_MIN_ROWS) {
+    // The block is centred as a whole, not row by row: the labels are padded
+    // to a common width, but the right-hand halves are all different lengths,
+    // so centring each composed row on its own would give every row its own
+    // indent and undo the alignment the padding was for. One indent, derived
+    // from the widest row, keeps the label column straight.
     const label = Math.max(...EXAMPLES.map(([left]) => left.length));
+    const composed = EXAMPLES.map(([left, right]) => `${left.padEnd(label)}   ${right}`);
+    const widest = Math.max(...composed.map((row) => visibleWidth(row)));
+    const indent = " ".repeat(Math.max(0, Math.floor((cols - widest) / 2)));
     lines.push("");
     for (const [left, right] of EXAMPLES) {
       lines.push(
-        centre(`${theme.paint("faint", left.padEnd(label))}   ${theme.paint("muted", right)}`),
+        `${indent}${theme.paint("faint", left.padEnd(label))}   ${theme.paint("muted", right)}`,
       );
     }
   }

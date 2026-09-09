@@ -48,6 +48,17 @@ test("the composition is centred, not flush left", () => {
   expect(indent).toBeGreaterThan(10);
 });
 
+test("the example rows line up as one block, not each centred on its own", () => {
+  const lines = at(84, 14);
+  const labels = ["ask for something", "freeze what worked", "run it forever"];
+  const indents = labels.map((label) => {
+    const line = lines.find((candidate) => candidate.includes(label))!;
+    return line.length - line.trimStart().length;
+  });
+  expect(indents[1]).toBe(indents[0]);
+  expect(indents[2]).toBe(indents[0]);
+});
+
 test("ASCII mode uses the ASCII mark and stays ascii throughout", () => {
   const lines = emptyState({ theme, glyphs: ASCII_GLYPHS, cols: 70, rows: 12 });
   expect(lines.join("\n")).toMatch(/^[\x00-\x7f]*$/);
