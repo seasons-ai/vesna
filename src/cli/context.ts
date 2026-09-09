@@ -12,6 +12,9 @@ import { createRegistry } from "../registry/registry";
 import { createTraceStore } from "../store/trace";
 import { readProjectNotes } from "../loop/prompt";
 import { loadPolicy } from "../policy/store";
+import { createSink } from "../spec/sink";
+import { specsRoot } from "../spec/store";
+import { createPlanNodes } from "../nodes/plan";
 import { colorDepth, resolveTheme } from "../tui/theme";
 import { loadConfig, type VesnaConfig } from "./config";
 
@@ -61,6 +64,10 @@ export async function buildContext(root: string) {
   const registry = createRegistry();
   registerBuiltins(registry);
   registry.register(createLlmNode(provider, config.prices));
+
+  // Registered once, bound to whichever spec is open at the time.
+  const sink = createSink(specsRoot(root));
+  for (const node of createPlanNodes(sink)) registry.register(node);
   const store = createTraceStore(join(root, ".vesna", "traces"));
   const theme = resolveTheme(config.theme, {
     depth: colorDepth(process.env, Boolean(process.stdout.isTTY)),
@@ -68,5 +75,5 @@ export async function buildContext(root: string) {
   // Read once here so both `chat` and `do` get the same instructions.
   const notes = await readProjectNotes(root);
   const policy = await loadPolicy(root, config);
-  return { registry, store, config, provider, theme, notes, policy };
+  return { registry, store, config, provider, theme, notes, policy, sink };
 }

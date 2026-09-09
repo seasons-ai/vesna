@@ -10,7 +10,7 @@ import type { TraceStore } from "../store/types";
 import { confirmParameters } from "../tui/prompt";
 import { createStdioPrompt, isInteractive } from "../tui/stdio";
 import type { Theme } from "../tui/theme";
-import type { VesnaConfig } from "./config";
+import { permits, type VesnaConfig } from "./config";
 import { CHAT_COMMANDS, parseChatInput } from "./chatcmd";
 import { EXIT } from "./exit";
 import { formatParameter } from "./format";
@@ -126,7 +126,7 @@ function newSession(deps: ChatDeps): Session {
     model: deps.config.model,
     prices: deps.config.prices,
     notes: deps.notes,
-    permit: (type) => deps.config.permissions.nodes.includes(type),
+    permit: (type) => permits(deps.config, type),
   });
 }
 

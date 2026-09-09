@@ -71,3 +71,20 @@ test("the refusal explains what is wrong, so the typo is findable", async () => 
 test("a config whose top level is not a mapping is refused", async () => {
   await expect(loadConfig(await project("- provider: openai\n"))).rejects.toThrow(/mapping/i);
 });
+
+test("with no nodes listed every registered node is offered", async () => {
+  const config = await loadConfig(await project("provider: openai\n"));
+  // Undefined means "all of them": a fixed default list makes every node
+  // added later invisible until somebody edits a config they did not write.
+  expect(config.permissions.nodes).toBeUndefined();
+});
+
+test("an explicit list is still an allowlist, and still wins", async () => {
+  const config = await loadConfig(await project("permissions:\n  nodes: [read]\n"));
+  expect(config.permissions.nodes).toEqual(["read"]);
+});
+
+test("an empty list means none, which is different from not saying", async () => {
+  const config = await loadConfig(await project("permissions:\n  nodes: []\n"));
+  expect(config.permissions.nodes).toEqual([]);
+});

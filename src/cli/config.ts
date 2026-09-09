@@ -35,7 +35,13 @@ export interface VesnaConfig {
    */
   oauth?: { issuer: string; clientId: string; baseUrl: string; scope?: string };
   permissions: {
-    nodes: string[];
+    /**
+     * Which nodes exist for the agent. Undefined means all of them: a fixed
+     * default list made every node added later invisible until the user edited
+     * a config they never wrote. What an allowed node may actually do is the
+     * approval layer's business now.
+     */
+    nodes?: string[];
     /** ask (default) questions each new action; auto allows all but the irreversible. */
     mode?: "ask" | "auto";
     allow?: Record<string, string[]>;
@@ -89,7 +95,7 @@ export async function loadConfig(root: string): Promise<VesnaConfig> {
     oauth: raw.oauth,
     // Permissions are the registry: no node, no capability.
     permissions: {
-      nodes: raw.permissions?.nodes ?? ["read", "write", "shell", "script", "llm"],
+      ...(Array.isArray(raw.permissions?.nodes) ? { nodes: raw.permissions.nodes } : {}),
       ...(raw.permissions?.mode ? { mode: raw.permissions.mode } : {}),
       ...(raw.permissions?.allow ? { allow: raw.permissions.allow } : {}),
       ...(raw.permissions?.deny ? { deny: raw.permissions.deny } : {}),
@@ -107,4 +113,9 @@ function defaultModel(provider: ProviderId, auth: AuthMode): string {
 function describe(value: unknown): string {
   if (Array.isArray(value)) return "a list";
   return typeof value;
+}
+
+/** Whether a node exists for the agent at all. Nothing listed means all of them. */
+export function permits(config: VesnaConfig, node: string): boolean {
+  return config.permissions.nodes === undefined || config.permissions.nodes.includes(node);
 }

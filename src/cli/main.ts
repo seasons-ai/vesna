@@ -17,7 +17,7 @@ import { authPath, isExpired, loadAuth, saveAuth } from "../auth/store";
 import { codexAuthPath, readCodexAuth } from "../auth/codex";
 import { inspectCredential, problem, remedy, usable } from "./preflight";
 import { chooseStarter, writeStarterConfig } from "./init";
-import { loadConfig, type VesnaConfig } from "./config";
+import { loadConfig, permits, type VesnaConfig } from "./config";
 import { colorDepth, resolveTheme, type Theme } from "../tui/theme";
 import { runChat } from "./chat";
 import { runTui } from "../tui/stdin";
@@ -232,11 +232,11 @@ export async function main(argv: string[]): Promise<number> {
     }
   }
 
-  const { registry, store, config, provider, theme, notes, policy } = await buildContext(root);
-  const permit = (node: { use: string }) => config.permissions.nodes.includes(node.use);
+  const { registry, store, config, provider, theme, notes, policy, sink } = await buildContext(root);
+  const permit = (node: { use: string }) => permits(config, node.use);
 
   if (command === "chat") {
-    const deps = { registry, provider, store, config, theme, root, notes, policy };
+    const deps = { registry, provider, store, config, theme, root, notes, policy, sink };
     // The line-based chat stays available for dumb terminals and for piping.
     if (flags.plain !== undefined || !process.stdout.isTTY) return await runChat(deps);
     return await runTui(deps);
@@ -249,7 +249,7 @@ export async function main(argv: string[]): Promise<number> {
       model: flags.model ?? config.model,
       prices: config.prices,
       notes,
-      permit: (type) => config.permissions.nodes.includes(type),
+      permit: (type) => permits(config, type),
       onStep: (step) =>
         console.log(
           `  ${theme.paint("petal", "·")} ${theme.paint("text", step.nodeType.padEnd(8))} ${theme.paint("muted", `${step.durationMs}ms`)}`,

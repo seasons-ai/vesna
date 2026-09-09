@@ -11,7 +11,7 @@ import { createSession, type Session } from "../loop/session";
 import type { Provider } from "../providers/types";
 import type { Registry } from "../registry/types";
 import type { TraceStore } from "../store/types";
-import type { VesnaConfig } from "../cli/config";
+import { permits, type VesnaConfig } from "../cli/config";
 import { createEditor, applyKey, type EditorState } from "./editor";
 import { emptyState } from "./emptystate";
 import { resolveGlyphs, type Glyphs } from "./glyphs";
@@ -20,6 +20,7 @@ import { layout, panelWidths, type Frame, type ViewState } from "./layout";
 import { chatsPane, gardenPane } from "./panes";
 import { createSpec, listSpecs, readSpec, specsRoot } from "../spec/store";
 import type { SpecTree } from "../spec/project";
+import type { SpecSink } from "../spec/sink";
 import { wrapAnsi } from "./wrap";
 import { spinnerFrame } from "./render";
 import { createScreen, type Terminal } from "./screen";
@@ -57,6 +58,8 @@ export interface AppDeps {
   sessionsRoot?: string;
   /** Which actions may proceed without asking. */
   policy?: Policy;
+  /** Where the plan nodes write. Told which spec is open. */
+  sink?: SpecSink;
 }
 
 export interface AppIo {
@@ -193,7 +196,14 @@ export async function runApp(deps: AppDeps, io: AppIo): Promise<number> {
     if (tree === null) return false;
     spec = tree;
     showGarden = true;
+    // The nodes write to whichever spec the user is looking at.
+    if (deps.sink !== undefined) deps.sink.slug = slug;
     return true;
+  }
+
+  /** The tree is the log reduced, so it is re-read rather than patched. */
+  function refreshSpec(): void {
+    if (spec !== null) spec = readSpec(specs, spec.id) ?? spec;
   }
 
   function refreshChats(): void {
@@ -593,7 +603,7 @@ export async function runApp(deps: AppDeps, io: AppIo): Promise<number> {
 
       const before = session.messages.length;
       try {
-        await runTurn(session, input.text, transcript, turn.signal, draw, remember);
+        await runTurn(session, input.text, transcript, turn.signal, draw, remember, refreshSpec);
       } catch (error) {
         // An abort is the user's own doing, and reads as a warning. A provider
         // that fell over is a failure, and gets the colour that says so.
@@ -618,6 +628,7 @@ export async function runApp(deps: AppDeps, io: AppIo): Promise<number> {
           costUsd: session.costUsd,
         });
 
+        refreshSpec();
         transcript.endTurn();
         draw();
       }
@@ -641,6 +652,7 @@ async function runTurn(
   signal: AbortSignal,
   draw: () => void,
   onRecord: (event: SessionEvent) => void,
+  onSpecChanged: () => void,
 ): Promise<void> {
   let streamed = false;
   const result = await session.send(text, {
@@ -652,6 +664,7 @@ async function runTurn(
     },
     onStep(step) {
       transcript.step(step.nodeType, step.durationMs, detailOf(step.input));
+      onSpecChanged();
       onRecord({
         t: "step",
         nodeType: step.nodeType,
@@ -795,7 +808,7 @@ function newSession(
     prices: deps.config.prices,
     notes: deps.notes,
 
-    permit: (type) => deps.config.permissions.nodes.includes(type),
+    permit: (type) => permits(deps.config, type),
     approve,
     ...(resumed ? { history: resumed } : {}),
   });

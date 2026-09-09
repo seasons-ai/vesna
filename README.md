@@ -359,6 +359,23 @@ there are any, the tasks and who is working on them.
 ctrl-g                      show or hide the column
 ```
 
+The agent fills it in as it works. It may declare the plan and say which task
+it has picked up. It may **not** say a task is finished — "I finished T2" is a
+claim, and a claim is not a fact. To finish something it hands Vesna a command
+that fails when the work is not done, and Vesna runs it and reads the exit
+status:
+
+```text
+· plan 1ms
+· task_start 0ms
+· write 1ms  hello.txt
+· task_verify 17ms          grep 'HELLO' hello.txt → 0
+```
+
+Only then does the task turn cold. The evidence is produced by the system
+rather than asserted by the party being checked, which is the difference
+between a progress bar and a guarantee.
+
 It lives in `.vesna/specs/<slug>/` and is worth committing: a spec describes
 work on this repository, so it belongs beside the code and can be reviewed with
 it. That is the opposite of a conversation, which is personal and lives under
@@ -387,7 +404,8 @@ you your comments and layout.
 ```yaml
 permissions:
   mode: ask            # or auto
-  nodes: [read, write, shell, script, llm]
+  # Every registered node, unless you list the ones you want.
+  nodes: [read, write, shell]
   allow:
     shell: ["bun test*"]
   deny:
