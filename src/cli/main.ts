@@ -23,6 +23,7 @@ import { runChat } from "./chat";
 import { runTui } from "../tui/stdin";
 import { buildContext, CODEX_BASE_URL } from "./context";
 import { EXIT } from "./exit";
+import { isHelp, isVersion, VERSION } from "./entry";
 import { parseFlags } from "./flags";
 import { formatParameter } from "./format";
 import { describeDropped } from "./dropped";
@@ -191,6 +192,16 @@ export async function main(argv: string[]): Promise<number> {
   const [command, target, ...rest] = argv;
   const root = process.cwd();
   const flags = parseFlags(rest);
+
+  // Asking for help or the version is a successful request, not a misuse.
+  if (isHelp(command)) {
+    console.log(USAGE);
+    return EXIT.ok;
+  }
+  if (isVersion(command)) {
+    console.log(VERSION);
+    return EXIT.ok;
+  }
   // Signing in must not require a working provider, so auth commands are served
   // from config alone, before buildContext tries to construct one.
   const earlyConfig = await loadConfig(root);
@@ -412,6 +423,8 @@ export async function main(argv: string[]): Promise<number> {
     return EXIT.ok;
   }
 
-  console.log(USAGE);
-  return command === undefined ? EXIT.ok : EXIT.error;
+  console.error(`vesna: unknown command "${command}"`);
+  console.error("");
+  console.error(USAGE);
+  return EXIT.error;
 }
