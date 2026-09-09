@@ -6,7 +6,7 @@ function fg(code: number): string {
   return `${ESC}[38;5;${code}m`;
 }
 
-export type Role = "ok" | "held" | "dim" | "accent" | "label";
+export type Role = "ok" | "warn" | "muted" | "petal" | "text";
 
 export interface ThemeDefinition {
   name: string;
@@ -16,19 +16,19 @@ export interface ThemeDefinition {
 export const THEMES: Record<string, ThemeDefinition> = {
   vesna: {
     name: "vesna",
-    roles: { ok: fg(78), held: fg(215), dim: fg(245), accent: fg(114), label: fg(252) },
+    roles: { ok: fg(78), warn: fg(215), muted: fg(245), petal: fg(114), text: fg(252) },
   },
   ember: {
     name: "ember",
-    roles: { ok: fg(180), held: fg(203), dim: fg(240), accent: fg(209), label: fg(223) },
+    roles: { ok: fg(180), warn: fg(203), muted: fg(240), petal: fg(209), text: fg(223) },
   },
   dusk: {
     name: "dusk",
-    roles: { ok: fg(110), held: fg(176), dim: fg(243), accent: fg(147), label: fg(252) },
+    roles: { ok: fg(110), warn: fg(176), muted: fg(243), petal: fg(147), text: fg(252) },
   },
   mono: {
     name: "mono",
-    roles: { ok: "", held: "", dim: "", accent: "", label: "" },
+    roles: { ok: "", warn: "", muted: "", petal: "", text: "" },
   },
 };
 

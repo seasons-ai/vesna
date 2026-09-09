@@ -28,7 +28,7 @@ export interface ChatDeps {
 function banner(deps: ChatDeps): string {
   const { theme, config } = deps;
   return [
-    `${theme.paint("accent", "vesna")} ${theme.paint("dim", "·")} ${config.model} ${theme.paint("dim", "·")} ${theme.paint("dim", "/help for commands, ctrl-c to interrupt")}`,
+    `${theme.paint("petal", "vesna")} ${theme.paint("muted", "·")} ${config.model} ${theme.paint("muted", "·")} ${theme.paint("muted", "/help for commands, ctrl-c to interrupt")}`,
     "",
   ].join("\n");
 }
@@ -53,7 +53,7 @@ export async function runChat(deps: ChatDeps): Promise<number> {
   const onSigint = () => {
     if (turnAbort !== null) {
       turnAbort.abort();
-      console.log(theme.paint("held", "\n  interrupted"));
+      console.log(theme.paint("warn", "\n  interrupted"));
       return;
     }
     console.log("");
@@ -66,12 +66,12 @@ export async function runChat(deps: ChatDeps): Promise<number> {
 
   try {
     while (true) {
-      const line = await io.question(`${theme.paint("accent", "›")} `);
+      const line = await io.question(`${theme.paint("petal", "›")} `);
       const input = parseChatInput(line);
 
       if (input.kind === "blank") continue;
       if (input.kind === "unknown") {
-        console.log(theme.paint("held", `  unknown command /${input.name} — try /help`));
+        console.log(theme.paint("warn", `  unknown command /${input.name} — try /help`));
         continue;
       }
 
@@ -79,7 +79,7 @@ export async function runChat(deps: ChatDeps): Promise<number> {
         if (input.name === "exit") return EXIT.ok;
         if (input.name === "help") {
           for (const command of CHAT_COMMANDS) {
-            console.log(`  ${theme.paint("accent", `/${command.name}`.padEnd(14))} ${command.help}`);
+            console.log(`  ${theme.paint("petal", `/${command.name}`.padEnd(14))} ${command.help}`);
           }
           continue;
         }
@@ -87,7 +87,7 @@ export async function runChat(deps: ChatDeps): Promise<number> {
           const { usage } = session;
           console.log(
             theme.paint(
-              "dim",
+              "muted",
               `  ${usage.inputTokens} in · ${usage.outputTokens} out · $${session.costUsd.toFixed(4)}`,
             ),
           );
@@ -95,7 +95,7 @@ export async function runChat(deps: ChatDeps): Promise<number> {
         }
         if (input.name === "clear") {
           session = newSession(deps);
-          console.log(theme.paint("dim", "  new conversation"));
+          console.log(theme.paint("muted", "  new conversation"));
           continue;
         }
         if (input.name === "crystallize") {
@@ -108,7 +108,7 @@ export async function runChat(deps: ChatDeps): Promise<number> {
       try {
         await runTurn(deps, session, input.kind === "message" ? input.text : "", turnAbort.signal);
       } catch (error) {
-        console.log(theme.paint("held", `  ${(error as Error).message}`));
+        console.log(theme.paint("warn", `  ${(error as Error).message}`));
       } finally {
         turnAbort = null;
       }
@@ -148,7 +148,7 @@ async function runTurn(
     },
     onStep(step) {
       console.log(
-        `  ${theme.paint("accent", "\u00b7")} ${theme.paint("label", step.nodeType.padEnd(8))} ${theme.paint("dim", `${step.durationMs}ms`)}`,
+        `  ${theme.paint("petal", "\u00b7")} ${theme.paint("text", step.nodeType.padEnd(8))} ${theme.paint("muted", `${step.durationMs}ms`)}`,
       );
     },
   });
@@ -166,13 +166,13 @@ async function crystallize(
 ): Promise<void> {
   const { theme, root } = deps;
   if (name === "") {
-    console.log(theme.paint("held", "  /crystallize needs a name"));
+    console.log(theme.paint("warn", "  /crystallize needs a name"));
     return;
   }
 
   const trace = await session.toTrace();
   if (trace.steps.length === 0) {
-    console.log(theme.paint("held", "  nothing to crystallise yet — no tools were used"));
+    console.log(theme.paint("warn", "  nothing to crystallise yet — no tools were used"));
     return;
   }
 
@@ -186,9 +186,9 @@ async function crystallize(
   await writeFile(path, toYaml(flow));
 
   for (const parameter of proposal.parameters) {
-    console.log(theme.paint("dim", `  ${formatParameter(parameter)}`));
+    console.log(theme.paint("muted", `  ${formatParameter(parameter)}`));
   }
   for (const line of describeDropped(proposal.dropped, theme)) console.log(line);
   console.log(theme.paint("ok", `  wrote ${path}`));
-  console.log(theme.paint("dim", `  trace ${traceId} · try: vesna run ${flow.name} --dry-run`));
+  console.log(theme.paint("muted", `  trace ${traceId} · try: vesna run ${flow.name} --dry-run`));
 }

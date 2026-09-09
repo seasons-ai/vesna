@@ -131,7 +131,7 @@ export async function runApp(deps: AppDeps, io: AppIo): Promise<number> {
   io.setRawMode?.(true);
   screen.enter();
   const stopResize = io.onResize?.(draw);
-  transcript.notice(`vesna — /help for commands`, "dim");
+  transcript.notice(`vesna — /help for commands`, "muted");
   draw();
 
   // Input is read alongside the turn in progress: an interrupt that only
@@ -156,7 +156,7 @@ export async function runApp(deps: AppDeps, io: AppIo): Promise<number> {
       if (input.kind === "blank") continue;
       if (input.kind === "unknown") {
         transcript.user(line);
-        transcript.notice(`unknown command /${input.name} — try /help`, "held");
+        transcript.notice(`unknown command /${input.name} — try /help`, "warn");
         transcript.endTurn();
         draw();
         continue;
@@ -186,7 +186,7 @@ export async function runApp(deps: AppDeps, io: AppIo): Promise<number> {
         // An abort is the user's own doing, not a failure to report at length.
         transcript.notice(
           turn.signal.aborted ? "interrupted" : (error as Error).message,
-          "held",
+          "warn",
         );
       } finally {
         clearInterval(spinner);
@@ -257,9 +257,9 @@ async function command(
 
   if (name === "help") {
     for (const entry of CHAT_COMMANDS) {
-      transcript.notice(`${`/${entry.name}`.padEnd(14)} ${entry.help}`, "dim");
+      transcript.notice(`${`/${entry.name}`.padEnd(14)} ${entry.help}`, "muted");
     }
-    transcript.notice("shift-↑/↓ or pgup/pgdn scroll · alt-enter newline · ctrl-c interrupt", "dim");
+    transcript.notice("shift-↑/↓ or pgup/pgdn scroll · alt-enter newline · ctrl-c interrupt", "muted");
     return session;
   }
 
@@ -267,25 +267,25 @@ async function command(
     const { usage } = session;
     transcript.notice(
       `${usage.inputTokens} in · ${usage.outputTokens} out · $${session.costUsd.toFixed(4)}`,
-      "dim",
+      "muted",
     );
     return session;
   }
 
   if (name === "clear") {
     transcript.clear();
-    transcript.notice("new conversation", "dim");
+    transcript.notice("new conversation", "muted");
     return newSession(deps);
   }
 
   if (name === "crystallize") {
     if (argument === "") {
-      transcript.notice("/crystallize needs a name", "held");
+      transcript.notice("/crystallize needs a name", "warn");
       return session;
     }
     const trace = await session.toTrace();
     if (trace.steps.length === 0) {
-      transcript.notice("nothing to crystallise yet — no tools were used", "held");
+      transcript.notice("nothing to crystallise yet — no tools were used", "warn");
       return session;
     }
 
@@ -300,10 +300,10 @@ async function command(
     const path = join(deps.root, ".vesna", "flows", `${flow.name}.yaml`);
     await writeFile(path, toYaml(flow));
 
-    for (const parameter of proposal.parameters) transcript.notice(formatParameter(parameter), "dim");
-    for (const line of describeDropped(proposal.dropped, theme)) transcript.notice(line.trim(), "dim");
+    for (const parameter of proposal.parameters) transcript.notice(formatParameter(parameter), "muted");
+    for (const line of describeDropped(proposal.dropped, theme)) transcript.notice(line.trim(), "muted");
     transcript.notice(`wrote ${path}`, "ok");
-    transcript.notice(`trace ${traceId} · vesna run ${flow.name} --dry-run`, "dim");
+    transcript.notice(`trace ${traceId} · vesna run ${flow.name} --dry-run`, "muted");
   }
 
   return session;
@@ -321,13 +321,13 @@ function newSession(deps: AppDeps): Session {
 function header(deps: AppDeps): string {
   const { theme, config } = deps;
   const mode = config.provider === "openai" ? `${config.provider}/${config.auth}` : config.provider;
-  return `${theme.paint("accent", "vesna")} ${theme.paint("dim", "·")} ${config.model} ${theme.paint("dim", "·")} ${theme.paint("dim", mode)}`;
+  return `${theme.paint("petal", "vesna")} ${theme.paint("muted", "·")} ${config.model} ${theme.paint("muted", "·")} ${theme.paint("muted", mode)}`;
 }
 
 function hint(theme: Theme, busy: boolean, confirmExit: boolean): string {
-  if (confirmExit) return theme.paint("held", "ctrl-c again to leave");
-  if (busy) return theme.paint("dim", "ctrl-c interrupt");
-  return theme.paint("dim", "/help · alt-enter newline · ctrl-c twice to leave");
+  if (confirmExit) return theme.paint("warn", "ctrl-c again to leave");
+  if (busy) return theme.paint("muted", "ctrl-c interrupt");
+  return theme.paint("muted", "/help · alt-enter newline · ctrl-c twice to leave");
 }
 
 function status(deps: AppDeps, session: Session, busy: boolean, tick: number): string {
@@ -335,7 +335,7 @@ function status(deps: AppDeps, session: Session, busy: boolean, tick: number): s
   const tokens = usage.inputTokens + usage.outputTokens;
   const cost = `$${session.costUsd.toFixed(4)}`;
   const body = `${formatTokens(tokens)} · ${cost}`;
-  return busy ? `${deps.theme.paint("accent", spinnerFrame(tick))} ${body}` : deps.theme.paint("dim", body);
+  return busy ? `${deps.theme.paint("petal", spinnerFrame(tick))} ${body}` : deps.theme.paint("muted", body);
 }
 
 function formatTokens(count: number): string {

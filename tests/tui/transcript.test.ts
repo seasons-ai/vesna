@@ -70,7 +70,7 @@ test("ending an empty turn does not stack blank lines", () => {
 
 test("a notice is recorded so an error is part of the conversation, not a flash", () => {
   const transcript = createTranscript(theme);
-  transcript.notice("interrupted", "held");
+  transcript.notice("interrupted", "warn");
   expect(transcript.lines()).toEqual(["  interrupted"]);
 });
 

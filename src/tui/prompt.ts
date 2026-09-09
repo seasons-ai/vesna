@@ -32,17 +32,17 @@ export async function confirmParameters(
     return accepted;
   }
 
-  io.write(theme.paint("label", "Which literals are really parameters?"));
-  io.write(theme.paint("dim", "  enter = accept · n = skip · anything else = rename"));
+  io.write(theme.paint("text", "Which literals are really parameters?"));
+  io.write(theme.paint("muted", "  enter = accept · n = skip · anything else = rename"));
   io.write("");
 
   for (const parameter of parameters) {
     const sites = parameter.sites.map((site) => `${site.nodeId}.${site.field}`).join(", ");
-    io.write(`  ${theme.paint("accent", `"${parameter.literal}"`)}  ${theme.paint("dim", `at ${sites}`)}`);
+    io.write(`  ${theme.paint("petal", `"${parameter.literal}"`)}  ${theme.paint("muted", `at ${sites}`)}`);
 
     const answer = (await io.question(`    input name [${parameter.suggestedName}]: `)).trim();
     if (answer.toLowerCase() === "n") {
-      io.write(theme.paint("dim", "    skipped"));
+      io.write(theme.paint("muted", "    skipped"));
       io.write("");
       continue;
     }

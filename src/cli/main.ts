@@ -58,18 +58,18 @@ async function authCommand(
   if (target === "login") {
     if (config.provider !== "openai" || !config.oauth) {
       console.log("Sign-in applies to the openai provider with an oauth block configured.");
-      console.log(theme.paint("dim", "  provider: openai"));
-      console.log(theme.paint("dim", "  auth: subscription"));
-      console.log(theme.paint("dim", "  oauth: { issuer, clientId, baseUrl }"));
+      console.log(theme.paint("muted", "  provider: openai"));
+      console.log(theme.paint("muted", "  auth: subscription"));
+      console.log(theme.paint("muted", "  oauth: { issuer, clientId, baseUrl }"));
       return EXIT.error;
     }
 
     const io = createStdioPrompt();
     try {
-      console.log(theme.paint("label", "How would you like to sign in?"));
-      console.log(`  ${theme.paint("accent", "1")}  browser      opens ${config.oauth.issuer}`);
-      console.log(`  ${theme.paint("accent", "2")}  headless     print the URL to open elsewhere`);
-      console.log(`  ${theme.paint("accent", "3")}  API key      paste a key instead`);
+      console.log(theme.paint("text", "How would you like to sign in?"));
+      console.log(`  ${theme.paint("petal", "1")}  browser      opens ${config.oauth.issuer}`);
+      console.log(`  ${theme.paint("petal", "2")}  headless     print the URL to open elsewhere`);
+      console.log(`  ${theme.paint("petal", "3")}  API key      paste a key instead`);
       const choice = (await io.question("\n  choice [1]: ")).trim() || "1";
 
       if (choice === "3") {
@@ -95,11 +95,11 @@ async function authCommand(
         {
           async openBrowser(url) {
             if (headless) {
-              console.log(theme.paint("dim", "\n  open this on any machine with a browser:\n"));
+              console.log(theme.paint("muted", "\n  open this on any machine with a browser:\n"));
               console.log(`  ${url}\n`);
               return;
             }
-            console.log(theme.paint("dim", "\n  opening your browser…"));
+            console.log(theme.paint("muted", "\n  opening your browser…"));
             Bun.spawn(["open", url], { stdout: "ignore", stderr: "ignore" });
           },
         },
@@ -115,14 +115,14 @@ async function authCommand(
   }
 
   {
-    console.log(`provider:   ${theme.paint("accent", config.provider)}  model ${config.model}`);
+    console.log(`provider:   ${theme.paint("petal", config.provider)}  model ${config.model}`);
 
     if (config.provider === "openai" && config.auth === "codex") {
       const path = codexAuthPath(process.env, homedir());
       const auth = await readCodexAuth(path);
       console.log(`endpoint:   ${config.baseUrl ?? CODEX_BASE_URL}`);
       if (auth?.accessToken === undefined) {
-        console.log(`credential: ${theme.paint("held", "no codex subscription token")}`);
+        console.log(`credential: ${theme.paint("warn", "no codex subscription token")}`);
         console.log("");
         console.log("  codex login");
         return EXIT.error;
@@ -130,28 +130,28 @@ async function authCommand(
       const expired = auth.expiresAt !== undefined && auth.expiresAt <= Date.now();
       console.log(
         `credential: borrowed from codex  ${
-          expired ? theme.paint("held", "expired — run `codex login`") : theme.paint("ok", "valid")
+          expired ? theme.paint("warn", "expired — run `codex login`") : theme.paint("ok", "valid")
         }`,
       );
-      console.log(theme.paint("dim", `            ${path} (read-only)`));
+      console.log(theme.paint("muted", `            ${path} (read-only)`));
       return expired ? EXIT.error : EXIT.ok;
     }
 
     if (config.provider === "openai" && config.auth === "subscription") {
       const path = authPath(process.env, homedir());
       const stored = await loadAuth(path);
-      console.log(`endpoint:   ${config.oauth?.baseUrl ?? theme.paint("held", "not configured")}`);
+      console.log(`endpoint:   ${config.oauth?.baseUrl ?? theme.paint("warn", "not configured")}`);
       if (stored === null) {
-        console.log(`credential: ${theme.paint("held", "not signed in")}`);
+        console.log(`credential: ${theme.paint("warn", "not signed in")}`);
         console.log("");
         console.log("  vesna auth login");
         return EXIT.error;
       }
       const state = isExpired(stored, Date.now())
-        ? theme.paint("held", "expired — will refresh on next use")
+        ? theme.paint("warn", "expired — will refresh on next use")
         : theme.paint("ok", "valid");
       console.log(`credential: subscription token  ${state}`);
-      console.log(theme.paint("dim", `            ${path}`));
+      console.log(theme.paint("muted", `            ${path}`));
       return EXIT.ok;
     }
 
@@ -165,11 +165,11 @@ async function authCommand(
       }
       if (local) {
         console.log(
-          `credential: ${theme.paint("ok", "none needed")} ${theme.paint("dim", "(local endpoint)")}`,
+          `credential: ${theme.paint("ok", "none needed")} ${theme.paint("muted", "(local endpoint)")}`,
         );
         return EXIT.ok;
       }
-      console.log(`credential: ${theme.paint("held", "none")}`);
+      console.log(`credential: ${theme.paint("warn", "none")}`);
       console.log("");
       console.log("  export OPENAI_API_KEY=...   # or point baseUrl at a local host");
       return EXIT.error;
@@ -186,11 +186,11 @@ async function authCommand(
           ? theme.paint("ok", "ANTHROPIC_API_KEY")
           : source.kind === "auth_token"
             ? theme.paint("ok", "ANTHROPIC_AUTH_TOKEN")
-            : theme.paint("held", "none");
+            : theme.paint("warn", "none");
 
     console.log(`credential: ${label}`);
-    console.log(theme.paint("dim", `            ${source.note}`));
-    console.log(theme.paint("dim", `profiles:   ${profiles.length > 0 ? profiles.join(", ") : "none"} (${dir})`));
+    console.log(theme.paint("muted", `            ${source.note}`));
+    console.log(theme.paint("muted", `profiles:   ${profiles.length > 0 ? profiles.join(", ") : "none"} (${dir})`));
 
     if (source.kind === "none" || source.kind === "missing_profile") {
       console.log("");
@@ -236,7 +236,7 @@ export async function main(argv: string[]): Promise<number> {
       permit: (type) => config.permissions.nodes.includes(type),
       onStep: (step) =>
         console.log(
-          `  ${theme.paint("accent", "·")} ${theme.paint("label", step.nodeType.padEnd(8))} ${theme.paint("dim", `${step.durationMs}ms`)}`,
+          `  ${theme.paint("petal", "·")} ${theme.paint("text", step.nodeType.padEnd(8))} ${theme.paint("muted", `${step.durationMs}ms`)}`,
         ),
     });
 
@@ -285,8 +285,8 @@ export async function main(argv: string[]): Promise<number> {
         const mark =
           row.result.status === "ok"
             ? theme.paint("ok", "ok  ")
-            : theme.paint("held", "held");
-        const bar = theme.paint("accent", progressBar(done, total, 20));
+            : theme.paint("warn", "held");
+        const bar = theme.paint("petal", progressBar(done, total, 20));
         console.log(`  ${bar} ${done}/${total}  ${mark} row ${row.index}`);
       },
     });
@@ -346,7 +346,7 @@ export async function main(argv: string[]): Promise<number> {
     await writeFile(path, toYaml(flow));
     for (const line of describeDropped(proposal.dropped, theme)) console.log(line);
     console.log(theme.paint("ok", `Wrote ${path}`));
-    console.log(theme.paint("dim", `next: vesna run ${flow.name} --dry-run`));
+    console.log(theme.paint("muted", `next: vesna run ${flow.name} --dry-run`));
     return EXIT.ok;
   }
 

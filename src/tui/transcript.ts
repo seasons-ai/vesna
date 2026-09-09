@@ -38,7 +38,7 @@ export function createTranscript(theme: Theme): Transcript {
 
     user(text) {
       const [first, ...rest] = text.split("\n");
-      push(`${theme.paint("accent", "›")} ${first ?? ""}`);
+      push(`${theme.paint("petal", "›")} ${first ?? ""}`);
       for (const line of rest) push(`  ${line}`);
       push("");
     },
@@ -55,11 +55,11 @@ export function createTranscript(theme: Theme): Transcript {
     },
 
     step(nodeType, durationMs, detail) {
-      const label = `${theme.paint("accent", "·")} ${theme.paint("label", nodeType)} ${theme.paint("dim", `${durationMs}ms`)}`;
-      push(`  ${label}${detail ? `  ${theme.paint("dim", detail)}` : ""}`);
+      const label = `${theme.paint("petal", "·")} ${theme.paint("text", nodeType)} ${theme.paint("muted", `${durationMs}ms`)}`;
+      push(`  ${label}${detail ? `  ${theme.paint("muted", detail)}` : ""}`);
     },
 
-    notice(text, tone = "dim") {
+    notice(text, tone = "muted") {
       push(`  ${theme.paint(tone, text)}`);
     },
 

@@ -10,16 +10,16 @@ export function describeDropped(dropped: DroppedStep[], theme: Theme): string[] 
 
   const lines = [
     theme.paint(
-      "held",
+      "warn",
       `  ${dropped.length} step${dropped.length === 1 ? "" : "s"} left out — nothing in the answer depended on ${dropped.length === 1 ? "it" : "them"}:`,
     ),
   ];
   for (const step of dropped) {
-    lines.push(theme.paint("dim", `    ${step.nodeType}  ${summarizeInput(step.input)}`));
+    lines.push(theme.paint("muted", `    ${step.nodeType}  ${summarizeInput(step.input)}`));
   }
   lines.push(
     theme.paint(
-      "dim",
+      "muted",
       "    usually the model retyped a value instead of passing it on; wire it by hand to keep the step",
     ),
   );
