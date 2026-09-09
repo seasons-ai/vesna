@@ -2,6 +2,7 @@ import { test, expect } from "bun:test";
 import { layout, type ViewState } from "../../src/tui/layout";
 import { visibleWidth } from "../../src/tui/wrap";
 import { createEditor } from "../../src/tui/editor";
+import { UNICODE_GLYPHS } from "../../src/tui/glyphs";
 
 function view(overrides: Partial<ViewState> = {}): ViewState {
   return {
@@ -11,6 +12,7 @@ function view(overrides: Partial<ViewState> = {}): ViewState {
     hint: "/help",
     status: "$0.00",
     scroll: 0,
+    glyphs: UNICODE_GLYPHS,
     ...overrides,
   };
 }

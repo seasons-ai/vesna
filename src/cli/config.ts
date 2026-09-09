@@ -33,6 +33,11 @@ export interface VesnaConfig {
    */
   oauth?: { issuer: string; clientId: string; baseUrl: string; scope?: string };
   permissions: { nodes: string[] };
+  /**
+   * Three states matter and the middle one is the default, so it cannot be a
+   * plain boolean: unset means "ask the locale", true/false override it.
+   */
+  ascii?: boolean;
 }
 
 export async function loadConfig(root: string): Promise<VesnaConfig> {
@@ -54,6 +59,7 @@ export async function loadConfig(root: string): Promise<VesnaConfig> {
     oauth: raw.oauth,
     // Permissions are the registry: no node, no capability.
     permissions: { nodes: raw.permissions?.nodes ?? ["read", "write", "shell", "script", "llm"] },
+    ascii: raw.ascii === true ? true : raw.ascii === false ? false : undefined,
   };
 }
 

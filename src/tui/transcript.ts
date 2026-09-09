@@ -1,3 +1,4 @@
+import type { Glyphs } from "./glyphs";
 import type { Role, Theme } from "./theme";
 
 /**
@@ -18,7 +19,7 @@ export interface Transcript {
   lines(): string[];
 }
 
-export function createTranscript(theme: Theme): Transcript {
+export function createTranscript(theme: Theme, glyphs: Glyphs): Transcript {
   let lines: string[] = [];
   /** True while the last line is an answer still being streamed into. */
   let streaming = false;
@@ -38,7 +39,7 @@ export function createTranscript(theme: Theme): Transcript {
 
     user(text) {
       const [first, ...rest] = text.split("\n");
-      push(`${theme.paint("petal", "›")} ${first ?? ""}`);
+      push(`${theme.paint("petal", glyphs.prompt)} ${first ?? ""}`);
       for (const line of rest) push(`  ${line}`);
       push("");
     },
@@ -55,7 +56,7 @@ export function createTranscript(theme: Theme): Transcript {
     },
 
     step(nodeType, durationMs, detail) {
-      const label = `${theme.paint("petal", "·")} ${theme.paint("text", nodeType)} ${theme.paint("muted", `${durationMs}ms`)}`;
+      const label = `${theme.paint("petal", glyphs.bullet)} ${theme.paint("text", nodeType)} ${theme.paint("muted", `${durationMs}ms`)}`;
       push(`  ${label}${detail ? `  ${theme.paint("muted", detail)}` : ""}`);
     },
 

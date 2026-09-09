@@ -1,7 +1,5 @@
-const SPINNER = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
-
-export function spinnerFrame(tick: number): string {
-  return SPINNER[Math.abs(tick) % SPINNER.length]!;
+export function spinnerFrame(tick: number, frames: readonly string[]): string {
+  return frames[Math.abs(tick) % frames.length]!;
 }
 
 export function progressBar(done: number, total: number, width: number): string {

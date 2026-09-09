@@ -11,7 +11,7 @@ export function describeDropped(dropped: DroppedStep[], theme: Theme): string[] 
   const lines = [
     theme.paint(
       "warn",
-      `  ${dropped.length} step${dropped.length === 1 ? "" : "s"} left out — nothing in the answer depended on ${dropped.length === 1 ? "it" : "them"}:`,
+      `  ${dropped.length} step${dropped.length === 1 ? "" : "s"} left out - nothing in the answer depended on ${dropped.length === 1 ? "it" : "them"}:`,
     ),
   ];
   for (const step of dropped) {
@@ -34,5 +34,5 @@ function summarizeInput(input: Record<string, unknown>): string {
 function short(value: unknown): string {
   const text = typeof value === "string" ? value : JSON.stringify(value) ?? String(value);
   const oneLine = text.replace(/\s+/g, " ");
-  return oneLine.length > 40 ? `${oneLine.slice(0, 39)}…` : oneLine;
+  return oneLine.length > 40 ? `${oneLine.slice(0, 37)}...` : oneLine;
 }

@@ -30,3 +30,13 @@ test("an unknown auth mode falls back to key rather than failing every command",
   const config = await loadConfig(await project("provider: openai\nauth: telepathy\n"));
   expect(config.auth).toBe("key");
 });
+
+test("ascii is tri-state: unset means ask the locale", async () => {
+  expect((await loadConfig(await project("provider: openai\n"))).ascii).toBeUndefined();
+  expect((await loadConfig(await project("ascii: true\n"))).ascii).toBe(true);
+  expect((await loadConfig(await project("ascii: false\n"))).ascii).toBe(false);
+});
+
+test("a non-boolean ascii is ignored rather than taken as true", async () => {
+  expect((await loadConfig(await project("ascii: yes please\n"))).ascii).toBeUndefined();
+});

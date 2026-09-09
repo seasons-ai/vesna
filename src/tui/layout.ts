@@ -1,4 +1,5 @@
 import type { EditorState } from "./editor";
+import type { Glyphs } from "./glyphs";
 import { visibleWidth, wrapAnsi } from "./wrap";
 
 /**
@@ -22,6 +23,7 @@ export interface ViewState {
   scroll: number;
   /** An SGR establishing the input box's own background, or "" for none. */
   panel?: string;
+  glyphs: Glyphs;
 }
 
 export interface Frame {
@@ -31,14 +33,19 @@ export interface Frame {
   cursor: { row: number; col: number };
 }
 
-export const PROMPT = "› ";
 /** Past this the box would take over the screen. */
 const MAX_INPUT_ROWS = 8;
+
+/** The prompt glyph plus the space that separates it from typed text. */
+export function promptOf(glyphs: Glyphs): string {
+  return `${glyphs.prompt} `;
+}
 
 export function layout(view: ViewState, size: { rows: number; cols: number }): Frame {
   const cols = Math.max(1, size.cols);
   const rows = Math.max(1, size.rows);
-  const inner = Math.max(1, cols - PROMPT.length);
+  const prompt = promptOf(view.glyphs);
+  const inner = Math.max(1, cols - prompt.length);
 
   const input = hardWrap(view.editor.text, inner);
   const overhead = 3; // header, separator, status
@@ -52,12 +59,12 @@ export function layout(view: ViewState, size: { rows: number; cols: number }): F
   const wrapped = view.transcript.flatMap((line) => wrapAnsi(line, cols));
   lines.push(...windowOf(wrapped, Math.max(0, transcriptRows), view.scroll));
 
-  lines.push("─".repeat(cols));
+  lines.push(view.glyphs.rule.repeat(cols));
 
   const shown = input.slice(0, inputRows);
   const inputFirstRow = lines.length;
   for (const [index, line] of shown.entries()) {
-    lines.push(fit(`${index === 0 ? PROMPT : " ".repeat(PROMPT.length)}${line}`, cols));
+    lines.push(fit(`${index === 0 ? prompt : " ".repeat(prompt.length)}${line}`, cols));
   }
   const inputLastRow = lines.length - 1;
 
@@ -82,7 +89,7 @@ export function layout(view: ViewState, size: { rows: number; cols: number }): F
     ),
     cursor: {
       row: Math.min(inputTop + cursor.row, rows - 1),
-      col: Math.min(PROMPT.length + cursor.col, cols),
+      col: Math.min(prompt.length + cursor.col, cols),
     },
   };
 }

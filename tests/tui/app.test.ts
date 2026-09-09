@@ -125,6 +125,9 @@ async function deps(p: Provider): Promise<AppDeps> {
     theme: "mono",
     prices: {},
     permissions: { nodes: [] },
+    // Deterministic across machines: these tests assert on the real glyphs,
+    // regardless of what locale happens to be set where they run.
+    ascii: false,
   };
   return {
     registry: createRegistry(),
@@ -298,4 +301,19 @@ test("leaving restores the shell screen", async () => {
   input.type("\x03\x03");
   await finished;
   expect(writes.join("")).toContain("\x1b[?1049l");
+});
+
+test("in ASCII mode not one non-ascii byte reaches the screen", async () => {
+  const host = fakeTerminal();
+  const input = keyboard();
+  const base = await deps(reply("done"));
+  const finished = runApp({ ...base, config: { ...base.config, ascii: true } }, {
+    terminal: host.terminal, input,
+  });
+  await until(() => host.screen().includes("vesna"), "the first frame");
+  input.type("hello\r");
+  await until(() => host.screen().includes("done"), "the answer");
+  expect(host.screen()).toMatch(/^[\x00-\x7f]*$/);
+  input.type("\x03\x03\x03");
+  await finished;
 });
