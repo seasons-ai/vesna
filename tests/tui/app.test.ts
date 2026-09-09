@@ -12,6 +12,7 @@ import type { NodeDef } from "../../src/registry/types";
 import { createTraceStore } from "../../src/store/trace";
 import type { CompletionRequest, CompletionResult, Provider } from "../../src/providers/types";
 import type { VesnaConfig } from "../../src/cli/config";
+import { listSessions, openSession, readSession } from "../../src/store/sessions";
 
 /**
  * A terminal that keeps the visible rows, by applying the same move-and-clear
@@ -764,5 +765,143 @@ test("switching says how to make it stick, because it does not", async () => {
   const app = await start(reply("x"));
   app.input.type("/theme mono\r");
   await until(() => /config/i.test(app.screen()), "the note about persistence");
+  await quit(app);
+});
+
+test("a conversation is written down as it happens, not at exit", async () => {
+  const store = await mkdtemp(join(tmpdir(), "vesna-hist-"));
+  const record = await openSession({ root: store, cwd: "/w", model: "m" });
+  const app = await start(reply("an answer"), undefined, { record, sessionsRoot: store });
+
+  app.input.type("remember this\r");
+  await until(() => app.screen().includes("an answer"), "the answer");
+  // The write is a promise the app deliberately does not await, so poll for it.
+  for (let attempt = 0; attempt < 100; attempt += 1) {
+    if ((await listSessions(store)).length > 0) break;
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  }
+
+  const [summary] = await listSessions(store);
+  expect(summary!.title).toBe("remember this");
+  const stored = await readSession(store, record.id);
+  expect(stored!.events.some((e) => e.t === "user" && e.text === "remember this")).toBe(true);
+  expect(stored!.events.some((e) => e.t === "answer" && e.raw === "an answer")).toBe(true);
+  await quit(app);
+});
+
+test("/history lists what was said in this folder", async () => {
+  const store = await mkdtemp(join(tmpdir(), "vesna-hist-"));
+  const base = await deps(reply("x"));
+  const earlier = await openSession({ root: store, cwd: base.root, model: "m" });
+  await earlier.append({ t: "user", text: "an earlier conversation" });
+
+  // Wide enough that a listing row is not split by wrapping mid-title.
+  const app = await start(reply("x"), { rows: 24, cols: 96 }, { ...base, sessionsRoot: store });
+  app.input.type("/history\r");
+  await until(() => app.screen().includes("an earlier conversation"), "the listing");
+  await quit(app);
+});
+
+test("/history in a folder with none says so instead of showing nothing", async () => {
+  const store = await mkdtemp(join(tmpdir(), "vesna-hist-"));
+  const app = await start(reply("x"), undefined, { sessionsRoot: store });
+  app.input.type("/history\r");
+  await until(() => /no conversations from this folder/.test(app.screen()), "the notice");
+  await quit(app);
+});
+
+test("/resume brings back what was said, not a summary of it", async () => {
+  const store = await mkdtemp(join(tmpdir(), "vesna-hist-"));
+  const base = await deps(reply("x"));
+  const old = await openSession({ root: store, cwd: base.root, model: "m" });
+  await old.append({ t: "user", text: "the original question" });
+  await old.append({ t: "answer", raw: "## The original answer\n\n- with a bullet" });
+
+  const app = await start(reply("x"), { rows: 24, cols: 96 }, { ...base, sessionsRoot: store });
+  app.input.type("/history\r");
+  await until(() => app.screen().includes("the original question"), "the listing");
+  app.input.type("/resume 1\r");
+  await until(() => app.screen().includes("The original answer"), "the restored answer");
+
+  // Rendered as markdown, and the user's line is back too.
+  expect(app.screen()).toContain("with a bullet");
+  expect(app.screen()).not.toContain("##");
+  expect(app.screen()).toContain("the original question");
+  await quit(app);
+});
+
+test("/resume with a number nobody listed refuses instead of guessing", async () => {
+  const store = await mkdtemp(join(tmpdir(), "vesna-hist-"));
+  const app = await start(reply("x"), { rows: 24, cols: 96 }, { sessionsRoot: store });
+  app.input.type("/resume 7\r");
+  await until(() => /from the last \/history listing/.test(app.screen()), "the refusal");
+  await quit(app);
+});
+
+test("the model is given the resumed conversation, not just the screen", async () => {
+  const store = await mkdtemp(join(tmpdir(), "vesna-hist-"));
+  const base = await deps(reply("x"));
+  const old = await openSession({ root: store, cwd: base.root, model: "m" });
+  await old.append({ t: "user", text: "earlier" });
+  await old.append({
+    t: "messages",
+    added: [
+      { role: "user", content: [{ type: "text", text: "earlier" }] },
+      { role: "assistant", content: [{ type: "text", text: "an earlier reply" }] },
+    ],
+  });
+
+  const seen: string[] = [];
+  const spy = provider(async (request) => {
+    seen.push(JSON.stringify(request.messages));
+    return done("new answer");
+  });
+
+  // `...base` carries a provider of its own; the spy has to win.
+  const app = await start(spy, { rows: 24, cols: 96 }, { ...base, provider: spy, sessionsRoot: store });
+  app.input.type("/history\r");
+  await until(() => app.screen().includes("earlier"), "the listing");
+  app.input.type("/resume 1\r");
+  await until(() => /resumed/.test(app.screen()), "the resume");
+  app.input.type("and now?\r");
+  await until(() => app.screen().includes("new answer"), "the new answer");
+
+  expect(seen[0]).toContain("an earlier reply");
+  await quit(app);
+});
+
+test("a slash command is control, not conversation, and is never recorded", async () => {
+  const store = await mkdtemp(join(tmpdir(), "vesna-hist-"));
+  const record = await openSession({ root: store, cwd: "/w", model: "m" });
+  const app = await start(reply("x"), { rows: 24, cols: 96 }, { record, sessionsRoot: store });
+
+  app.input.type("/theme mono\r");
+  await until(() => /theme: mono/.test(app.screen()), "the switch");
+  app.input.type("a real question\r");
+  await until(() => app.screen().includes("x"), "the answer");
+
+  const stored = await readSession(store, record.id);
+  const said = stored!.events.filter((e) => e.t === "user").map((e) => (e as { text: string }).text);
+  expect(said).toEqual(["a real question"]);
+  await quit(app);
+});
+
+test("the conversation you are in is not offered for resuming", async () => {
+  const store = await mkdtemp(join(tmpdir(), "vesna-hist-"));
+  const base = await deps(reply("x"));
+  const record = await openSession({ root: store, cwd: base.root, model: "m" });
+
+  const app = await start(reply("x"), { rows: 24, cols: 96 }, {
+    ...base,
+    record,
+    sessionsRoot: store,
+  });
+  app.input.type("something in the current session\r");
+  await until(() => app.screen().includes("x"), "the answer");
+
+  app.input.type("/history\r");
+  await until(() => /no conversations|resume <number>/.test(app.screen()), "the listing");
+  expect(app.screen()).not.toContain("something in the current session\n");
+  expect(app.screen()).toMatch(/no conversations from this folder/);
   await quit(app);
 });

@@ -6,6 +6,8 @@ export interface ChatCommand {
 export const CHAT_COMMANDS: ChatCommand[] = [
   { name: "crystallize", help: "freeze this conversation into a flow: /crystallize <name>" },
   { name: "cost", help: "tokens and cost so far" },
+  { name: "history", help: "conversations from this folder: /history [all]" },
+  { name: "resume", help: "reopen one: /resume 2" },
   { name: "theme", help: "list palettes, or switch: /theme hanami" },
   { name: "copy", help: "copy the last answer to the clipboard" },
   { name: "clear", help: "start a fresh conversation" },

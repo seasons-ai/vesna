@@ -1,4 +1,6 @@
 import { writeSync } from "node:fs";
+import { homedir } from "node:os";
+import { openSession, sessionsRoot, type OpenSession } from "../store/sessions";
 import { runApp, type AppDeps, type AppIo } from "./app";
 import { restoreSequence, type Terminal } from "./screen";
 
@@ -116,9 +118,22 @@ function installTerminalGuard(mouse: boolean): () => void {
 
 export async function runTui(deps: AppDeps): Promise<number> {
   const io = processIo();
+
+  // Opened before the first key: a conversation must survive a kill, and an
+  // exit handler is not a place to be writing data.
+  const root = sessionsRoot(process.env, homedir());
+  let record: OpenSession | undefined;
+  try {
+    record = await openSession({ root, cwd: deps.root, model: deps.config.model });
+  } catch {
+    // A home directory that cannot be written to is not a reason to refuse
+    // the conversation; it only means this one is not kept.
+    record = undefined;
+  }
+
   const release = installTerminalGuard(deps.config.mouse !== false);
   try {
-    return await runApp(deps, io);
+    return await runApp({ ...deps, ...(record ? { record } : {}), sessionsRoot: root }, io);
   } finally {
     release();
     // Without this the process lingers on an open stdin after the app returns.

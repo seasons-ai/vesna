@@ -21,6 +21,8 @@ export interface SessionOptions {
   prices?: Record<string, ModelPrice>;
   /** The project's own instructions, from .vesna/AGENTS.md. */
   notes?: string;
+  /** Prior turns, when a stored conversation is being resumed. */
+  history?: AgentMessage[];
   onStep?: (step: TraceStep) => void;
   /** Called as the model produces text, so a chat can render while it types. */
   onText?: (delta: string) => void;
@@ -78,7 +80,8 @@ export function createSession(
     notes: options.notes,
   });
 
-  const messages: AgentMessage[] = [];
+  // Seeded rather than replayed: the model receives the conversation it had.
+  const messages: AgentMessage[] = [...(options.history ?? [])];
   const steps: TraceStep[] = [];
   const usage: Usage = { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0 };
 

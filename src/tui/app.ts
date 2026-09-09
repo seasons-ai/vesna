@@ -22,6 +22,14 @@ import { spinnerFrame } from "./render";
 import { createScreen, type Terminal } from "./screen";
 import { resolveTheme, themeNames, type Theme } from "./theme";
 import { copyToClipboard, systemCopyIo } from "./clipboard";
+import {
+  listSessions,
+  readSession,
+  type OpenSession,
+  type SessionEvent,
+  type SessionSummary,
+} from "../store/sessions";
+import type { AgentMessage } from "../providers/types";
 import { createTranscript, type Transcript } from "./transcript";
 
 export interface AppDeps {
@@ -35,6 +43,12 @@ export interface AppDeps {
   notes?: string;
   /** Puts text on the clipboard. Injected so a test never touches the real one. */
   copy?: (text: string) => void | Promise<void>;
+  /** Where this conversation is written down as it happens. */
+  record?: OpenSession;
+  /** Prior turns, when this run resumed a stored conversation. */
+  resumed?: AgentMessage[];
+  /** Where conversations are stored, for /history and /resume. */
+  sessionsRoot?: string;
 }
 
 export interface AppIo {
@@ -62,7 +76,7 @@ export async function runApp(deps: AppDeps, io: AppIo): Promise<number> {
   const transcript = createTranscript(theme, glyphs);
 
   let editor = createEditor();
-  let session = newSession(deps);
+  let session = newSession(deps, deps.resumed);
   let scroll = 0;
   let busy = false;
   let tick = 0;
@@ -119,6 +133,79 @@ export async function runApp(deps: AppDeps, io: AppIo): Promise<number> {
     screen.setSurface(theme.surface);
     draw();
     return true;
+  }
+
+  /** Never lets a write to disk take the conversation down with it. */
+  function remember(event: SessionEvent): void {
+    void deps.record?.append(event).catch(() => {});
+  }
+
+  /** The last listing, so /resume can take a number rather than an id. */
+  let listed: SessionSummary[] = [];
+
+  async function showHistory(argument: string): Promise<void> {
+    const root = deps.sessionsRoot;
+    if (root === undefined) {
+      transcript.notice("history is not available in this session", "warn");
+      return;
+    }
+
+    const everywhere = argument.trim() === "all";
+    const all = await listSessions(root, everywhere ? {} : { cwd: deps.root });
+    // Resuming the conversation you are already having is not a thing.
+    listed = all.filter((entry) => entry.id !== deps.record?.id);
+
+    if (listed.length === 0) {
+      transcript.notice(
+        everywhere ? "no conversations yet" : "no conversations from this folder — /history all",
+        "muted",
+      );
+      return;
+    }
+
+    transcript.notice(everywhere ? "all folders" : deps.root, "muted");
+    for (const [index, entry] of listed.entries()) {
+      const when = entry.updatedAt.slice(0, 16).replace("T", " ");
+      const cost = entry.costUsd > 0 ? `  $${entry.costUsd.toFixed(2)}` : "";
+      transcript.notice(
+        `${String(index + 1).padStart(2)}  ${when}  ${entry.title}${cost}`,
+        "muted",
+      );
+    }
+    transcript.notice(`/resume <number> to reopen${everywhere ? "" : " · /history all"}`, "muted");
+  }
+
+  async function resume(argument: string): Promise<void> {
+    const root = deps.sessionsRoot;
+    const which = Number.parseInt(argument.trim(), 10);
+    if (root === undefined || Number.isNaN(which) || listed[which - 1] === undefined) {
+      transcript.notice("/resume <number> from the last /history listing", "warn");
+      return;
+    }
+
+    const stored = await readSession(root, listed[which - 1]!.id);
+    if (stored === null) {
+      transcript.notice("that conversation is no longer on disk", "warn");
+      return;
+    }
+
+    // Rebuilt rather than summarised: the screen shows what was said, and the
+    // model is seeded with the messages it actually saw.
+    transcript.clear();
+    const messages: AgentMessage[] = [];
+    for (const event of stored.events) {
+      if (event.t === "user") transcript.user(event.text);
+      else if (event.t === "answer") {
+        transcript.delta(event.raw);
+        transcript.endTurn();
+      } else if (event.t === "step") {
+        transcript.step(event.nodeType, event.durationMs, event.detail);
+      } else if (event.t === "messages") messages.push(...event.added);
+    }
+
+    session = newSession(deps, messages);
+    scroll = 0;
+    transcript.notice(`resumed · ${stored.summary.title}`, "ok");
   }
 
   async function copy(text: string): Promise<void> {
@@ -238,10 +325,28 @@ export async function runApp(deps: AppDeps, io: AppIo): Promise<number> {
       }
 
       transcript.user(line);
+      // A slash command is control, not conversation: recording it would make
+      // "/history" the title of the session and put it in its own listing.
+      if (input.kind === "message") remember({ t: "user", text: line });
       draw();
 
       if (input.kind === "command") {
         if (input.name === "exit") break;
+
+        if (input.name === "history") {
+          await showHistory(input.argument);
+          transcript.endTurn();
+          draw();
+          continue;
+        }
+
+        if (input.name === "resume") {
+          await resume(input.argument);
+          transcript.endTurn();
+          draw();
+          continue;
+        }
+
         session = await command(
           input.name,
           input.argument,
@@ -265,8 +370,9 @@ export async function runApp(deps: AppDeps, io: AppIo): Promise<number> {
         draw();
       }, 90);
 
+      const before = session.messages.length;
       try {
-        await runTurn(session, input.text, transcript, turn.signal, draw);
+        await runTurn(session, input.text, transcript, turn.signal, draw, remember);
       } catch (error) {
         // An abort is the user's own doing, and reads as a warning. A provider
         // that fell over is a failure, and gets the colour that says so.
@@ -279,6 +385,18 @@ export async function runApp(deps: AppDeps, io: AppIo): Promise<number> {
         clearInterval(spinner);
         turn = null;
         busy = false;
+
+        const answer = transcript.lastAnswer();
+        if (answer !== undefined) remember({ t: "answer", raw: answer });
+        const added = session.messages.slice(before);
+        if (added.length > 0) remember({ t: "messages", added });
+        remember({
+          t: "usage",
+          inputTokens: session.usage.inputTokens,
+          outputTokens: session.usage.outputTokens,
+          costUsd: session.costUsd,
+        });
+
         transcript.endTurn();
         draw();
       }
@@ -301,6 +419,7 @@ async function runTurn(
   transcript: Transcript,
   signal: AbortSignal,
   draw: () => void,
+  onRecord: (event: SessionEvent) => void,
 ): Promise<void> {
   let streamed = false;
   const result = await session.send(text, {
@@ -312,6 +431,12 @@ async function runTurn(
     },
     onStep(step) {
       transcript.step(step.nodeType, step.durationMs, detailOf(step.input));
+      onRecord({
+        t: "step",
+        nodeType: step.nodeType,
+        durationMs: step.durationMs,
+        ...(detailOf(step.input) ? { detail: detailOf(step.input)! } : {}),
+      });
       draw();
     },
   });
@@ -432,13 +557,15 @@ async function command(
   return session;
 }
 
-function newSession(deps: AppDeps): Session {
+function newSession(deps: AppDeps, resumed?: AgentMessage[]): Session {
   return createSession(deps.provider, deps.registry, {
     cwd: deps.root,
     model: deps.config.model,
     prices: deps.config.prices,
     notes: deps.notes,
+
     permit: (type) => deps.config.permissions.nodes.includes(type),
+    ...(resumed ? { history: resumed } : {}),
   });
 }
 

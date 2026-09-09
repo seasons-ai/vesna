@@ -346,6 +346,24 @@ and piped output carries no escape codes at all.
 
 ---
 
+## Conversations are kept
+
+Every chat is written to `~/.vesna/sessions` as it happens — not at exit, so a
+killed terminal loses nothing — and grouped by the folder it was held in.
+
+```text
+/history        conversations from this folder
+/history all    every folder
+/resume 2       reopen one, with the model's own memory of it
+```
+
+Resuming restores the conversation rather than a summary of it: the screen
+shows what was said, and the model is seeded with the messages it actually saw.
+
+They live under your home directory, never in the repository. A conversation
+holds half-formed thinking, local paths and sometimes someone else's code, and
+none of that belongs in `git status`. `VESNA_HOME` moves them.
+
 ## Copying a message
 
 Every message carries a `⧉ copy` button on the line beneath it — click it and
