@@ -1,6 +1,7 @@
 node_modules/
 dist/
 .vesna/traces/
+.vesna/worktrees/
 *.log
 .DS_Store
 
