@@ -25,6 +25,8 @@ test("networking is unavailable inside the sandbox", async () => {
   ).rejects.toThrow();
 });
 
-test("is declared as a pure effect", () => {
-  expect(scriptNode.effect).toBe("pure");
+test("is declared external, because it can do anything the user can", () => {
+  // It was declared pure, which was the same false claim as the README's:
+  // pure would exempt it from approval and let a repair silently re-run it.
+  expect(scriptNode.effect).toBe("external");
 });

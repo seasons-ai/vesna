@@ -28,6 +28,8 @@ export interface Action {
   node: string;
   input: Record<string, unknown>;
   cwd: string;
+  /** What the node does. Reading changes nothing and is never asked about. */
+  effect?: "pure" | "write" | "external";
 }
 
 /**
@@ -126,12 +128,19 @@ function alwaysAsk(action: Action, facet: string | undefined, cwd: string): bool
 export function decide(action: Action, policy: Policy, cwd: string): Decision {
   const facet = facetOf(action, cwd);
 
+  // A node with nothing to match on cannot be remembered, so asking about it
+  // would ask forever. Reading is also simply not worth a question. The effect
+  // class the registry already declares is exactly the right line to draw.
+  const harmless = action.effect === "pure";
+
   // Deny first: the always-ask list exists to stop something being allowed
   // silently, and refusing outright is stricter than asking.
   if (facet !== undefined && listed(policy.deny[action.node], facet, action.node)) return "deny";
 
   // Then the list no rule may switch off.
   if (alwaysAsk(action, facet, cwd)) return "ask";
+
+  if (harmless) return "allow";
 
   if (facet !== undefined && listed(policy.allow[action.node], facet, action.node)) {
     return "allow";

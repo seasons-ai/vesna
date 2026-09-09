@@ -130,3 +130,24 @@ test("a node with nothing to match on follows the mode and nothing else", () => 
   expect(decide(act("llm", { prompt: "hi" }), policy(), cwd)).toBe("ask");
   expect(decide(act("llm", { prompt: "hi" }), policy({ mode: "auto" }), cwd)).toBe("allow");
 });
+
+test("a pure action is never asked about — reading changes nothing", () => {
+  const pure = { ...act("read", { path: "/etc/hosts" }), effect: "pure" as const };
+  expect(decide(pure, policy(), cwd)).toBe("allow");
+});
+
+test("a pure action with nothing to match on is allowed rather than asked forever", () => {
+  const pure = { ...act("llm", { prompt: "hi" }), effect: "pure" as const };
+  expect(decide(pure, policy(), cwd)).toBe("allow");
+});
+
+test("an explicit deny still stops a pure action", () => {
+  const pure = { ...act("read", { path: "secrets/a.txt" }), effect: "pure" as const };
+  const p = policy({ deny: { read: ["secrets/**"] } });
+  expect(decide(pure, p, cwd)).toBe("deny");
+});
+
+test("a writing action is asked about even with nothing to match on", () => {
+  const writes = { ...act("deploy", {}), effect: "external" as const };
+  expect(decide(writes, policy(), cwd)).toBe("ask");
+});

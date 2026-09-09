@@ -11,6 +11,7 @@ import { homedir } from "node:os";
 import { createRegistry } from "../registry/registry";
 import { createTraceStore } from "../store/trace";
 import { readProjectNotes } from "../loop/prompt";
+import { loadPolicy } from "../policy/store";
 import { colorDepth, resolveTheme } from "../tui/theme";
 import { loadConfig, type VesnaConfig } from "./config";
 
@@ -66,5 +67,6 @@ export async function buildContext(root: string) {
   });
   // Read once here so both `chat` and `do` get the same instructions.
   const notes = await readProjectNotes(root);
-  return { registry, store, config, provider, theme, notes };
+  const policy = await loadPolicy(root, config);
+  return { registry, store, config, provider, theme, notes, policy };
 }

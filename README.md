@@ -346,6 +346,39 @@ and piped output carries no escape codes at all.
 
 ---
 
+## Permission
+
+`permissions.nodes` decides which tools exist. What each call may actually do
+is a separate question, and Vesna asks it:
+
+```text
+  write  src/auth/token.ts
+  [y] allow once   [a] always src/auth/**   [n] refuse
+```
+
+Answering `a` writes the rule to `.vesna/permissions.yaml` — a file Vesna owns
+and may rewrite. Your `config.yaml` is never touched: rewriting it would cost
+you your comments and layout.
+
+```yaml
+permissions:
+  mode: ask            # or auto
+  nodes: [read, write, shell, script, llm]
+  allow:
+    shell: ["bun test*"]
+  deny:
+    write: ["**/*.env"]
+```
+
+`auto` allows everything except a short list that cannot be undone by editing a
+file afterwards: writes outside the project, credential paths, `sudo`,
+`rm -rf`, a force push, a hard reset, publishing a package, piping a download
+into a shell. No rule switches those off — an explicit `deny` is the only thing
+that overrides the list, because refusing is stricter than asking.
+
+Reading is never asked about. The line is the effect a node declares, so a pure
+node proceeds and one that changes something or reaches outside does not.
+
 ## Conversations are kept
 
 Every chat is written to `~/.vesna/sessions` as it happens — not at exit, so a

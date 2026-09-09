@@ -18,6 +18,17 @@ export interface SessionOptions {
   model?: string;
   maxTurns?: number;
   permit?: (type: string) => boolean;
+  /**
+   * Consulted before each tool call. `permit` decides which tools exist at
+   * all; this decides whether this particular call may proceed, which is the
+   * difference between "shell is on" and "you may run this command".
+   */
+  approve?: (action: {
+    node: string;
+    input: Record<string, unknown>;
+    cwd: string;
+    effect?: "pure" | "write" | "external";
+  }) => Promise<"allow" | "deny">;
   prices?: Record<string, ModelPrice>;
   /** The project's own instructions, from .vesna/AGENTS.md. */
   notes?: string;
@@ -136,6 +147,26 @@ export function createSession(
             isError: true,
           });
           continue;
+        }
+
+        if (options.approve !== undefined) {
+          const verdict = await options.approve({
+            node: use.name,
+            input: use.input,
+            cwd: options.cwd,
+            ...(registry.get(use.name) ? { effect: registry.get(use.name)!.effect } : {}),
+          });
+          if (verdict === "deny") {
+            // Reported rather than thrown: a refusal is an answer, and the
+            // model can still choose a different way to the same goal.
+            results.push({
+              type: "tool_result",
+              callId: use.id,
+              content: `refused by the user: ${use.name}`,
+              isError: true,
+            });
+            continue;
+          }
         }
 
         const definition = registry.get(use.name);

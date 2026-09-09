@@ -41,7 +41,9 @@ export const scriptNode: NodeDef<
   description:
     "Evaluate a short JavaScript body in a separate process with the same privileges as Vesna itself. This is NOT a sandbox: it can read and write any file the user can, and open network connections. Prefer read, write, glob or grep when one of them will do. Assign the result to `output`.",
   inputSchema: { type: "object", properties: { body: { type: "string" }, args: { type: "object" }, timeoutMs: { type: "number" } }, required: ["body"] },
-  effect: "pure",
+  // Not pure. The body is arbitrary code with the user's own privileges, and
+  // declaring otherwise would exempt it from the approval that matters most.
+  effect: "external",
   async run(input, ctx) {
     const timeoutMs = input.timeoutMs ?? 10_000;
 

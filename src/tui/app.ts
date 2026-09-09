@@ -22,6 +22,8 @@ import { spinnerFrame } from "./render";
 import { createScreen, type Terminal } from "./screen";
 import { resolveTheme, themeNames, type Theme } from "./theme";
 import { copyToClipboard, systemCopyIo } from "./clipboard";
+import { decide, facetOf, type Policy } from "../policy/decide";
+import { rememberAllow, suggestPattern } from "../policy/store";
 import {
   listSessions,
   readSession,
@@ -49,6 +51,8 @@ export interface AppDeps {
   resumed?: AgentMessage[];
   /** Where conversations are stored, for /history and /resume. */
   sessionsRoot?: string;
+  /** Which actions may proceed without asking. */
+  policy?: Policy;
 }
 
 export interface AppIo {
@@ -76,7 +80,7 @@ export async function runApp(deps: AppDeps, io: AppIo): Promise<number> {
   const transcript = createTranscript(theme, glyphs);
 
   let editor = createEditor();
-  let session = newSession(deps, deps.resumed);
+  let session = newSession(deps, approve, deps.resumed);
   let scroll = 0;
   let busy = false;
   let tick = 0;
@@ -138,6 +142,70 @@ export async function runApp(deps: AppDeps, io: AppIo): Promise<number> {
   /** Never lets a write to disk take the conversation down with it. */
   function remember(event: SessionEvent): void {
     void deps.record?.append(event).catch(() => {});
+  }
+
+  // While a question is on screen the next key answers it, rather than being
+  // typed into a box the user cannot see behind the question.
+  let awaiting: ((answer: string) => void) | null = null;
+  let policy: Policy = deps.policy ?? { mode: "ask", allow: {}, deny: {} };
+
+  /**
+   * Asks before an action, and remembers the answer when told to.
+   *
+   * The remembered rule covers the directory or the command rather than the
+   * one file: a rule that answers only this exact path asks again on the next
+   * file beside it, which teaches the user to stop reading the question.
+   */
+  async function approve(action: {
+    node: string;
+    input: Record<string, unknown>;
+    cwd: string;
+    effect?: "pure" | "write" | "external";
+  }): Promise<"allow" | "deny"> {
+    const verdict = decide(action, policy, deps.root);
+    if (verdict === "allow") return "allow";
+    if (verdict === "deny") {
+      transcript.notice(`refused by policy: ${action.node}`, "warn");
+      draw();
+      return "deny";
+    }
+
+    const facet = facetOf(action, deps.root) ?? "";
+    const pattern = facet === "" ? "" : suggestPattern(action.node, facet);
+
+    transcript.notice(`${action.node}  ${facet}`, "warn");
+    transcript.notice(
+      pattern === ""
+        ? "[y] allow   [n] refuse"
+        : `[y] allow once   [a] always ${pattern}   [n] refuse`,
+      "muted",
+    );
+    draw();
+
+    const answer = await new Promise<string>((resolve) => {
+      awaiting = resolve;
+    });
+    awaiting = null;
+
+    if (answer === "a" && pattern !== "") {
+      policy = {
+        ...policy,
+        allow: { ...policy.allow, [action.node]: [...(policy.allow[action.node] ?? []), pattern] },
+      };
+      void rememberAllow(deps.root, action.node, pattern).catch(() => {});
+      transcript.notice(`allowed, and remembered: ${pattern}`, "ok");
+      draw();
+      return "allow";
+    }
+    if (answer === "y") {
+      transcript.notice("allowed once", "ok");
+      draw();
+      return "allow";
+    }
+
+    transcript.notice("refused", "warn");
+    draw();
+    return "deny";
   }
 
   /** The last listing, so /resume can take a number rather than an id. */
@@ -203,7 +271,7 @@ export async function runApp(deps: AppDeps, io: AppIo): Promise<number> {
       } else if (event.t === "messages") messages.push(...event.added);
     }
 
-    session = newSession(deps, messages);
+    session = newSession(deps, approve, messages);
     scroll = 0;
     transcript.notice(`resumed · ${stored.summary.title}`, "ok");
   }
@@ -219,6 +287,16 @@ export async function runApp(deps: AppDeps, io: AppIo): Promise<number> {
   }
 
   function dispatch(key: Key): void {
+    // A question owns the keyboard until it is answered.
+    if (awaiting !== null) {
+      const answer =
+        key.type === "text" ? key.text.trim().slice(0, 1).toLowerCase() :
+        key.type === "interrupt" || key.type === "escape" ? "n" :
+        key.type === "enter" ? "y" : "";
+      if (answer !== "") awaiting(answer);
+      return;
+    }
+
     if (key.type !== "interrupt") confirmExit = false;
 
     switch (key.type) {
@@ -357,6 +435,7 @@ export async function runApp(deps: AppDeps, io: AppIo): Promise<number> {
           copy,
           theme,
           applyTheme,
+          () => newSession(deps, approve),
         );
         transcript.endTurn();
         draw();
@@ -468,6 +547,7 @@ async function command(
   onCopy: (text: string) => Promise<void>,
   theme: Theme,
   setTheme: (name: string) => boolean,
+  makeSession: () => Session,
 ): Promise<Session> {
 
   if (name === "help") {
@@ -521,7 +601,7 @@ async function command(
   if (name === "clear") {
     transcript.clear();
     transcript.notice("new conversation", "muted");
-    return newSession(deps);
+    return makeSession();
   }
 
   if (name === "crystallize") {
@@ -557,7 +637,16 @@ async function command(
   return session;
 }
 
-function newSession(deps: AppDeps, resumed?: AgentMessage[]): Session {
+function newSession(
+  deps: AppDeps,
+  approve: (action: {
+    node: string;
+    input: Record<string, unknown>;
+    cwd: string;
+    effect?: "pure" | "write" | "external";
+  }) => Promise<"allow" | "deny">,
+  resumed?: AgentMessage[],
+): Session {
   return createSession(deps.provider, deps.registry, {
     cwd: deps.root,
     model: deps.config.model,
@@ -565,6 +654,7 @@ function newSession(deps: AppDeps, resumed?: AgentMessage[]): Session {
     notes: deps.notes,
 
     permit: (type) => deps.config.permissions.nodes.includes(type),
+    approve,
     ...(resumed ? { history: resumed } : {}),
   });
 }

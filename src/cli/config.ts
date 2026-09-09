@@ -34,7 +34,13 @@ export interface VesnaConfig {
    * own or anyone else's, so whoever uses this mode supplies one.
    */
   oauth?: { issuer: string; clientId: string; baseUrl: string; scope?: string };
-  permissions: { nodes: string[] };
+  permissions: {
+    nodes: string[];
+    /** ask (default) questions each new action; auto allows all but the irreversible. */
+    mode?: "ask" | "auto";
+    allow?: Record<string, string[]>;
+    deny?: Record<string, string[]>;
+  };
   /**
    * Three states matter and the middle one is the default, so it cannot be a
    * plain boolean: unset means "ask the locale", true/false override it.
@@ -82,7 +88,12 @@ export async function loadConfig(root: string): Promise<VesnaConfig> {
     prices: raw.prices ?? {},
     oauth: raw.oauth,
     // Permissions are the registry: no node, no capability.
-    permissions: { nodes: raw.permissions?.nodes ?? ["read", "write", "shell", "script", "llm"] },
+    permissions: {
+      nodes: raw.permissions?.nodes ?? ["read", "write", "shell", "script", "llm"],
+      ...(raw.permissions?.mode ? { mode: raw.permissions.mode } : {}),
+      ...(raw.permissions?.allow ? { allow: raw.permissions.allow } : {}),
+      ...(raw.permissions?.deny ? { deny: raw.permissions.deny } : {}),
+    },
     ascii: raw.ascii === true ? true : raw.ascii === false ? false : undefined,
     mouse: raw.mouse === false ? false : undefined,
   };

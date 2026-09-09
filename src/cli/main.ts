@@ -232,11 +232,11 @@ export async function main(argv: string[]): Promise<number> {
     }
   }
 
-  const { registry, store, config, provider, theme, notes } = await buildContext(root);
+  const { registry, store, config, provider, theme, notes, policy } = await buildContext(root);
   const permit = (node: { use: string }) => config.permissions.nodes.includes(node.use);
 
   if (command === "chat") {
-    const deps = { registry, provider, store, config, theme, root, notes };
+    const deps = { registry, provider, store, config, theme, root, notes, policy };
     // The line-based chat stays available for dumb terminals and for piping.
     if (flags.plain !== undefined || !process.stdout.isTTY) return await runChat(deps);
     return await runTui(deps);
