@@ -373,7 +373,10 @@ permitted is not offered to the model at all.
 
 ## Themes
 
-`vesna` (default), `hanami`, `washi`, and `mono`. Set one in `.vesna/config.yaml`:
+`vesna` (default), `hanami`, `washi`, and `mono`. `/theme` in a conversation
+lists them and `/theme washi` switches immediately — the whole screen repaints,
+including everything already said. That lasts the session; to keep it, set it
+in `.vesna/config.yaml`:
 
 ```yaml
 theme: hanami

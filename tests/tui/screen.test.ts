@@ -233,3 +233,18 @@ test("the alternate screen is left last, so the restores are seen", () => {
   const restore = restoreSequence({ mouse: true });
   expect(restore.indexOf("\x1b[?1049l")).toBe(restore.length - "\x1b[?1049l".length);
 });
+
+test("the canvas colour can change, and the whole screen repaints for it", () => {
+  const host = fake();
+  const screen = createScreen(host.terminal, { surface: SURFACE });
+  screen.draw(frame(["a", "b"]));
+  host.writes.length = 0;
+
+  screen.setSurface("\x1b[48;5;231m");
+  screen.draw(frame(["a", "b"]));
+
+  // Identical text, but every row must be rewritten: a diff against the old
+  // frame would leave the previous canvas showing behind unchanged lines.
+  expect(host.last()).toContain("\x1b[1;1H\x1b[2K\x1b[48;5;231ma");
+  expect(host.last()).toContain("\x1b[2;1H\x1b[2K\x1b[48;5;231mb");
+});

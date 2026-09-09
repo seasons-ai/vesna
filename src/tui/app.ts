@@ -20,7 +20,7 @@ import { layout, type Frame, type ViewState } from "./layout";
 import { wrapAnsi } from "./wrap";
 import { spinnerFrame } from "./render";
 import { createScreen, type Terminal } from "./screen";
-import type { Theme } from "./theme";
+import { resolveTheme, themeNames, type Theme } from "./theme";
 import { copyToClipboard, systemCopyIo } from "./clipboard";
 import { createTranscript, type Transcript } from "./transcript";
 
@@ -53,7 +53,7 @@ const WHEEL_LINES = 3;
 const PAGE_FRACTION = 0.8;
 
 export async function runApp(deps: AppDeps, io: AppIo): Promise<number> {
-  const { theme } = deps;
+  let theme = deps.theme;
   const glyphs = resolveGlyphs(process.env, deps.config.ascii);
   const screen = createScreen(io.terminal, {
     surface: theme.surface,
@@ -95,13 +95,13 @@ export async function runApp(deps: AppDeps, io: AppIo): Promise<number> {
   function currentView(): ViewState {
     const size = screen.size();
     return {
-      header: header(deps, glyphs),
+      header: header(deps, theme, glyphs),
       transcript: transcript.lines(Math.max(1, size.cols)),
       targets: transcript.copyTargets(Math.max(1, size.cols)),
       empty: emptyState({ theme, glyphs, cols: size.cols, rows: size.rows }),
       editor,
       hint: hint(theme, busy, confirmExit, glyphs),
-      status: status(deps, session, busy, tick, glyphs),
+      status: status(theme, session, busy, tick, glyphs),
       scroll,
       panel: theme.panel,
       // The layout paints its own rule, prompt and input text through this,
@@ -109,6 +109,16 @@ export async function runApp(deps: AppDeps, io: AppIo): Promise<number> {
       paint: (role, text) => theme.paint(role, text),
       glyphs,
     };
+  }
+
+  /** Swaps the palette everywhere it shows. False when the name is unknown. */
+  function applyTheme(name: string): boolean {
+    if (!themeNames().includes(name)) return false;
+    theme = resolveTheme(name, { depth: deps.theme.depth });
+    transcript.setTheme(theme, glyphs);
+    screen.setSurface(theme.surface);
+    draw();
+    return true;
   }
 
   async function copy(text: string): Promise<void> {
@@ -232,7 +242,17 @@ export async function runApp(deps: AppDeps, io: AppIo): Promise<number> {
 
       if (input.kind === "command") {
         if (input.name === "exit") break;
-        session = await command(input.name, input.argument, deps, session, transcript, glyphs, copy);
+        session = await command(
+          input.name,
+          input.argument,
+          deps,
+          session,
+          transcript,
+          glyphs,
+          copy,
+          theme,
+          applyTheme,
+        );
         transcript.endTurn();
         draw();
         continue;
@@ -321,8 +341,9 @@ async function command(
   transcript: Transcript,
   glyphs: Glyphs,
   onCopy: (text: string) => Promise<void>,
+  theme: Theme,
+  setTheme: (name: string) => boolean,
 ): Promise<Session> {
-  const { theme } = deps;
 
   if (name === "help") {
     for (const entry of CHAT_COMMANDS) {
@@ -341,6 +362,24 @@ async function command(
       `${usage.inputTokens} in ${glyphs.bullet} ${usage.outputTokens} out ${glyphs.bullet} $${session.costUsd.toFixed(4)}`,
       "muted",
     );
+    return session;
+  }
+
+  if (name === "theme") {
+    const wanted = argument.trim();
+    if (wanted === "") {
+      for (const available of themeNames()) {
+        const mark = available === theme.name ? "  (current)" : "";
+        transcript.notice(`${available.padEnd(8)}${mark}`, available === theme.name ? "ok" : "muted");
+      }
+      return session;
+    }
+    if (!setTheme(wanted)) {
+      transcript.notice(`no theme called "${wanted}" — try /theme for the list`, "warn");
+      return session;
+    }
+    // Rewriting the user's config would cost them their comments and layout.
+    transcript.notice(`theme: ${wanted}  (this session; set theme: in the config to keep it)`, "ok");
     return session;
   }
 
@@ -403,8 +442,8 @@ function newSession(deps: AppDeps): Session {
   });
 }
 
-function header(deps: AppDeps, glyphs: Glyphs): string {
-  const { theme, config } = deps;
+function header(deps: AppDeps, theme: Theme, glyphs: Glyphs): string {
+  const { config } = deps;
   const mode = config.provider === "openai" ? `${config.provider}/${config.auth}` : config.provider;
   const dot = theme.paint("muted", glyphs.bullet);
   // Every span here paints. A bare one would close the run before it with
@@ -419,7 +458,7 @@ function hint(theme: Theme, busy: boolean, confirmExit: boolean, glyphs: Glyphs)
   return theme.paint("muted", `/help ${glyphs.bullet} alt-enter newline ${glyphs.bullet} ctrl-c twice to leave`);
 }
 
-function status(deps: AppDeps, session: Session, busy: boolean, tick: number, glyphs: Glyphs): string {
+function status(theme: Theme, session: Session, busy: boolean, tick: number, glyphs: Glyphs): string {
   const { usage } = session;
   const tokens = usage.inputTokens + usage.outputTokens;
   const cost = `$${session.costUsd.toFixed(4)}`;
@@ -427,8 +466,8 @@ function status(deps: AppDeps, session: Session, busy: boolean, tick: number, gl
   // The body is painted in both branches, not just the idle one: after the
   // spinner's own run closes there is no foreground left in force.
   return busy
-    ? `${deps.theme.paint("petal", spinnerFrame(tick, glyphs.spinner))} ${deps.theme.paint("muted", body)}`
-    : deps.theme.paint("muted", body);
+    ? `${theme.paint("petal", spinnerFrame(tick, glyphs.spinner))} ${theme.paint("muted", body)}`
+    : theme.paint("muted", body);
 }
 
 function formatTokens(count: number): string {

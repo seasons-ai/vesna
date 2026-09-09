@@ -1,6 +1,6 @@
 import { test, expect } from "bun:test";
 import { createTranscript } from "../../src/tui/transcript";
-import { UNICODE_GLYPHS } from "../../src/tui/glyphs";
+import { ASCII_GLYPHS, UNICODE_GLYPHS } from "../../src/tui/glyphs";
 import { resolveTheme } from "../../src/tui/theme";
 import { fg24 } from "../../src/tui/color";
 import { PALETTES } from "../../src/tui/palette";
@@ -204,4 +204,48 @@ test("the newest answer is findable without a mouse", () => {
 
 test("with no answer yet there is nothing to copy", () => {
   expect(createTranscript(theme, UNICODE_GLYPHS).lastAnswer()).toBeUndefined();
+});
+
+test("switching the theme repaints history, not just what comes next", () => {
+  const dark = resolveTheme("vesna", { depth: 24 });
+  const light = resolveTheme("washi", { depth: 24 });
+
+  const transcript = createTranscript(dark, UNICODE_GLYPHS);
+  transcript.user("hello");
+  transcript.step("read", 3, "a.txt");
+  transcript.notice("careful", "warn");
+  transcript.delta("an answer");
+
+  const before = transcript.lines(60).join("\n");
+  expect(before).toContain("\x1b[38;2;");
+
+  transcript.setTheme(light, UNICODE_GLYPHS);
+  const after = transcript.lines(60).join("\n");
+
+  // Same words, none of the old colours left anywhere.
+  for (const word of ["hello", "read", "careful", "an answer"]) {
+    expect(after).toContain(word);
+  }
+  const darkCodes = before.match(/\x1b\[38;2;[0-9;]+m/g) ?? [];
+  for (const code of new Set(darkCodes)) expect(after).not.toContain(code);
+});
+
+test("the glyphs change with the theme, so ASCII mode can be entered live", () => {
+  const theme24 = resolveTheme("vesna", { depth: 24 });
+  const transcript = createTranscript(theme24, UNICODE_GLYPHS);
+  transcript.user("hi");
+  expect(transcript.lines(60).join("\n")).toContain("›");
+
+  transcript.setTheme(theme24, ASCII_GLYPHS);
+  const after = transcript.lines(60).join("\n");
+  expect(after).toContain(">");
+  expect(after).not.toContain("›");
+});
+
+test("what can be copied is unaffected by how it is painted", () => {
+  const transcript = createTranscript(resolveTheme("vesna", { depth: 24 }), UNICODE_GLYPHS);
+  transcript.user("exact words");
+  const id = transcript.copyTargets(60).find((entry) => entry !== undefined)!;
+  transcript.setTheme(resolveTheme("mono", { depth: 0 }), ASCII_GLYPHS);
+  expect(transcript.rawOf(id)).toBe("exact words");
 });

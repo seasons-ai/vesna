@@ -728,3 +728,41 @@ test("/copy with nothing to copy says so instead of copying blank", async () => 
   expect(copied).toEqual([]);
   await quit(app);
 });
+
+test("/theme with no name lists what there is and marks the current one", async () => {
+  const app = await start(reply("x"));
+  app.input.type("/theme\r");
+  await until(() => app.screen().includes("hanami"), "the listing");
+  const screen = app.screen();
+  for (const name of ["vesna", "hanami", "washi", "mono"]) expect(screen).toContain(name);
+  expect(screen).toMatch(/vesna.*current|current.*vesna/s);
+  await quit(app);
+});
+
+test("/theme switches the whole screen, history included", async () => {
+  const app = await start(reply("an answer"), { rows: 16, cols: 60 }, { theme: PAINTED });
+  app.input.type("earlier message\r");
+  await until(() => app.screen().includes("an answer"), "the answer");
+
+  app.input.type("/theme washi\r");
+  await until(() => /washi/.test(app.screen()), "the confirmation");
+
+  // The message from before the switch is still there, and still readable.
+  expect(app.screen()).toContain("earlier message");
+  await quit(app);
+});
+
+test("an unknown theme is refused, and the current one is left alone", async () => {
+  const app = await start(reply("x"));
+  app.input.type("/theme nonsense\r");
+  await until(() => /no theme called/i.test(app.screen()), "the refusal");
+  expect(app.screen()).toContain("nonsense");
+  await quit(app);
+});
+
+test("switching says how to make it stick, because it does not", async () => {
+  const app = await start(reply("x"));
+  app.input.type("/theme mono\r");
+  await until(() => /config/i.test(app.screen()), "the note about persistence");
+  await quit(app);
+});

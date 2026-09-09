@@ -24,6 +24,12 @@ export interface Transcript {
    * button's own row carries an id; everything else is undefined.
    */
   copyTargets(width: number): (string | undefined)[];
+  /**
+   * Repaints everything, including what is already on screen. Entries hold
+   * what was said rather than how it looked, so a theme change reaches the
+   * whole conversation instead of only what comes next.
+   */
+  setTheme(theme: Theme, glyphs: Glyphs): void;
   /** The text behind a copy button, as it arrived rather than as displayed. */
   rawOf(id: string): string | undefined;
   /** The most recent answer, for copying without a mouse. */
@@ -31,8 +37,14 @@ export interface Transcript {
 }
 
 type Entry =
-  /** Painted once, shown verbatim: what the user typed, a step, a notice. */
-  | { kind: "line"; text: string }
+  /** What the user typed, quoted back rather than interpreted. */
+  | { kind: "user"; text: string }
+  /** A tool call: type, duration, and the one field worth showing. */
+  | { kind: "step"; nodeType: string; durationMs: number; detail?: string }
+  /** Something Vesna itself is saying. */
+  | { kind: "notice"; text: string; tone: Role }
+  /** A gap between turns. */
+  | { kind: "blank" }
   /** Markdown from the model, rendered on demand. */
   | { kind: "answer"; raw: string; id: string }
   /**
@@ -41,7 +53,9 @@ type Entry =
    */
   | { kind: "copy"; id: string };
 
-export function createTranscript(theme: Theme, glyphs: Glyphs): Transcript {
+export function createTranscript(initial: Theme, initialGlyphs: Glyphs): Transcript {
+  let theme = initial;
+  let glyphs = initialGlyphs;
   let entries: Entry[] = [];
 
   // Rendering runs on every frame, including each token of a streamed answer,
@@ -53,9 +67,7 @@ export function createTranscript(theme: Theme, glyphs: Glyphs): Transcript {
   let counter = 0;
   const nextId = () => `m${(counter += 1)}`;
 
-  const push = (line: string) => {
-    entries.push({ kind: "line", text: line });
-  };
+
 
   /**
    * The conversation is the frame's most important text, and on a canvas Vesna
@@ -66,30 +78,56 @@ export function createTranscript(theme: Theme, glyphs: Glyphs): Transcript {
 
   /** Renders once per (width, content) and serves both views from the result. */
   const render = (width: number) => {
-    const key = `${width}\u0000${entries
-      .map((entry) =>
-        entry.kind === "line" ? entry.text : entry.kind === "answer" ? entry.raw : `c:${entry.id}`,
-      )
-      .join("\u0000")}`;
+    // The theme is part of the key: the same words in a different palette are
+    // different lines, and serving the cached ones would freeze the old colours.
+    const key = [width, theme.name, theme.depth, glyphs.mark, ...entries.map(describe)].join(
+      "\u0000",
+    );
     if (key === cacheKey) return cached;
 
     const lines: string[] = [];
     const targets: (string | undefined)[] = [];
+    const add = (line: string, id?: string) => {
+      lines.push(line);
+      targets.push(id);
+    };
 
     for (const entry of entries) {
-      if (entry.kind === "line") {
-        lines.push(entry.text);
-        targets.push(undefined);
-        continue;
-      }
-      if (entry.kind === "copy") {
-        lines.push(`  ${theme.paint("faint", `${glyphs.copy} copy`)}`);
-        targets.push(entry.id);
-        continue;
-      }
-      for (const line of renderMarkdown(entry.raw, { theme, glyphs, width: Math.max(1, width) })) {
-        lines.push(line);
-        targets.push(undefined);
+      switch (entry.kind) {
+        case "blank":
+          add("");
+          break;
+
+        case "user": {
+          const [first, ...rest] = entry.text.split("\n");
+          add(`${theme.paint("petal", glyphs.prompt)} ${body(first ?? "")}`);
+          for (const line of rest) add(`  ${body(line)}`);
+          break;
+        }
+
+        case "step": {
+          const label = `${theme.paint("petal", glyphs.bullet)} ${theme.paint("text", entry.nodeType)} ${theme.paint("muted", `${entry.durationMs}ms`)}`;
+          add(`  ${label}${entry.detail ? `  ${theme.paint("muted", entry.detail)}` : ""}`);
+          break;
+        }
+
+        case "notice":
+          add(`  ${theme.paint(entry.tone, entry.text)}`);
+          break;
+
+        case "copy":
+          add(`  ${theme.paint("faint", `${glyphs.copy} copy`)}`, entry.id);
+          break;
+
+        case "answer":
+          for (const line of renderMarkdown(entry.raw, {
+            theme,
+            glyphs,
+            width: Math.max(1, width),
+          })) {
+            add(line);
+          }
+          break;
       }
     }
 
@@ -97,6 +135,24 @@ export function createTranscript(theme: Theme, glyphs: Glyphs): Transcript {
     cached = { lines, targets };
     return cached;
   };
+
+  /** Enough of an entry to tell two renders apart. */
+  function describe(entry: Entry): string {
+    switch (entry.kind) {
+      case "blank":
+        return "b";
+      case "user":
+        return `u:${entry.text}`;
+      case "step":
+        return `s:${entry.nodeType}:${entry.durationMs}:${entry.detail ?? ""}`;
+      case "notice":
+        return `n:${entry.tone}:${entry.text}`;
+      case "copy":
+        return `c:${entry.id}`;
+      case "answer":
+        return `a:${entry.raw}`;
+    }
+  }
 
   return {
     lines: (width) => render(width).lines,
@@ -118,12 +174,16 @@ export function createTranscript(theme: Theme, glyphs: Glyphs): Transcript {
       cached = { lines: [], targets: [] };
     },
 
+    setTheme(next, nextGlyphs) {
+      theme = next;
+      glyphs = nextGlyphs;
+      cacheKey = "";
+    },
+
     user(text) {
-      const [first, ...rest] = text.split("\n");
-      // What the user typed is quoted back, never interpreted: a question
-      // about `##` in bash should not come back as a heading.
-      push(`${theme.paint("petal", glyphs.prompt)} ${body(first ?? "")}`);
-      for (const line of rest) push(`  ${body(line)}`);
+      // Quoted back, never interpreted: a question about `##` in bash should
+      // not come back as a heading.
+      entries.push({ kind: "user", text });
 
       const id = nextId();
       sources.set(id, text);
@@ -143,26 +203,24 @@ export function createTranscript(theme: Theme, glyphs: Glyphs): Transcript {
     },
 
     step(nodeType, durationMs, detail) {
-      const label = `${theme.paint("petal", glyphs.bullet)} ${theme.paint("text", nodeType)} ${theme.paint("muted", `${durationMs}ms`)}`;
-      push(`  ${label}${detail ? `  ${theme.paint("muted", detail)}` : ""}`);
+      entries.push({ kind: "step", nodeType, durationMs, ...(detail ? { detail } : {}) });
     },
 
     notice(text, tone = "muted") {
-      push(`  ${theme.paint(tone, text)}`);
+      entries.push({ kind: "notice", text, tone });
     },
 
     endTurn() {
       const last = entries[entries.length - 1];
       if (last === undefined) return;
-      if (last.kind === "copy") return;
-      if (last.kind === "line" && last.text === "") return;
+      if (last.kind === "copy" || last.kind === "blank") return;
 
       // An answer earns a button; a bare notice or step just gets its gap.
       if (last.kind === "answer") {
         entries.push({ kind: "copy", id: last.id });
         return;
       }
-      push("");
+      entries.push({ kind: "blank" });
     },
   };
 }

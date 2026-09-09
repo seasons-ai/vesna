@@ -16,6 +16,8 @@ export interface Terminal {
 
 export interface Screen {
   enter(): void;
+  /** Changes the canvas colour and forces a full repaint onto it. */
+  setSurface(surface: string): void;
   leave(): void;
   draw(frame: Frame): void;
   size(): { rows: number; cols: number };
@@ -52,7 +54,7 @@ export function createScreen(
   terminal: Terminal,
   options: { surface?: string; mouse?: boolean } = {},
 ): Screen {
-  const surface = options.surface ?? "";
+  let surface = options.surface ?? "";
   // Reporting the mouse takes text selection away from the terminal, so it is
   // opt-in and must be handed back on the way out.
   const mouse = options.mouse === true ? MOUSE_ON : "";
@@ -62,6 +64,13 @@ export function createScreen(
 
   return {
     size: () => terminal.size(),
+
+    setSurface(next) {
+      surface = next;
+      // A diff against rows drawn on the old canvas would leave it showing
+      // behind every line whose text happens not to have changed.
+      previous = [];
+    },
 
     enter() {
       terminal.write(`${ALT_ON}${CURSOR_HIDE}${PASTE_ON}${mouse}${surface}${CLEAR_ALL}`);
