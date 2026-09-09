@@ -1,0 +1,49 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# A second push to the same branch makes the first run pointless.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    # Both, because the terminal code reads the environment and spawns
+    # processes, and those are exactly the places the two diverge.
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Install
+        run: bun install --frozen-lockfile
+
+      - name: Typecheck
+        run: bun run typecheck
+
+      - name: Test
+        # The suite is offline by design; anything reaching the network here
+        # is a defect in the test, not a flaky runner.
+        run: bun test
+
+      - name: The CLI starts and reports honestly without credentials
+        run: |
+          bun bin/vesna --help
+          # No config and no credentials: it must refuse clearly, not crash.
+          cd "$(mktemp -d)"
+          if bun "$GITHUB_WORKSPACE/bin/vesna" do "hi"; then
+            echo "expected a non-zero exit without credentials" >&2
+            exit 1
+          fi
