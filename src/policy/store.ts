@@ -51,7 +51,8 @@ async function readLearned(root: string): Promise<{ allow?: Record<string, strin
 
 export async function loadPolicy(root: string, config: VesnaConfig): Promise<Policy> {
   const learned = await readLearned(root);
-  const mode: Mode = config.permissions.mode === "auto" ? "auto" : "ask";
+  const wanted = config.permissions.mode;
+  const mode: Mode = wanted === "auto" || wanted === "plan" ? wanted : "ask";
 
   return {
     mode,

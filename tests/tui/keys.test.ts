@@ -175,3 +175,11 @@ test("ctrl-b asks for the conversations column", () => {
 test("ctrl-h is still backspace, because on most terminals that is what it is", () => {
   expect(keys("\x08")).toEqual([{ type: "backspace" }]);
 });
+
+test("shift-tab asks for the next mode", () => {
+  expect(keys(`${ESC}[Z`)).toEqual([{ type: "cycle-mode" }]);
+});
+
+test("plain tab is still tab, so completion can have it later", () => {
+  expect(keys("\t")).toEqual([{ type: "tab" }]);
+});

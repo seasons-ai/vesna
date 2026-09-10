@@ -401,9 +401,18 @@ Answering `a` writes the rule to `.vesna/permissions.yaml` — a file Vesna owns
 and may rewrite. Your `config.yaml` is never touched: rewriting it would cost
 you your comments and layout.
 
+Three modes, and `shift-tab` cycles them. The current one sits in the status
+line, because a mode you cannot see is worse than no mode at all.
+
+| Mode | What the agent may do |
+|---|---|
+| `plan` | look and propose; nothing is changed, and no rule opens a hole in it |
+| `ask` | you are asked before anything changes |
+| `auto` | changes go ahead, except the irreversible |
+
 ```yaml
 permissions:
-  mode: ask            # or auto
+  mode: ask            # plan, ask or auto
   # Every registered node, unless you list the ones you want.
   nodes: [read, write, shell]
   allow:

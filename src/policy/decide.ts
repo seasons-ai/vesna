@@ -14,7 +14,16 @@ import { isReadOnlyCommand } from "./readonly";
  * understandable.
  */
 
-export type Mode = "ask" | "auto";
+/**
+ * Three rungs of freedom.
+ *
+ * `plan` looks and proposes and changes nothing, which is what you want while
+ * deciding what to do. `ask` is the working default. `auto` is for work you
+ * have already decided to trust.
+ */
+export type Mode = "plan" | "ask" | "auto";
+
+export const MODES: readonly Mode[] = ["plan", "ask", "auto"];
 export type Decision = "allow" | "deny" | "ask";
 
 export interface Policy {
@@ -153,6 +162,10 @@ export function decide(action: Action, policy: Policy, cwd: string): Decision {
   if (alwaysAsk(action, facet, cwd)) return "ask";
 
   if (harmless) return "allow";
+
+  // Nothing changes in plan mode, and no rule opens a hole in it: a mode that
+  // some earlier "always allow" could quietly defeat would not be worth having.
+  if (policy.mode === "plan") return "deny";
 
   if (facet !== undefined && listed(policy.allow[action.node], facet, action.node)) {
     return "allow";

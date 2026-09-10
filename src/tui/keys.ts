@@ -32,6 +32,7 @@ export type Key =
   | { type: "click"; column: number; row: number }
   | { type: "panel-left" }
   | { type: "panel-right" }
+  | { type: "cycle-mode" }
   | { type: "page-up" }
   | { type: "page-down" }
   | { type: "escape" };
@@ -62,6 +63,8 @@ const CONTROLS: Record<string, Key> = {
 
 /** Final letters of a CSI sequence, once any modifier has been stripped. */
 const CSI_KEYS: Record<string, Key> = {
+  // CSI Z is shift-tab, which every terminal sends and nothing else uses.
+  Z: { type: "cycle-mode" },
   A: { type: "up" },
   B: { type: "down" },
   C: { type: "right" },

@@ -1166,3 +1166,52 @@ test("n still refuses, and the action does not happen", async () => {
   expect(ran).toEqual([]);
   await quit(app);
 });
+
+test("the mode is always on screen — switching invisibly would be worse than not switching", async () => {
+  const app = await start(reply("x"), { rows: 20, cols: 100 });
+  expect(app.screen()).toContain("ask");
+  await quit(app);
+});
+
+test("shift-tab walks the three modes and comes back round", async () => {
+  const app = await start(reply("x"), { rows: 20, cols: 100 });
+  expect(app.screen()).toContain("ask");
+
+  app.input.type("\x1b[Z");
+  await until(() => app.screen().includes("auto"), "auto");
+  app.input.type("\x1b[Z");
+  await until(() => app.screen().includes("plan"), "plan");
+  app.input.type("\x1b[Z");
+  await until(() => app.screen().includes("ask"), "back to ask");
+  await quit(app);
+});
+
+test("plan mode refuses to change anything, and says why", async () => {
+  const { registry, ran } = writing();
+  const caller = toolCaller("put", { path: "src/a.ts" });
+  const app = await start(caller, { rows: 20, cols: 100 }, await allowing(caller, registry));
+
+  app.input.type("\x1b[Z");
+  await until(() => app.screen().includes("auto"), "auto");
+  app.input.type("\x1b[Z");
+  await until(() => app.screen().includes("plan"), "plan");
+
+  app.input.type("go\r");
+  await until(() => /plan mode/i.test(app.screen()), "the refusal");
+  expect(ran).toEqual([]);
+  await quit(app);
+});
+
+test("/mode names a mode directly, for anyone who would rather type", async () => {
+  const app = await start(reply("x"), { rows: 20, cols: 100 });
+  app.input.type("/mode auto\r");
+  await until(() => app.screen().includes("auto"), "the switch");
+  await quit(app);
+});
+
+test("/mode with a name nobody has is refused, and the mode is left alone", async () => {
+  const app = await start(reply("x"), { rows: 20, cols: 100 });
+  app.input.type("/mode reckless\r");
+  await until(() => /plan, ask or auto/.test(app.screen()), "the refusal");
+  await quit(app);
+});

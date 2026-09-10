@@ -26,7 +26,7 @@ import { spinnerFrame } from "./render";
 import { createScreen, type Terminal } from "./screen";
 import { resolveTheme, themeNames, type Theme } from "./theme";
 import { copyToClipboard, systemCopyIo } from "./clipboard";
-import { decide, facetOf, type Policy } from "../policy/decide";
+import { decide, facetOf, MODES, type Mode, type Policy } from "../policy/decide";
 import { rememberAllow, suggestPattern } from "../policy/store";
 import {
   listSessions,
@@ -153,7 +153,7 @@ export async function runApp(deps: AppDeps, io: AppIo): Promise<number> {
       empty: emptyState({ theme, glyphs, cols: size.cols, rows: size.rows }),
       editor,
       hint: hint(theme, busy, confirmExit, glyphs),
-      status: status(theme, session, busy, tick, glyphs),
+      status: status(theme, session, busy, tick, glyphs, policy.mode),
       scroll,
       panel: theme.panel,
       // The layout paints its own rule, prompt and input text through this,
@@ -161,6 +161,13 @@ export async function runApp(deps: AppDeps, io: AppIo): Promise<number> {
       paint: (role, text) => theme.paint(role, text),
       glyphs,
     };
+  }
+
+  /** Changes how much the agent may do without asking. */
+  function setMode(mode: Mode): void {
+    policy = { ...policy, mode };
+    transcript.notice(`mode: ${mode}  ${MODE_HELP[mode]}`, "ok");
+    draw();
   }
 
   /** Swaps the palette everywhere it shows. False when the name is unknown. */
@@ -233,7 +240,12 @@ export async function runApp(deps: AppDeps, io: AppIo): Promise<number> {
     const verdict = decide(action, policy, deps.root);
     if (verdict === "allow") return "allow";
     if (verdict === "deny") {
-      transcript.notice(`refused by policy: ${action.node}`, "warn");
+      transcript.notice(
+        policy.mode === "plan"
+          ? `${action.node} refused: plan mode changes nothing — shift-tab to leave it`
+          : `refused by policy: ${action.node}`,
+        "warn",
+      );
       draw();
       return "deny";
     }
@@ -499,6 +511,12 @@ export async function runApp(deps: AppDeps, io: AppIo): Promise<number> {
         toggleChats();
         return;
 
+      case "cycle-mode": {
+        const next = MODES[(MODES.indexOf(policy.mode) + 1) % MODES.length]!;
+        setMode(next);
+        return;
+      }
+
       case "panel-right":
         showGarden = !showGarden;
         draw();
@@ -562,6 +580,15 @@ export async function runApp(deps: AppDeps, io: AppIo): Promise<number> {
 
       if (input.kind === "command") {
         if (input.name === "exit") break;
+
+        if (input.name === "mode") {
+          const wanted = input.argument.trim();
+          if ((MODES as readonly string[]).includes(wanted)) setMode(wanted as Mode);
+          else transcript.notice(`/mode plan, ask or auto — not "${wanted}"`, "warn");
+          transcript.endTurn();
+          draw();
+          continue;
+        }
 
         if (input.name === "spec") {
           specCommand(input.argument);
@@ -842,11 +869,19 @@ function hint(theme: Theme, busy: boolean, confirmExit: boolean, glyphs: Glyphs)
   return theme.paint("muted", `/help ${glyphs.bullet} alt-enter newline ${glyphs.bullet} ctrl-c twice to leave`);
 }
 
-function status(theme: Theme, session: Session, busy: boolean, tick: number, glyphs: Glyphs): string {
+function status(
+  theme: Theme,
+  session: Session,
+  busy: boolean,
+  tick: number,
+  glyphs: Glyphs,
+  mode: Mode,
+): string {
   const { usage } = session;
   const tokens = usage.inputTokens + usage.outputTokens;
   const cost = `$${session.costUsd.toFixed(4)}`;
-  const body = `${formatTokens(tokens)} ${glyphs.bullet} ${cost}`;
+  // The mode decides what the agent may do, so it is never off screen.
+  const body = `${mode} ${glyphs.bullet} ${formatTokens(tokens)} ${glyphs.bullet} ${cost}`;
   // The body is painted in both branches, not just the idle one: after the
   // spinner's own run closes there is no foreground left in force.
   return busy
@@ -910,3 +945,10 @@ async function defaultCopy(text: string): Promise<void> {
   if (result === "empty") throw new Error("nothing to copy");
   if (result === "too-large") throw new Error("too large for this terminal");
 }
+
+/** One line each, so the notice says what the mode actually means. */
+const MODE_HELP: Record<Mode, string> = {
+  plan: "look and propose; nothing is changed",
+  ask: "you are asked before anything changes",
+  auto: "changes go ahead, except the irreversible",
+};

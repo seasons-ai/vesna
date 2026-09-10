@@ -42,8 +42,8 @@ export interface VesnaConfig {
      * approval layer's business now.
      */
     nodes?: string[];
-    /** ask (default) questions each new action; auto allows all but the irreversible. */
-    mode?: "ask" | "auto";
+    /** plan changes nothing; ask questions each new action; auto allows all but the irreversible. */
+    mode?: "plan" | "ask" | "auto";
     allow?: Record<string, string[]>;
     deny?: Record<string, string[]>;
   };

@@ -103,3 +103,7 @@ test("the suggested pattern for a command is its first two words", () => {
   expect(suggestPattern("shell", "bun test tests/a.ts --watch")).toBe("bun test*");
   expect(suggestPattern("shell", "ls")).toBe("ls*");
 });
+
+test("plan is a mode the config can start in", async () => {
+  expect((await loadPolicy(await root(), config({ mode: "plan" }))).mode).toBe("plan");
+});

@@ -181,3 +181,31 @@ test("the always-ask list is not softened by a command looking harmless", () => 
   const action = { ...act("shell", { command: "sudo ls /root" }), effect: "write" as const };
   expect(decide(action, policy({ mode: "auto" }), cwd)).toBe("ask");
 });
+
+test("plan mode refuses anything that would change something", () => {
+  const p = policy({ mode: "plan" });
+  for (const action of [
+    { ...act("write", { path: "src/a.ts" }), effect: "write" as const },
+    { ...act("shell", { command: "npm install" }), effect: "write" as const },
+    { ...act("script", { body: "x" }), effect: "external" as const },
+  ]) {
+    expect(decide(action, p, cwd)).toBe("deny");
+  }
+});
+
+test("plan mode still lets the agent look, or it could not plan at all", () => {
+  const p = policy({ mode: "plan" });
+  for (const action of [
+    { ...act("read", { path: "src/a.ts" }), effect: "pure" as const },
+    { ...act("shell", { command: "git log --oneline" }), effect: "write" as const },
+    { ...act("plan", { stage: "build" }), effect: "pure" as const },
+  ]) {
+    expect(decide(action, p, cwd)).toBe("allow");
+  }
+});
+
+test("an allow rule does not open a hole in plan mode", () => {
+  const p = policy({ mode: "plan", allow: { write: ["**"] } });
+  const action = { ...act("write", { path: "src/a.ts" }), effect: "write" as const };
+  expect(decide(action, p, cwd)).toBe("deny");
+});
