@@ -1,16 +1,38 @@
 {
   "name": "vesna",
   "version": "0.1.0",
-  "type": "module",
-  "private": true,
-  "license": "Apache-2.0",
   "description": "An agent that turns its own work into deterministic, reviewable workflows.",
+  "license": "Apache-2.0",
+  "type": "module",
+  "homepage": "https://github.com/seasons-ai/vesna#readme",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/seasons-ai/vesna.git"
   },
+  "bugs": {
+    "url": "https://github.com/seasons-ai/vesna/issues"
+  },
+  "keywords": [
+    "agent",
+    "cli",
+    "tui",
+    "workflow",
+    "automation",
+    "bun",
+    "llm"
+  ],
   "bin": {
     "vesna": "./bin/vesna"
+  },
+  "files": [
+    "bin",
+    "src",
+    "README.md",
+    "LICENSE",
+    "NOTICE"
+  ],
+  "engines": {
+    "bun": ">=1.2.0"
   },
   "scripts": {
     "test": "bun test",
@@ -18,7 +40,6 @@
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.117.1",
-    "highlight.js": "^11.11.1",
     "yaml": "^2.6.0"
   },
   "devDependencies": {

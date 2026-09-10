@@ -11,3 +11,6 @@ dist/
 
 # Scratch for the plan-execution skill; the record is the git history.
 .superpowers/
+
+# npm pack output
+*.tgz

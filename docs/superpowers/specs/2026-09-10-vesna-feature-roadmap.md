@@ -3,7 +3,7 @@
 **Date:** 2026-09-10  
 **Status:** Proposed  
 **Scope:** Post-v0.1 product and engineering plan  
-**Repository baseline:** `abb1838`
+**Repository baseline:** `5576877`
 
 ---
 
@@ -41,10 +41,10 @@ The following capabilities exist today:
 - task worktrees, a dependency scheduler, builders, and a merge queue;
 - offline tests and macOS/Linux CI.
 
-At the time this roadmap was written, the baseline passes:
+At the time this roadmap was reviewed, the baseline passes:
 
 ```text
-877 tests across 81 files
+889 tests across 82 files
 TypeScript typecheck
 ```
 
@@ -489,13 +489,126 @@ Metrics are local and opt-in for aggregate export.
 These may be reconsidered after the local single-user product proves the full
 live → crystal → replay → heal loop on real work.
 
-## 10. Next implementation step
+## 10. Recommended execution plan
 
-Start with a separate implementation design for **Phase A, durable interruption
-and resume**, before container integration. Resume semantics define which state
-must be persisted and therefore what the sandbox runner must report. The plan
-must include crash-point tests around node start, output persistence, assertion
-persistence, and external receipt creation.
+Repository review at `5576877` confirms that interruption signals and ambiguous
+external receipts already have unit coverage, but deterministic runs are still
+persisted only after a row completes. The next work should therefore extend that
+foundation rather than redesign it.
 
-No Phase A code should begin until that state machine and the ambiguous external
-effect behavior have been reviewed explicitly.
+### Milestone 1 — Durable run state machine
+
+1. Write a short implementation spec defining persisted states for run, row, and
+   node (`pending`, `running`, `output_saved`, `asserted`, `held`, `complete`).
+2. Define atomic file replacement and compatibility behavior for today's
+   `meta.json` and per-row JSON records.
+3. Persist transitions before and after each node rather than only after the row.
+4. Implement `vesna resume-run <run-id>` using recorded outputs and receipts.
+5. Add crash-point tests at node start, output save, assertion save, confirmed
+   receipt save, and attempted receipt save.
+
+**Exit gate:** killing execution at every transition resumes without repeating a
+completed pure/write node or any confirmed/ambiguous external effect.
+
+### Milestone 2 — Container runner
+
+1. Introduce a runner abstraction shared by live tools and flow nodes.
+2. Keep today's process runner as the explicit `process` mode and label it
+   uncontained in help, prompts, inspect output, and traces.
+3. Add a Linux container backend with declared mounts, a writable output
+   directory, network-off default, and CPU/memory/process/time limits.
+4. Decide and document macOS behavior explicitly: supported container runtime or
+   a precise unavailable result, never silent fallback to process mode.
+5. Add adversarial filesystem, symlink, environment, child-process, and network
+   tests.
+
+**Exit gate:** container mode cannot read an unmounted host fixture or contact a
+local test server, and the effective isolation policy is present in the trace.
+
+### Milestone 3 — Flow contracts and composition
+
+1. Add schema versions before changing flow or trace formats further.
+2. Add typed declared flow outputs and expose them through parse, validation,
+   inspect, dry-run, and crystallisation.
+3. Implement a registry-backed `flow` node with preflight recursion detection.
+4. Propagate cancellation, lineage, costs, held details, and receipt identity
+   through parent and child runs.
+
+**Exit gate:** an old flow runs unchanged; a parent consumes a typed child output;
+a recursive graph fails before execution; a held child is traceable from the
+parent row to the exact child node.
+
+### Milestone 4 — File triggers
+
+1. Put trigger scheduling outside the engine and represent a trigger as an
+   ordinary recorded flow invocation.
+2. Implement `vesna watch <flow> --on '<glob>'` with file-settle detection,
+   debounce, and content-based deduplication.
+3. Persist trigger cursors atomically and test restart, rename, delete, and
+   repeated-content semantics with fake clocks and filesystem adapters.
+
+**Exit gate:** restart loses no settled input and runs no content twice under the
+documented policy.
+
+### Milestone 5 — Model lifecycle
+
+1. Add trace retention/deletion and reviewed fixture export with credential
+   detection and redaction.
+2. Implement named regression fixture sets.
+3. Implement `vesna upgrade <flow> --to <provider/model> --check`, replaying only
+   model-dependent nodes where possible.
+4. Upgrade `doctor` from lifetime snapshots to linked rolling-window comparisons
+   for assertion rate, latency, and known cost.
+5. Add flow provenance metadata and explicit acceptance of model changes.
+
+**Exit gate:** the same fixture set reproduces an upgrade report; rejecting it
+changes no file; accepting it produces only the expected model/provenance diff.
+
+### Milestone 6 — Productise spec-to-merge
+
+1. Add verification commands to the persisted task contract and compile approved
+   tasks into a validated DAG.
+2. Expose one documented work command and TUI controls for start, pause, resume,
+   cancel, and retry.
+3. Persist builder attempts, patches, cost, refusals, and verifier evidence as
+   typed events.
+4. Rebase/merge each candidate onto the latest target and rerun its verification
+   before emitting `task.done`.
+5. Reconstruct the entire queue from events after restart.
+
+**Exit gate:** two independent tasks build concurrently, merge in stable order,
+and only successful post-integration machine verification can finish a task.
+
+### Milestone 7 — Extensibility and release readiness
+
+1. Load bounded, deterministically ordered `.vesna/memory/` context and show the
+   exact included files.
+2. Design metadata-only discovery and an allowlist for `.vesna/nodes/` before
+   importing project code.
+3. Version and migrate flow, trace, session, permission, and spec-event formats.
+4. Remove `private: true`, define supported Bun/OS versions, and test the packed
+   npm artifact on a clean installation.
+5. Add an opt-in redacted diagnostics bundle and release/upgrade documentation.
+
+**Exit gate:** a clean machine installs the package and runs the offline demo; a
+local node can be inspected without executing its top-level implementation.
+
+### Milestone 8 — Generalisation research
+
+Do not make automatic generalisation a product default yet. First define an
+anonymised corpus format, collect reviewed examples, version the current literal
+strategy as the baseline, and measure parameter precision/recall, edge accuracy,
+dropped-step accuracy, assertion usefulness, and first-replay success. Only ship
+a new default when it improves held-out results without lowering replay success.
+
+## 11. Review cadence and stop rules
+
+- Ship one milestone at a time; do not parallelise work across a format boundary
+  that the durable-state or schema-version design has not settled.
+- Keep `bun test` network-free and TypeScript clean at every merge.
+- Review the four core local metrics after each release: first-replay success,
+  deterministic node share, held-repair success, and duplicate external effects.
+- Stop or redesign any feature that adds an autonomous loop without a clear path
+  to a reviewable deterministic flow.
+- Defer hosted service, browser UI, distributed execution, marketplace, RBAC, and
+  billing until the local live → crystal → replay → heal loop has real usage data.

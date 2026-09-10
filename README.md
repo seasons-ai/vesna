@@ -122,6 +122,12 @@ Scriptable, because "some rows are held" is not the same as "it broke":
 Requires [Bun](https://bun.sh).
 
 ```bash
+npm install -g vesna     # needs Bun: the CLI runs TypeScript directly
+```
+
+Or from source:
+
+```bash
 git clone https://github.com/seasons-ai/vesna.git
 cd vesna
 bun install
