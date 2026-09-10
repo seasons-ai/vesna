@@ -10,8 +10,15 @@ import type { TraceStore } from "../store/types";
 import { confirmParameters } from "../tui/prompt";
 import { createStdioPrompt, isInteractive } from "../tui/stdio";
 import type { Theme } from "../tui/theme";
+import type { PromptIO } from "../tui/prompt";
 import { permits, type VesnaConfig } from "./config";
-import { CHAT_COMMANDS, parseChatInput } from "./chatcmd";
+import {
+  CHAT_COMMANDS,
+  PLAIN_CHAT_COMMANDS,
+  fullScreenOnly,
+  moreInFullScreen,
+  parseChatInput,
+} from "./chatcmd";
 import { EXIT } from "./exit";
 import { formatParameter } from "./format";
 import { describeDropped } from "./dropped";
@@ -24,6 +31,11 @@ export interface ChatDeps {
   theme: Theme;
   root: string;
   notes?: string;
+  /**
+   * Where the lines come from. Injected so a test can drive this loop without
+   * a terminal; production passes nothing and gets the real stdin.
+   */
+  io?: PromptIO & { close(): void };
 }
 
 function banner(deps: ChatDeps): string {
@@ -40,13 +52,13 @@ function banner(deps: ChatDeps): string {
  * is the thin part: read a line, stream a turn, keep going.
  */
 export async function runChat(deps: ChatDeps): Promise<number> {
-  if (!isInteractive()) {
+  if (deps.io === undefined && !isInteractive()) {
     console.error("vesna chat needs a terminal. Use `vesna do \"<task>\"` in a script.");
     return EXIT.error;
   }
 
   const { theme } = deps;
-  const io = createStdioPrompt();
+  const io = deps.io ?? createStdioPrompt();
   let session = newSession(deps);
   let turnAbort: AbortController | null = null;
 
@@ -79,9 +91,14 @@ export async function runChat(deps: ChatDeps): Promise<number> {
       if (input.kind === "command") {
         if (input.name === "exit") return EXIT.ok;
         if (input.name === "help") {
+          // Only what this surface implements. The shared list is the
+          // full-screen chat's, and listing a command here that does nothing
+          // is how `/provider` came to be advertised by a chat that has none.
           for (const command of CHAT_COMMANDS) {
+            if (!PLAIN_CHAT_COMMANDS.includes(command.name)) continue;
             console.log(`  ${theme.paint("petal", `/${command.name}`.padEnd(14))} ${command.help}`);
           }
+          console.log(theme.paint("muted", `  ${moreInFullScreen()}`));
           continue;
         }
         if (input.name === "cost") {
@@ -103,6 +120,12 @@ export async function runChat(deps: ChatDeps): Promise<number> {
           await crystallize(deps, session, io, input.argument);
           continue;
         }
+
+        // Every other command belongs to the full-screen chat. Falling through
+        // to the turn below sent the model an empty user message — a request
+        // paid for, in answer to a command, carrying nothing.
+        console.log(theme.paint("warn", `  ${fullScreenOnly(input.name)}`));
+        continue;
       }
 
       turnAbort = new AbortController();

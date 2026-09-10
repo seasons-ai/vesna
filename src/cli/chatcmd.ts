@@ -22,6 +22,32 @@ export const CHAT_COMMANDS: ChatCommand[] = [
   { name: "exit", help: "leave" },
 ];
 
+/**
+ * The commands the line-based chat implements.
+ *
+ * `CHAT_COMMANDS` is the full-screen chat's list, and `src/cli/chat.ts` — what
+ * `--plain` and every non-TTY run gets — handles only these. The rest need a
+ * screen: a conversations column, a spec pane, a palette, a provider switch
+ * that rebuilds a running session.
+ */
+export const PLAIN_CHAT_COMMANDS: readonly string[] = [
+  "crystallize",
+  "cost",
+  "clear",
+  "help",
+  "exit",
+];
+
+/** What to say when a command exists, but not on this surface. */
+export function fullScreenOnly(name: string): string {
+  return `/${name} needs the full-screen chat — run \`vesna\` in a terminal, without --plain`;
+}
+
+/** The line under `/help` in the line-based chat, so the rest are not a secret. */
+export function moreInFullScreen(): string {
+  return "the full-screen chat has more: /provider, /model, /mode, /spec, /history, /theme";
+}
+
 export type ChatInput =
   | { kind: "blank" }
   | { kind: "message"; text: string }
