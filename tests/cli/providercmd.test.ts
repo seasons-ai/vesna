@@ -65,14 +65,21 @@ test("a failed switch names the provider and the error, not just a generic refus
 // The header is drawn from these two values every frame. They come in as
 // arguments rather than being read off a config, because after a switch the
 // pair in effect lives on the provider handle and the config is stale.
+// The service, not the dialect: "openai/key" was the same string for Groq,
+// OpenRouter, Ollama and OpenAI itself. The id is also what `/provider` takes,
+// so the header names the argument that would bring you back here.
 test("the header names the model and the service it is being asked through", () => {
   expect(describeHeader("llama3.2", findPreset("ollama")!)).toEqual({
     model: "llama3.2",
-    service: "openai/key",
+    service: "ollama",
+  });
+  expect(describeHeader("llama-3.3-70b-versatile", findPreset("groq")!)).toEqual({
+    model: "llama-3.3-70b-versatile",
+    service: "groq",
   });
   expect(describeHeader("gpt-5.6-sol", findPreset("codex")!)).toEqual({
     model: "gpt-5.6-sol",
-    service: "openai/codex",
+    service: "codex",
   });
   expect(describeHeader("claude-opus-5", findPreset("anthropic")!)).toEqual({
     model: "claude-opus-5",

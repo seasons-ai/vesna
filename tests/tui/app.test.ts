@@ -231,10 +231,13 @@ function rowWith(host: { screen(): string; raw(): string }, needle: string): str
   return host.raw().split("\n")[index]!;
 }
 
-test("the header names the model and how it is authenticated", async () => {
+test("the header names the model and the service answering it", async () => {
   const app = await start(reply("hi"));
   expect(app.screen()).toContain("test-model");
-  expect(app.screen()).toContain("openai/codex");
+  // The service, not the dialect: "openai/codex" named the wire format, which
+  // is the same string for every openai-compatible host in the catalog.
+  expect(app.screen()).toContain("codex");
+  expect(app.screen()).not.toContain("openai/codex");
   await quit(app);
 });
 

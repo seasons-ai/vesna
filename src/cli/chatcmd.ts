@@ -72,13 +72,14 @@ export function describeProviders(
  * or `/model` the pair actually in effect lives on the provider handle — the
  * header is the one line the user reads to know who is answering, so it has to
  * be given the live values rather than reach for a frozen object itself.
+ *
+ * The service is the preset's id, not `VesnaConfig.provider`, which is the
+ * wire dialect: that value is `openai` for Groq, OpenRouter, Ollama, LM Studio
+ * and OpenAI alike, so the header used to name the protocol rather than who is
+ * on the other end of it. The id is also the argument `/provider` takes.
  */
 export function describeHeader(model: string, preset: Preset): { model: string; service: string } {
-  const dialect = preset.dialect === "anthropic" ? "anthropic" : "openai";
-  return {
-    model,
-    service: dialect === "anthropic" ? dialect : `${dialect}/${preset.auth ?? "key"}`,
-  };
+  return { model, service: preset.id };
 }
 
 export type SwitchOutcome =

@@ -1,5 +1,9 @@
 import { test, expect } from "bun:test";
 import { configDir, credentialSource } from "../../src/cli/auth";
+import { authCommand } from "../../src/cli/authcmd";
+import type { VesnaConfig } from "../../src/cli/config";
+import { findPreset } from "../../src/providers/catalog";
+import { resolveTheme } from "../../src/tui/theme";
 
 test("an API key in the environment wins", () => {
   const source = credentialSource({ ANTHROPIC_API_KEY: "sk-x" }, ["default"]);
@@ -46,4 +50,37 @@ test("the config directory follows the platform convention", () => {
   expect(configDir({ APPDATA: "C:\\Users\\u\\AppData\\Roaming" }, "win32", "C:\\Users\\u")).toBe(
     "C:\\Users\\u\\AppData\\Roaming/Anthropic",
   );
+});
+
+/**
+ * `vesna auth` used to print `VesnaConfig.provider`, which is the wire dialect
+ * — one value shared by openai, groq, openrouter, ollama and every other
+ * openai-compatible service. A Groq setup reported "provider: openai", which
+ * is the one line of this screen that says what you are talking to.
+ */
+test("the status names the service, not the dialect it happens to speak", async () => {
+  const config = {
+    configured: true,
+    preset: findPreset("groq")!,
+    pinned: false,
+    provider: "openai",
+    auth: "key",
+    model: "llama-3.3-70b-versatile",
+    baseUrl: "https://api.groq.com/openai/v1",
+    theme: "mono",
+    prices: {},
+    permissions: {},
+  } as VesnaConfig;
+
+  const lines: string[] = [];
+  const real = console.log;
+  console.log = (...args: unknown[]) => void lines.push(args.join(" "));
+  try {
+    await authCommand(undefined, config, resolveTheme("mono", { depth: 0 }), "/tmp");
+  } finally {
+    console.log = real;
+  }
+
+  expect(lines[0]).toContain("groq");
+  expect(lines[0]).not.toContain("openai");
 });

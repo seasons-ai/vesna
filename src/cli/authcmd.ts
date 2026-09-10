@@ -79,7 +79,10 @@ export async function authCommand(
   }
 
   {
-    console.log(`provider:   ${theme.paint("petal", config.provider)}  model ${config.model}`);
+    // The preset's id, not `config.provider`: that field is the wire dialect,
+    // and it reads "openai" for Groq, OpenRouter, Ollama and OpenAI alike.
+    console.log(`provider:   ${theme.paint("petal", config.preset.id)}  model ${config.model}`);
+    console.log(theme.paint("muted", `            ${config.preset.label}`));
 
     const credential = await inspectCredential(config, process.env, homedir());
 
