@@ -211,7 +211,10 @@ Two entries come with caveats, and they are caveats rather than plans:
 - **`subscription`** needs an OAuth client identity that Vesna does not ship —
   its own or anyone else's — so it can only be set up by hand, in a project
   config (below). It is deliberately not offered by the first-run menu, which
-  writes machine settings and never touches a project directory.
+  writes machine settings and never touches a project directory, and
+  `/provider subscription` is refused for the same reason: it writes that same
+  machine default, and a directory with no `oauth` block of its own could not
+  build what it names.
 
 ### Changing your mind
 

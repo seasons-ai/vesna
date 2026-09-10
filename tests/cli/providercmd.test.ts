@@ -121,6 +121,30 @@ test("a service with no address is refused even where only the machine default w
   expect(switchOutcome("custom", { pinned: true, dropped: 0 }).kind).toBe("unaddressed");
 });
 
+/**
+ * The parity `needsAddress` had and `needsOauth` did not.
+ *
+ * `subscription` needs an `oauth` block that only a hand-written
+ * `.vesna/config.yaml` can carry, and this command writes a machine default
+ * every directory reads. Answering it from the block this directory happens
+ * to have is how `~/.vesna/settings.yaml` came to name a service nowhere else
+ * could build.
+ */
+test("switching to a service only a project file can complete is refused, and says which file", () => {
+  const outcome = switchOutcome("subscription", { pinned: false, dropped: 0 });
+  expect(outcome.kind).toBe("handwritten");
+  expect(outcome.message).toBe(
+    'subscription is set up by hand — put an "oauth:" block (issuer, clientId, baseUrl) ' +
+      "for it in .vesna/config.yaml, then start Vesna again",
+  );
+  // Not ~/.vesna/settings.yaml: that file has no oauth key to put one in.
+  expect(outcome.message).not.toContain("settings.yaml");
+});
+
+test("a service only a project file can complete is refused where only the machine default would move", () => {
+  expect(switchOutcome("subscription", { pinned: true, dropped: 0 }).kind).toBe("handwritten");
+});
+
 // "no key needed" was true and useless: what subscription needs is an oauth
 // block Vesna cannot supply, in a file this listing can at least name.
 test("the listing says what the subscription preset actually needs", () => {

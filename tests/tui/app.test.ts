@@ -11,7 +11,8 @@ import { createRegistry } from "../../src/registry/registry";
 import type { NodeDef } from "../../src/registry/types";
 import { createTraceStore } from "../../src/store/trace";
 import type { CompletionRequest, CompletionResult, Provider } from "../../src/providers/types";
-import type { VesnaConfig } from "../../src/cli/config";
+import { loadConfig, type VesnaConfig } from "../../src/cli/config";
+import { saveAuth, authPath } from "../../src/auth/store";
 import type { ProviderHandle } from "../../src/cli/context";
 import { CODEX_BASE_URL, findPreset, type Preset } from "../../src/providers/catalog";
 import { readSettings, settingsPath, writeSettings } from "../../src/cli/settings";
@@ -939,6 +940,59 @@ test("/provider custom refuses instead of persisting a service with nowhere to s
   expect(calls).toHaveLength(0);
   expect(handle.preset.id).toBe("codex");
   expect(readSettings(settingsPath({}, settingsHome))).toEqual({});
+  await quit(app);
+});
+
+/**
+ * The repro, one directory over.
+ *
+ * `subscription` needs an `oauth` block, and only a hand-written
+ * `.vesna/config.yaml` carries one. In a repo that has it — and with a token
+ * on disk, so the credential check says yes — `/provider subscription`
+ * reported `provider: subscription  model gpt-5.6-sol` and wrote exactly that
+ * to `~/.vesna/settings.yaml`. Every other directory then read a machine
+ * default it had no oauth block to build, and threw at startup.
+ *
+ * So the assertion that matters is not the notice on screen: it is what a
+ * second directory resolves out of the machine file afterwards.
+ */
+test("/provider subscription is refused, rather than making every other folder unstartable", async () => {
+  const settingsHome = await mkdtemp(join(tmpdir(), "vesna-settings-"));
+  // Signed in: without this the credential check refuses first and the test
+  // would pass for a reason that has nothing to do with the fix.
+  await saveAuth(authPath({}, settingsHome), {
+    provider: "openai",
+    accessToken: "token-on-disk",
+  });
+  const { handle, calls } = providerHandle();
+  const base = await deps(reply("x"));
+  const app = await start(reply("x"), { rows: 20, cols: 100 }, {
+    ...base,
+    provider: handle,
+    config: {
+      ...base.config,
+      pinned: false,
+      // The project-scoped fact the old verdict was drawn from.
+      oauth: { issuer: "https://issuer.test", clientId: "cid", baseUrl: "https://api.test/v1" },
+    },
+    env: {},
+    home: settingsHome,
+  });
+
+  app.input.type("/provider subscription\r");
+  await until(() => /set up by hand/.test(app.screen()), "the refusal");
+
+  expect(calls).toHaveLength(0);
+  expect(handle.preset.id).toBe("codex");
+  expect(readSettings(settingsPath({}, settingsHome))).toEqual({});
+
+  // A different directory, with no oauth block of its own: it inherits
+  // nothing from the machine file, so it still resolves to a service it can
+  // actually build.
+  const elsewhere = await mkdtemp(join(tmpdir(), "vesna-elsewhere-"));
+  const config = await loadConfig(elsewhere, {}, settingsHome);
+  expect(config.preset.id).toBe("anthropic");
+  expect(config.configured).toBe(false);
   await quit(app);
 });
 

@@ -129,6 +129,8 @@ export type SwitchOutcome =
   | { kind: "unknown"; message: string }
   /** A real preset that names no address, so there is nowhere to switch to yet. */
   | { kind: "unaddressed"; message: string }
+  /** A real preset that only a hand-written project file can complete. */
+  | { kind: "handwritten"; message: string }
   | { kind: "pinned"; message: string }
   | { kind: "switched"; message: string };
 
@@ -162,6 +164,22 @@ export function switchOutcome(
       message:
         `${preset.id} has no address of its own — put a "baseUrl:" for it in ` +
         "~/.vesna/settings.yaml or .vesna/config.yaml, then start Vesna again",
+    };
+  }
+  if (needsOauth(preset)) {
+    // The same reasoning as `needsAddress` above, on the other half a chat
+    // cannot supply. `subscription` needs an `oauth` block, and the only file
+    // that carries one is a hand-written `.vesna/config.yaml` in some one
+    // directory — so a switch that consults this project's block and then
+    // writes `provider: subscription` into `~/.vesna/settings.yaml` states a
+    // fact about this folder in the file every other folder reads. Ahead of
+    // the pinned branch for the same reason: that branch persists the machine
+    // default too.
+    return {
+      kind: "handwritten",
+      message:
+        `${preset.id} is set up by hand — put an "oauth:" block (issuer, clientId, ` +
+        "baseUrl) for it in .vesna/config.yaml, then start Vesna again",
     };
   }
   if (state.pinned) {

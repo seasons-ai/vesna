@@ -861,7 +861,10 @@ async function command(
       active: handle.preset.id,
     });
 
-    if (outcome.kind === "unknown" || outcome.kind === "unaddressed") {
+    // Named by what may proceed, not by what may not: every branch below this
+    // writes `~/.vesna/settings.yaml`, so a refusal added to `switchOutcome`
+    // later stops here on its own instead of falling through to the write.
+    if (outcome.kind !== "switched" && outcome.kind !== "pinned") {
       transcript.notice(outcome.message, "warn");
       return session;
     }
