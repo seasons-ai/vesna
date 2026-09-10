@@ -105,3 +105,8 @@ export function switchOutcome(
     message: `${base}  ·  dropped ${state.dropped} unanswered tool ${plural}`,
   };
 }
+
+/** The wording for a switch whose provider rejected the connection. */
+export function switchFailed(id: string, error: Error): string {
+  return `could not switch to ${id}: ${error.message}`;
+}

@@ -855,6 +855,9 @@ test("an unreachable provider leaves the settings file and the running session u
     home: settingsHome,
   });
 
+  app.input.type("hi\r");
+  await until(() => app.screen().includes("x"), "the first answer");
+
   app.input.type("/provider ollama\r");
   await until(() => /connection refused/.test(app.screen()), "the failure notice");
 
@@ -862,6 +865,8 @@ test("an unreachable provider leaves the settings file and the running session u
   expect(handle.preset.id).toBe("codex");
   expect(app.screen()).not.toContain("provider: ollama");
   expect(readSettings(settingsPath({}, settingsHome))).toEqual({});
+  // A failed switch is not a fresh start: what was said before it stays put.
+  expect(app.screen()).toContain("hi");
   await quit(app);
 });
 

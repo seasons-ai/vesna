@@ -1,6 +1,6 @@
 import { test, expect } from "bun:test";
 import { CHAT_COMMANDS, parseChatInput } from "../../src/cli/chatcmd";
-import { describeProviders, switchOutcome } from "../../src/cli/chatcmd";
+import { describeProviders, switchFailed, switchOutcome } from "../../src/cli/chatcmd";
 
 test("/provider is a command the parser knows", () => {
   expect(CHAT_COMMANDS.map((c) => c.name)).toContain("provider");
@@ -54,4 +54,9 @@ test("a pinned project names the resolved provider, never an unresolved typo", (
   expect(outcome.kind).toBe("pinned");
   expect(outcome.message).toContain("anthropic");
   expect(outcome.message).not.toContain("gruq");
+});
+
+test("a failed switch names the provider and the error, not just a generic refusal", () => {
+  const message = switchFailed("ollama", new Error("connect ECONNREFUSED 127.0.0.1:11434"));
+  expect(message).toBe("could not switch to ollama: connect ECONNREFUSED 127.0.0.1:11434");
 });

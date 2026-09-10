@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { stringify as toYaml } from "yaml";
 import { applyParameters } from "../crystallize/apply";
 import { proposeFlow } from "../crystallize/propose";
-import { CHAT_COMMANDS, describeProviders, parseChatInput, switchOutcome } from "../cli/chatcmd";
+import { CHAT_COMMANDS, describeProviders, parseChatInput, switchFailed, switchOutcome } from "../cli/chatcmd";
 import { describeDropped } from "../cli/dropped";
 import { EXIT } from "../cli/exit";
 import { formatParameter } from "../cli/format";
@@ -869,7 +869,7 @@ async function command(
     try {
       await handle.switch(preset, preset.model, preset.baseUrl);
     } catch (error) {
-      transcript.notice(`could not switch to ${preset.id}: ${(error as Error).message}`, "error");
+      transcript.notice(switchFailed(preset.id, error as Error), "error");
       return session;
     }
     writeSettings(path, settings);
