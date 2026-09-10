@@ -19,6 +19,11 @@ function withHome(fn: (home: string) => Promise<void>) {
   return fn(home).finally(() => rmSync(home, { recursive: true, force: true }));
 }
 
+// `config: { configured: true }` below only stands in for the real config
+// `main.ts` passes in production. None of these tests inspect the
+// "there is no .vesna/config.yaml here" line that a false value would add to
+// `remedy()`'s output, so the exact value here does not affect any assertion.
+
 test("onboarding is needed when there is nothing to work with", () => {
   expect(needsOnboarding({ configured: false } as any)).toBe(true);
   expect(needsOnboarding({ configured: true } as any)).toBe(false);
@@ -32,6 +37,7 @@ test("a choice is written to the machine settings and verified with a real call"
       io: screen,
       env: {},
       home,
+      config: { configured: true } as any,
       async verify(preset, model) {
         verified = `${preset.id}/${model}`;
         return model;
@@ -56,6 +62,7 @@ test("a failed verification does not report success and does not write settings"
       io: screen,
       env: {},
       home,
+      config: { configured: true } as any,
       async verify() {
         throw new Error("connection refused");
       },
@@ -74,6 +81,7 @@ test("a key already in the environment is offered rather than asked for", async 
       io: screen,
       env: { GROQ_API_KEY: "sk-test" },
       home,
+      config: { configured: true } as any,
       async verify(_preset, model) {
         return model;
       },
@@ -90,6 +98,7 @@ test("a needed key that is absent stops before the call, and writes nothing", as
       io: screen,
       env: {},
       home,
+      config: { configured: true } as any,
       async verify() {
         called = true;
         return "unreachable";
@@ -114,6 +123,7 @@ test("an anthropic credential that is not ANTHROPIC_API_KEY still lets onboardin
       // against ANTHROPIC_API_KEY alone would wrongly refuse this user.
       env: { ANTHROPIC_AUTH_TOKEN: "borrowed-token" },
       home,
+      config: { configured: true } as any,
       async verify(_preset, model) {
         called = true;
         return model;
@@ -133,6 +143,7 @@ test("an anthropic preset with no credential at all still refuses", async () => 
       io: screen,
       env: {},
       home,
+      config: { configured: true } as any,
       async verify() {
         called = true;
         return "unreachable";
@@ -152,6 +163,7 @@ test("an unknown answer asks again instead of giving up", async () => {
       io: screen,
       env: {},
       home,
+      config: { configured: true } as any,
       async verify(_preset, model) {
         return model;
       },

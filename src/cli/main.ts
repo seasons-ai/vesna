@@ -15,12 +15,12 @@ import { createStdioPrompt, isInteractive } from "../tui/stdio";
 import { isExpired, loadAuth } from "../auth/store";
 import { codexAuthPath, readCodexAuth } from "../auth/codex";
 import { inspectCredential, problem, remedy, usable } from "./preflight";
-import { chooseStarter, writeStarterConfig } from "./init";
+import { writeStarterConfig } from "./init";
 import { loadConfig, permits } from "./config";
 import { colorDepth, resolveTheme } from "../tui/theme";
 import { runChat } from "./chat";
 import { runTui } from "../tui/stdin";
-import { buildContext, CODEX_BASE_URL } from "./context";
+import { buildContext, buildProviderFor, CODEX_BASE_URL } from "./context";
 import { EXIT } from "./exit";
 import { isHelp, isVersion, VERSION } from "./entry";
 import { parseFlags } from "./flags";
@@ -29,12 +29,15 @@ import { describeDropped } from "./dropped";
 import { diagnose } from "./doctor";
 import { planRun, summarizeFlow } from "./inspect";
 import { authCommand } from "./authcmd";
+import { needsOnboarding, runOnboarding } from "./onboard";
+import type { Preset } from "../providers/catalog";
 
 const USAGE = [
   "usage:",
-  "  vesna init                              write a starter .vesna/config.yaml here",
+  "  vesna                                   open the chat; sets you up on the first run",
   "  vesna chat [--plain]                    full-screen chat; --plain for a dumb terminal",
   "  vesna do \"<task>\"                       solve a task live and record a trace",
+  "  vesna init                              pin the current settings to this repository",
   "  vesna run <flow> [--map rows.csv] [--<input> <value>]",
   "  vesna heal <run-id> --flow <flow>",
   "  vesna crystallize <trace-id|file> --name <flow>",
@@ -47,8 +50,86 @@ const USAGE = [
   "  --dry-run on `run` validates and prints the plan without executing",
 ].join("\n");
 
+/**
+ * Every first word `route` can hand back.
+ *
+ * The brief this task follows declared this as `"chat" | "onboard" | "usage"
+ * | "error" | string`, which TypeScript collapses to plain `string` — the
+ * `| string` in a union with other string literals swallows them all, so it
+ * silently drops `"version"` even though the tests below assert it. A named
+ * union keeps every value real, `"version"` included.
+ */
+export type Command =
+  | "init"
+  | "chat"
+  | "do"
+  | "run"
+  | "heal"
+  | "crystallize"
+  | "flows"
+  | "traces"
+  | "auth"
+  | "doctor";
+
+export type Route = Command | "onboard" | "usage" | "version" | "error";
+
+const COMMANDS = new Set<string>([
+  "init",
+  "chat",
+  "do",
+  "run",
+  "heal",
+  "crystallize",
+  "flows",
+  "traces",
+  "auth",
+  "doctor",
+]);
+
+/**
+ * What the arguments ask for.
+ *
+ * Bare `vesna` is the whole point of this: the program should do its job when
+ * you run it, and set itself up when it cannot. An unrecognised first word
+ * stays an error — reading it as a task would let a mistyped command start
+ * work nobody asked for.
+ */
+export function route(argv: string[], state: { configured: boolean }): Route {
+  const [command] = argv;
+  // The bare-command case must be settled before `isHelp` gets a look at it:
+  // `isHelp(undefined)` is true (that is how a bare `vesna` used to print
+  // usage), and that old meaning is exactly what this task replaces.
+  if (command === undefined) return state.configured ? "chat" : "onboard";
+  if (isHelp(command)) return "usage";
+  if (isVersion(command)) return "version";
+  if (COMMANDS.has(command)) return command as Command;
+  return "error";
+}
+
 async function loadFlowFile(root: string, name: string) {
   return parseFlow(await readFile(join(root, ".vesna", "flows", `${name}.yaml`), "utf8"));
+}
+
+/**
+ * Proves a preset and model actually work by making them answer.
+ *
+ * This is the entire point of onboarding: it reports success because a model
+ * replied, not because a file was written. Nothing here is a stub — a real
+ * provider is built and a real (tiny) completion is sent.
+ */
+async function verifyPreset(
+  oauth: { issuer: string; clientId: string; baseUrl: string; scope?: string } | undefined,
+  preset: Preset,
+  model: string,
+  baseUrl?: string,
+): Promise<string> {
+  const provider = await buildProviderFor(preset, baseUrl, process.env, oauth);
+  const result = await provider.complete({
+    model,
+    messages: [{ role: "user", content: [{ type: "text", text: "hi" }] }],
+    maxTokens: 8,
+  });
+  return result.model;
 }
 
 export async function main(argv: string[]): Promise<number> {
@@ -56,37 +137,87 @@ export async function main(argv: string[]): Promise<number> {
   const root = process.cwd();
   const flags = parseFlags(rest);
 
-  // Asking for help or the version is a successful request, not a misuse.
-  if (isHelp(command)) {
-    console.log(USAGE);
-    return EXIT.ok;
-  }
-  if (isVersion(command)) {
-    console.log(VERSION);
-    return EXIT.ok;
-  }
   // Signing in must not require a working provider, so auth commands are served
   // from config alone, before buildContext tries to construct one.
-  const earlyConfig = await loadConfig(root);
+  let earlyConfig = await loadConfig(root);
   const earlyTheme = resolveTheme(earlyConfig.theme, {
     depth: colorDepth(process.env, Boolean(process.stdout.isTTY)),
   });
-  if (command === "auth") return await authCommand(target, earlyConfig, earlyTheme, root);
 
-  if (command === "init") {
-    const starter = await chooseStarter(process.env, homedir());
-    const path = await writeStarterConfig(root, starter);
+  const action = route(argv, { configured: !needsOnboarding(earlyConfig) });
+
+  // Asking for help or the version is a successful request, not a misuse.
+  if (action === "usage") {
+    console.log(USAGE);
+    return EXIT.ok;
+  }
+  if (action === "version") {
+    console.log(VERSION);
+    return EXIT.ok;
+  }
+  if (action === "error") {
+    console.error(`vesna: unknown command "${command}"`);
+    console.error("");
+    console.error(USAGE);
+    return EXIT.error;
+  }
+
+  if (action === "auth") return await authCommand(target, earlyConfig, earlyTheme, root);
+
+  if (action === "init") {
+    // `init` used to write a guessed-from-the-machine starter. Now that
+    // machine-wide settings exist, its job is pinning whatever is already in
+    // effect (project file, machine settings, or preset default) to this
+    // repository — not guessing a fresh one.
+    //
+    // The preset's own id is what gets written, not the collapsed
+    // `earlyConfig.provider` (just "anthropic" or "openai"): every
+    // openai-compatible service — groq, ollama, openrouter, a custom host —
+    // shares that one value, so pinning it would silently swap the service
+    // in effect for the plain openai default the next time this file loads.
+    const path = await writeStarterConfig(root, {
+      provider: earlyConfig.preset.id,
+      auth: earlyConfig.auth,
+      model: earlyConfig.model,
+      baseUrl: earlyConfig.baseUrl,
+      env: earlyConfig.preset.env,
+    });
     console.log(earlyTheme.paint("ok", `Wrote ${path}`));
     console.log(
-      earlyTheme.paint("muted", `            ${starter.provider} / ${starter.auth}, chosen from what is on this machine`),
+      earlyTheme.paint(
+        "muted",
+        `            ${earlyConfig.preset.label} / ${earlyConfig.model}, pinned from the settings currently in effect`,
+      ),
     );
-    console.log(earlyTheme.paint("muted", "next: vesna auth"));
     return EXIT.ok;
+  }
+
+  // Bare `vesna` with nothing to work with sets itself up first, then
+  // continues into the chat in the same process — the whole point of a bare
+  // command is that it does the job, not that it tells you to run another one.
+  let enteringChat = action === "chat";
+  if (action === "onboard") {
+    const io = createStdioPrompt();
+    let finished: boolean;
+    try {
+      finished = await runOnboarding({
+        io,
+        env: process.env,
+        home: homedir(),
+        config: earlyConfig,
+        verify: (preset, model, baseUrl) => verifyPreset(earlyConfig.oauth, preset, model, baseUrl),
+      });
+    } finally {
+      io.close();
+    }
+    if (!finished) return EXIT.error;
+    earlyConfig = await loadConfig(root);
+    enteringChat = true;
   }
 
   // Nothing below can reach a model without a credential, and learning that
   // from an SDK error names a provider the user never chose.
-  if (command === "chat" || command === "do") {
+  if (enteringChat || command === "do") {
     const credential = await inspectCredential(earlyConfig, process.env, homedir());
     if (!usable(credential)) {
       console.error(`vesna: ${problem(credential)}`);
@@ -98,7 +229,7 @@ export async function main(argv: string[]): Promise<number> {
   const { registry, store, config, provider, theme, notes, policy, sink } = await buildContext(root);
   const permit = (node: { use: string }) => permits(config, node.use);
 
-  if (command === "chat") {
+  if (enteringChat) {
     const deps = { registry, provider, store, config, theme, root, notes, policy, sink };
     // The line-based chat stays available for dumb terminals and for piping.
     if (flags.plain !== undefined || !process.stdout.isTTY) return await runChat(deps);

@@ -1,19 +1,35 @@
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { codexAuthPath, readCodexAuth } from "../auth/codex";
-import { CODEX_DEFAULT_MODEL, type AuthMode, type ProviderId } from "./config";
+import { CODEX_DEFAULT_MODEL, type AuthMode } from "./config";
 
 /**
- * Writing the config a first-time user would have written anyway.
+ * Writing a project config file.
  *
- * The starter is chosen from what is actually on the machine rather than from
- * a fixed default, so `vesna init` followed by `vesna chat` works without a
- * detour through the documentation.
+ * `chooseStarter` guesses a first setup from what is actually on the machine.
+ * `vesna init` no longer calls it, though: once machine-wide settings exist,
+ * `init`'s job is pinning whatever is already in effect — a project file, the
+ * machine settings, or a preset default (see `loadConfig` in ./config.ts) —
+ * to this repository, not guessing a fresh one. `writeStarterConfig` renders
+ * either kind of starter the same way, and keeps refusing to overwrite a
+ * config someone hand-wrote.
  */
 
 export interface Starter {
-  provider: ProviderId;
+  /**
+   * `chooseStarter` only ever names a dialect ("anthropic" or "openai"), but
+   * pinning the settings already in effect needs the actual catalog preset id
+   * (e.g. "ollama", "groq", "codex") — collapsing that back down to its
+   * dialect would pin the wrong service (see `presetFor` in ./providers/catalog).
+   */
+  provider: string;
   auth: AuthMode;
+  /** Recorded explicitly so a pin captures more than just the preset's own default. */
+  model?: string;
+  /** Only meaningful for a preset whose address is not implied by `provider`. */
+  baseUrl?: string;
+  /** Name of the key environment variable, when the preset needs one. */
+  env?: string;
 }
 
 type Env = Record<string, string | undefined>;
@@ -66,15 +82,22 @@ function render(starter: Starter): string {
     `auth: ${starter.auth}`,
   ];
 
-  if (starter.provider === "openai" && starter.auth === "codex") {
+  if (starter.provider === "codex" || (starter.provider === "openai" && starter.auth === "codex")) {
     lines.push(
-      `model: ${CODEX_DEFAULT_MODEL}`,
+      `model: ${starter.model ?? CODEX_DEFAULT_MODEL}`,
       "# Credentials are borrowed read-only from the Codex CLI. Renew with `codex login`.",
     );
   } else if (starter.provider === "anthropic") {
+    if (starter.model) lines.push(`model: ${starter.model}`);
     lines.push("# Reads whatever the Anthropic SDK reads: ANTHROPIC_API_KEY, or an OAuth profile.");
   } else {
-    lines.push("# Reads OPENAI_API_KEY. Set baseUrl to point at a local or compatible endpoint.");
+    if (starter.model) lines.push(`model: ${starter.model}`);
+    if (starter.baseUrl) lines.push(`baseUrl: ${starter.baseUrl}`);
+    lines.push(
+      starter.env
+        ? `# Reads ${starter.env}. Set baseUrl to point at a local or compatible endpoint.`
+        : "# No key needed for this endpoint. Set baseUrl to point somewhere else.",
+    );
   }
 
   lines.push(

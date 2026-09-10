@@ -27,6 +27,13 @@ export interface OnboardOptions {
   io: PromptIO;
   env: Record<string, string | undefined>;
   home: string;
+  /**
+   * The config already loaded for this run. Its `configured` field is the one
+   * `remedy()` reads below — onboarding always runs in the one situation where
+   * that field is false, so a hand-built stand-in that hardcodes it true would
+   * silently drop the "there is no .vesna/config.yaml here" line every time.
+   */
+  config: VesnaConfig;
   /** Injected so tests can assert it was called without reaching the network. Returns the model that answered. */
   verify(preset: Preset, model: string, baseUrl?: string): Promise<string>;
 }
@@ -36,7 +43,7 @@ export interface OnboardOptions {
  * before writing anything. Returns whether onboarding finished.
  */
 export async function runOnboarding(options: OnboardOptions): Promise<boolean> {
-  const { io, env, home, verify } = options;
+  const { io, env, home, config, verify } = options;
 
   io.write("Which service should Vesna talk to?");
   for (const preset of PRESETS) {
@@ -77,7 +84,7 @@ export async function runOnboarding(options: OnboardOptions): Promise<boolean> {
   // too), so it is not fixed here.
   if (preset.dialect === "anthropic") {
     const preflightConfig: VesnaConfig = {
-      configured: true,
+      configured: config.configured,
       preset,
       pinned: false,
       provider: "anthropic",
