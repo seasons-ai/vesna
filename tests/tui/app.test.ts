@@ -916,6 +916,32 @@ test("/provider refuses a service whose credential is missing, rather than disab
   await quit(app);
 });
 
+/**
+ * `/provider custom` built a provider without touching the network, reported
+ * success, and persisted `{provider: custom, model: local-model}` with no
+ * address — so every later run went to api.openai.com unauthenticated.
+ */
+test("/provider custom refuses instead of persisting a service with nowhere to send", async () => {
+  const settingsHome = await mkdtemp(join(tmpdir(), "vesna-settings-"));
+  const { handle, calls } = providerHandle();
+  const base = await deps(reply("x"));
+  const app = await start(reply("x"), { rows: 20, cols: 96 }, {
+    ...base,
+    provider: handle,
+    config: { ...base.config, pinned: false },
+    env: {},
+    home: settingsHome,
+  });
+
+  app.input.type("/provider custom\r");
+  await until(() => /no address of its own/.test(app.screen()), "the refusal");
+
+  expect(calls).toHaveLength(0);
+  expect(handle.preset.id).toBe("codex");
+  expect(readSettings(settingsPath({}, settingsHome))).toEqual({});
+  await quit(app);
+});
+
 test("/provider switches when the credential the preset names is there", async () => {
   const settingsHome = await mkdtemp(join(tmpdir(), "vesna-settings-"));
   const { handle, calls } = providerHandle();

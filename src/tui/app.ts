@@ -861,7 +861,7 @@ async function command(
       active: handle.preset.id,
     });
 
-    if (outcome.kind === "unknown") {
+    if (outcome.kind === "unknown" || outcome.kind === "unaddressed") {
       transcript.notice(outcome.message, "warn");
       return session;
     }

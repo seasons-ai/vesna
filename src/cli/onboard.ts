@@ -1,4 +1,4 @@
-import { PRESETS, findPreset, type Preset } from "../providers/catalog";
+import { PRESETS, findPreset, needsAddress, type Preset } from "../providers/catalog";
 import type { PromptIO } from "../tui/prompt";
 import { settingsPath, writeSettings, type GlobalSettings } from "./settings";
 import type { VesnaConfig } from "./config";
@@ -99,12 +99,24 @@ export async function runOnboarding(options: OnboardOptions): Promise<boolean> {
     return false;
   }
 
+  // A preset that ships no address of its own — `custom`, "anything else that
+  // speaks the OpenAI API" — is unusable until someone gives it one, and the
+  // openai dialect's own default is api.openai.com. Choosing `custom` and
+  // being asked nothing is how a local-server setup became a silent,
+  // unauthenticated conversation with OpenAI.
+  let baseUrl: string | undefined;
+  while (needsAddress(preset) && baseUrl === undefined) {
+    const answer = (await io.question("base URL: ")).trim();
+    if (answer !== "") baseUrl = answer;
+    else io.write(`${preset.label} needs an address, e.g. http://127.0.0.1:8080/v1`);
+  }
+
   const modelAnswer = (await io.question(`model [${preset.model}]: `)).trim();
   const model = modelAnswer === "" ? preset.model : modelAnswer;
 
   let answered: string;
   try {
-    answered = await verify(preset, model);
+    answered = await verify(preset, model, baseUrl);
   } catch (error) {
     io.write(`could not reach ${preset.label}: ${error instanceof Error ? error.message : String(error)}`);
     return false;
@@ -113,6 +125,7 @@ export async function runOnboarding(options: OnboardOptions): Promise<boolean> {
   const settings: GlobalSettings = {
     provider: preset.id,
     model: answered,
+    ...(baseUrl !== undefined ? { baseUrl } : {}),
     ...(preset.env !== undefined ? { env: preset.env } : {}),
   };
   writeSettings(settingsPath(env, home), settings);

@@ -1,5 +1,5 @@
 import { test, expect } from "bun:test";
-import { PRESETS, findPreset, presetFor } from "../../src/providers/catalog";
+import { PRESETS, findPreset, needsAddress, presetFor } from "../../src/providers/catalog";
 
 test("every preset names a dialect Vesna can actually build", () => {
   for (const preset of PRESETS) {
@@ -9,12 +9,17 @@ test("every preset names a dialect Vesna can actually build", () => {
   }
 });
 
-test("every openai-dialect preset except the built-in one carries a base URL", () => {
+// The invariant used to be stated with `custom` carved out of it, which said
+// the code handled an address-less preset when nothing did: it fell through to
+// the openai dialect's own default and talked to api.openai.com. A preset
+// without an address is now a preset the code knows it cannot use as it is.
+test("an openai-dialect preset either carries a base URL or is known to need one", () => {
   for (const preset of PRESETS) {
     if (preset.dialect !== "openai") continue;
-    if (preset.id === "custom") continue;
-    expect(preset.baseUrl).toBeDefined();
+    expect(needsAddress(preset)).toBe(preset.baseUrl === undefined);
   }
+  expect(needsAddress(findPreset("custom")!)).toBe(true);
+  expect(needsAddress(findPreset("ollama")!)).toBe(false);
 });
 
 test("preset ids are unique", () => {

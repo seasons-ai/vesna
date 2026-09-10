@@ -108,6 +108,19 @@ export function findPreset(id: string): Preset | undefined {
 }
 
 /**
+ * Whether this preset is unusable until someone supplies an address.
+ *
+ * `custom` is the whole point of the entry — "anything else that speaks the
+ * OpenAI API" cannot ship a URL — but the openai dialect defaults to
+ * api.openai.com when it is given none, so an unanswered `custom` used to be a
+ * silent, unauthenticated conversation with OpenAI. Every route that builds a
+ * provider asks this instead of finding out at the far end of a request.
+ */
+export function needsAddress(preset: Preset): boolean {
+  return preset.dialect === "openai" && preset.baseUrl === undefined;
+}
+
+/**
  * What an older config means.
  *
  * Before the catalog, `provider` was a dialect and `auth` said how to get a

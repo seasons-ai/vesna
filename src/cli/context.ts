@@ -17,7 +17,7 @@ import { specsRoot } from "../spec/store";
 import { createPlanNodes } from "../nodes/plan";
 import { colorDepth, resolveTheme } from "../tui/theme";
 import { loadConfig } from "./config";
-import { CODEX_BASE_URL, type Preset } from "../providers/catalog";
+import { CODEX_BASE_URL, needsAddress, type Preset } from "../providers/catalog";
 import type { Provider } from "../providers/types";
 
 export { CODEX_BASE_URL } from "../providers/catalog";
@@ -85,6 +85,17 @@ export async function buildProviderFor(
         clientId: oauth.clientId,
       }),
     });
+  }
+
+  if (baseUrl === undefined && needsAddress(preset)) {
+    // The openai dialect falls back to api.openai.com when it is given no
+    // address, which for `custom` meant a service the user never named,
+    // spoken to without a credential. Every route into this function — the
+    // startup build, onboarding's verification call, a `/provider` switch —
+    // stops here instead.
+    throw new Error(
+      `${preset.label} needs a baseUrl: set one in ~/.vesna/settings.yaml or .vesna/config.yaml`,
+    );
   }
 
   // Only the variable this preset names may supply the key. A preset with no

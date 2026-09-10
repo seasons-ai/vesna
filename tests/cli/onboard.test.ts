@@ -172,3 +172,52 @@ test("an unknown answer asks again instead of giving up", async () => {
     expect(readSettings(settingsPath({}, home)).provider).toBe("ollama");
   });
 });
+
+/**
+ * The design says `custom` asks for a base URL and a credential. It asked for
+ * neither: the preset carries no address, so onboarding wrote
+ * `{provider: custom, model: local-model}` and every later run went to
+ * api.openai.com. The URL is the half that can be honoured today — see the
+ * README for why the credential variable is not asked for yet.
+ */
+test("the custom service is asked for the address it does not carry", async () => {
+  await withHome(async (home) => {
+    let seen: string | null = null;
+    const screen = io(["custom", "http://127.0.0.1:8080/v1", ""]);
+    const done = await runOnboarding({
+      io: screen,
+      env: {},
+      home,
+      config: { configured: true } as any,
+      async verify(_preset, model, baseUrl) {
+        seen = baseUrl ?? "none";
+        return model;
+      },
+    });
+
+    expect(done).toBe(true);
+    expect(seen as string | null).toBe("http://127.0.0.1:8080/v1");
+    // Read back through the real loader: the next run has to find the address.
+    expect(readSettings(settingsPath({}, home))).toEqual({
+      provider: "custom",
+      model: "local-model",
+      baseUrl: "http://127.0.0.1:8080/v1",
+    });
+  });
+});
+
+test("an empty address is asked for again rather than accepted", async () => {
+  await withHome(async (home) => {
+    const screen = io(["custom", "", "http://127.0.0.1:9000/v1", ""]);
+    await runOnboarding({
+      io: screen,
+      env: {},
+      home,
+      config: { configured: true } as any,
+      async verify(_preset, model) {
+        return model;
+      },
+    });
+    expect(readSettings(settingsPath({}, home)).baseUrl).toBe("http://127.0.0.1:9000/v1");
+  });
+});

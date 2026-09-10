@@ -104,3 +104,19 @@ test("a switch blocked by a missing credential says which one, and how to supply
     "  export GROQ_API_KEY=...   # or point baseUrl at a local host",
   ]);
 });
+
+// `custom` names no address, so switching to it from a chat used to persist
+// `{provider: custom, model: local-model}` with nowhere to send it — and every
+// later run went to api.openai.com, unauthenticated.
+test("switching to a service with no address is refused, and says where to put one", () => {
+  const outcome = switchOutcome("custom", { pinned: false, dropped: 0 });
+  expect(outcome.kind).toBe("unaddressed");
+  expect(outcome.message).toBe(
+    'custom has no address of its own — put a "baseUrl:" for it in ~/.vesna/settings.yaml ' +
+      "or .vesna/config.yaml, then start Vesna again",
+  );
+});
+
+test("a service with no address is refused even where only the machine default would move", () => {
+  expect(switchOutcome("custom", { pinned: true, dropped: 0 }).kind).toBe("unaddressed");
+});

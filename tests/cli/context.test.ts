@@ -68,3 +68,27 @@ test("a stray OPENAI_API_KEY on the machine is never sent to a groq preset", asy
     host.stop();
   }
 });
+
+/**
+ * `custom` carries no address, and `createOpenAICompatibleProvider` defaults to
+ * https://api.openai.com/v1 — so a `custom` setup with no baseUrl anywhere used
+ * to build cleanly and then talk to OpenAI, unauthenticated, without ever
+ * naming it. Refusing here covers every route to it at once: startup,
+ * onboarding's verification call, and a mid-session switch.
+ */
+test("a preset with no address of its own is refused rather than pointed at OpenAI", async () => {
+  await expect(buildProviderFor(findPreset("custom")!, undefined, {})).rejects.toThrow(
+    /baseUrl/,
+  );
+});
+
+test("the same preset builds once it is given an address", async () => {
+  const host = fakeHost();
+  try {
+    const provider = await buildProviderFor(findPreset("custom")!, host.url, {});
+    await ping(provider);
+    expect(host.seen).toHaveLength(1);
+  } finally {
+    host.stop();
+  }
+});

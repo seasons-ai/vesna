@@ -1,4 +1,4 @@
-import { PRESETS, findPreset, type Preset } from "../providers/catalog";
+import { PRESETS, findPreset, needsAddress, type Preset } from "../providers/catalog";
 
 export interface ChatCommand {
   name: string;
@@ -51,8 +51,11 @@ export function describeProviders(
 ): string[] {
   return PRESETS.map((preset) => {
     const mark = preset.id === current ? "  (current)" : "";
-    const credential =
-      preset.env === undefined
+    const credential = needsAddress(preset)
+      ? // Not a credential, but this is the column that says what is missing,
+        // and an address is what stands between `custom` and being usable.
+        "needs a baseUrl"
+      : preset.env === undefined
         ? preset.auth === "codex"
           ? "borrowed from codex"
           : "no key needed"
@@ -84,6 +87,8 @@ export function describeHeader(model: string, preset: Preset): { model: string; 
 
 export type SwitchOutcome =
   | { kind: "unknown"; message: string }
+  /** A real preset that names no address, so there is nowhere to switch to yet. */
+  | { kind: "unaddressed"; message: string }
   | { kind: "pinned"; message: string }
   | { kind: "switched"; message: string };
 
@@ -106,6 +111,18 @@ export function switchOutcome(
   const preset = findPreset(id);
   if (preset === undefined) {
     return { kind: "unknown", message: `no provider called "${id}" — /provider for the list` };
+  }
+  if (needsAddress(preset)) {
+    // Ahead of the pinned branch on purpose: that branch persists the machine
+    // default, and a machine default with no address is the same bug one run
+    // later. `custom` is the only preset this catches today — it exists to be
+    // pointed somewhere, and nothing in a chat can point it.
+    return {
+      kind: "unaddressed",
+      message:
+        `${preset.id} has no address of its own — put a "baseUrl:" for it in ` +
+        "~/.vesna/settings.yaml or .vesna/config.yaml, then start Vesna again",
+    };
   }
   if (state.pinned) {
     const named = state.active !== undefined ? ` (currently ${state.active})` : "";
