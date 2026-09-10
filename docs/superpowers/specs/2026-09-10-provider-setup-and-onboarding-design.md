@@ -73,7 +73,7 @@ and a setting not change, and has no way to connect the two.
 
 ```ts
 { id: "openrouter", dialect: "openai", baseUrl: "https://openrouter.ai/api/v1",
-  env: "OPENROUTER_API_KEY", model: "…" }
+  env: "OPENROUTER_API_KEY", model: "anthropic/claude-sonnet-5" }
 ```
 
 Shipped presets: `anthropic`, `openai`, `codex`, `openrouter`, `groq`,
@@ -86,8 +86,10 @@ implementation fact about a service, not a choice a user makes.
 Existing configs keep working unchanged, because `anthropic` and `openai` are
 themselves presets under those names.
 
-`custom` asks for a base URL and a key and writes them like any other preset.
-Adding a service later is a catalog entry, not a code change.
+`custom` asks for a base URL and a credential. The URL goes to
+`settings.yaml`; the credential goes where every other credential goes, and
+never into the settings file — see Non-goals. Adding a named service later is a
+catalog entry, not a code change.
 
 ### 3. `/provider` and `/model`
 
