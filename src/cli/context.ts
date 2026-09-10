@@ -25,6 +25,12 @@ export { CODEX_BASE_URL } from "../providers/catalog";
 export interface ProviderHandle extends Provider {
   readonly preset: Preset;
   readonly model: string;
+  /**
+   * The address actually in effect, not the one the process started with.
+   * `undefined` means the current preset's own default applies — the same
+   * meaning `baseUrl` carries everywhere else in the codebase.
+   */
+  readonly baseUrl: string | undefined;
   switch(preset: Preset, model: string, baseUrl?: string): Promise<void>;
 }
 
@@ -97,6 +103,7 @@ export async function createProviderHandle(
   let current = await build(preset, baseUrl);
   let currentPreset = preset;
   let currentModel = model;
+  let currentBaseUrl = baseUrl;
 
   return {
     get id() {
@@ -108,6 +115,9 @@ export async function createProviderHandle(
     get model() {
       return currentModel;
     },
+    get baseUrl() {
+      return currentBaseUrl;
+    },
     complete(request) {
       return current.complete(request);
     },
@@ -118,6 +128,7 @@ export async function createProviderHandle(
       current = built;
       currentPreset = next;
       currentModel = nextModel;
+      currentBaseUrl = nextBaseUrl;
     },
   };
 }

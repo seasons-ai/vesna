@@ -13,7 +13,7 @@ import { createTraceStore } from "../../src/store/trace";
 import type { CompletionRequest, CompletionResult, Provider } from "../../src/providers/types";
 import type { VesnaConfig } from "../../src/cli/config";
 import type { ProviderHandle } from "../../src/cli/context";
-import { findPreset, type Preset } from "../../src/providers/catalog";
+import { CODEX_BASE_URL, findPreset, type Preset } from "../../src/providers/catalog";
 import { readSettings, settingsPath } from "../../src/cli/settings";
 import { listSessions, openSession, readSession } from "../../src/store/sessions";
 import { createPlanNodes } from "../../src/nodes/plan";
@@ -116,6 +116,9 @@ function reply(text: string): Provider {
 function providerHandle(options: { fail?: string } = {}) {
   let preset = findPreset("codex")!;
   let model = preset.model;
+  // Mirrors what a real startup resolves when nothing overrides it
+  // (src/cli/config.ts): the preset's own address.
+  let baseUrl = preset.baseUrl;
   const calls: { preset: Preset; model: string; baseUrl?: string }[] = [];
   const requests: string[] = [];
   const handle: ProviderHandle = {
@@ -126,6 +129,9 @@ function providerHandle(options: { fail?: string } = {}) {
     get model() {
       return model;
     },
+    get baseUrl() {
+      return baseUrl;
+    },
     async complete(request) {
       requests.push(request.model);
       return done("x");
@@ -135,6 +141,7 @@ function providerHandle(options: { fail?: string } = {}) {
       if (options.fail !== undefined) throw new Error(options.fail);
       preset = next;
       model = nextModel;
+      baseUrl = nextBaseUrl;
     },
   };
   return { handle, calls, requests };
@@ -923,9 +930,17 @@ test("/model switches, remembers it on the machine, and leaves the conversation 
   app.input.type("/model gpt-5.6-sol-mini\r");
   await until(() => /model: gpt-5\.6-sol-mini/.test(app.screen()), "the switch confirmation");
 
-  expect(calls).toEqual([{ preset: findPreset("codex")!, model: "gpt-5.6-sol-mini" }]);
+  // The preset's own address rides along too, now that the handle (not the
+  // stale startup config) is the source for it.
+  expect(calls).toEqual([
+    { preset: findPreset("codex")!, model: "gpt-5.6-sol-mini", baseUrl: CODEX_BASE_URL },
+  ]);
   const written = readSettings(settingsPath({}, settingsHome));
-  expect(written).toEqual({ provider: "codex", model: "gpt-5.6-sol-mini" });
+  expect(written).toEqual({
+    provider: "codex",
+    model: "gpt-5.6-sol-mini",
+    baseUrl: CODEX_BASE_URL,
+  });
 
   // Switching the model does not restart the conversation.
   expect(app.screen()).toContain("hi");
@@ -1031,6 +1046,42 @@ test("/provider changes the model actually sent on the next request, not just th
   app.input.type("again\r");
   await until(() => requests.length === 2, "the second request");
   expect(requests[1]).toBe("llama3.2");
+  await quit(app);
+});
+
+/**
+ * The same defect the two tests above cover, one hop further out. `/model`
+ * used to read deps.config.baseUrl — a snapshot from process startup — for
+ * both the listing and the switch itself. After /provider moved the running
+ * connection to a different host, that snapshot was still the address the
+ * process started with, so /model's switch rebuilt a provider for the *new*
+ * preset pointed at the *old* host. A startup baseUrl of undefined would
+ * mask this, because buildProviderFor falls back to the preset's own
+ * address — so this test gives the process a real (sentinel) one, the way
+ * the reported repro did.
+ */
+test("/model after /provider addresses the preset it switched to, not the host the process started with", async () => {
+  const { handle, calls } = providerHandle();
+  const base = await deps(reply("x"));
+  const app = await start(reply("x"), { rows: 14, cols: 64 }, {
+    ...base,
+    provider: handle,
+    config: { ...base.config, pinned: false, baseUrl: "http://sentinel.invalid" },
+    env: {},
+    home: await mkdtemp(join(tmpdir(), "vesna-settings-")),
+  });
+
+  app.input.type("/provider ollama\r");
+  await until(() => /provider: ollama/.test(app.screen()), "the provider switch");
+
+  app.input.type("/model llama3.2-mini\r");
+  await until(() => /model: llama3\.2-mini/.test(app.screen()), "the model switch");
+
+  expect(calls[calls.length - 1]).toEqual({
+    preset: findPreset("ollama")!,
+    model: "llama3.2-mini",
+    baseUrl: "http://127.0.0.1:11434/v1",
+  });
   await quit(app);
 });
 

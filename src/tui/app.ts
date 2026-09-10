@@ -894,7 +894,9 @@ async function command(
     const wanted = argument.trim();
 
     if (wanted === "") {
-      const models = await listModels(handle.preset, deps.config.baseUrl);
+      // The handle's own baseUrl, not deps.config.baseUrl: after a /provider
+      // switch the two can differ, and the config snapshot is stale.
+      const models = await listModels(handle.preset, handle.baseUrl);
       for (const line of describeModels(models, handle.model)) {
         transcript.notice(line, "muted");
       }
@@ -911,7 +913,7 @@ async function command(
     const settings = {
       provider: handle.preset.id,
       model: wanted,
-      ...(deps.config.baseUrl !== undefined ? { baseUrl: deps.config.baseUrl } : {}),
+      ...(handle.baseUrl !== undefined ? { baseUrl: handle.baseUrl } : {}),
     };
 
     if (outcome.kind === "pinned") {
@@ -926,7 +928,7 @@ async function command(
     // a host that refuses the connection must leave both exactly as they
     // were, rather than half-applying a switch that never completed.
     try {
-      await handle.switch(handle.preset, wanted, deps.config.baseUrl);
+      await handle.switch(handle.preset, wanted, handle.baseUrl);
     } catch (error) {
       transcript.notice(switchFailed(wanted, error as Error), "error");
       return session;

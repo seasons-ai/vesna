@@ -14,13 +14,18 @@ const BUILT_IN: Record<string, string[]> = {
   subscription: ["gpt-5.6-sol"],
 };
 
+// Not `typeof fetch`: that type carries a required `preconnect` method, which
+// a plain test double never has. A narrower call signature is everything a
+// caller needs to inject one, and the real `fetch` still satisfies it — this
+// one also carries `init`, which the real fetch already accepts, so a header
+// can be injected the same way the URL is.
+type FetchImpl = (input: string, init?: RequestInit) => Promise<Response>;
+
 export async function listModels(
   preset: Preset,
   baseUrl: string | undefined,
-  // Not `typeof fetch`: that type carries a required `preconnect` method, which
-  // a plain test double never has. A narrower call signature is everything a
-  // caller needs to inject one, and the real `fetch` still satisfies it.
-  fetchImpl: (input: string) => Promise<Response> = fetch,
+  fetchImpl: FetchImpl = fetch,
+  env: Record<string, string | undefined> = process.env,
 ): Promise<string[]> {
   const known = BUILT_IN[preset.id];
   if (known !== undefined) return known;
@@ -28,8 +33,15 @@ export async function listModels(
   const base = baseUrl ?? preset.baseUrl;
   if (base === undefined) return [preset.model];
 
+  // openai, openrouter and groq have catalogues worth listing, and all three
+  // 401 without this — the fallback below would otherwise hide that failure
+  // as a quiet, correct-looking one-model answer.
+  const key = preset.env !== undefined ? env[preset.env] : undefined;
+  const init: RequestInit | undefined =
+    key !== undefined && key !== "" ? { headers: { Authorization: `Bearer ${key}` } } : undefined;
+
   try {
-    const response = await fetchImpl(`${base.replace(/\/$/, "")}/models`);
+    const response = await fetchImpl(`${base.replace(/\/$/, "")}/models`, init);
     if (!response.ok) return [preset.model];
     const body: any = await response.json();
     const ids = (body?.data ?? [])
