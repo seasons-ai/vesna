@@ -1,9 +1,11 @@
 {
   "name": "@seasons-ai/vesna",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "An agent that turns its own work into deterministic, reviewable workflows.",
   "license": "Apache-2.0",
-  "publishConfig": { "access": "public" },
+  "publishConfig": {
+    "access": "public"
+  },
   "type": "module",
   "homepage": "https://github.com/seasons-ai/vesna#readme",
   "repository": {
