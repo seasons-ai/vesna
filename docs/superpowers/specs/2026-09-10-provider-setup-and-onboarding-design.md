@@ -116,17 +116,24 @@ accumulated, which is a large cost for a small feature. Passing `() => Provider`
 everywhere spreads late binding across every signature to make one point
 mutable.
 
-History moves as text. Tool-call blocks and reasoning items are shaped
-differently in each dialect, and a block the receiving provider does not
-understand is either rejected or silently dropped. So they are dropped
-deliberately and counted, and the transcript says what happened:
+History carries across intact, and this was checked rather than assumed.
+`ContentBlock` in `providers/types.ts` is Vesna's own neutral shape: providers
+translate to their dialect at the edge, tool-call identifiers are opaque
+pass-through strings in all three, and reasoning never enters history because
+no such block type exists. So there is nothing to translate and nothing to
+lose.
+
+One hazard is real. An unpaired tool call — an assistant asking for a tool with
+no result after it, which is what an interrupt mid-tool leaves behind — is
+rejected by both APIs. Those are dropped, and only those. The transcript
+reports a loss only when there was one:
 
 ```
-switched to ollama/qwen3 · dropped 4 tool calls
+switched to ollama/qwen3 · dropped 1 unanswered tool call
 ```
 
-The agent loses what it did and keeps what was said. Pretending the transcript
-survived intact is the failure worth avoiding.
+Dropping every tool call, as this design first said, would have been
+precaution against a problem the neutral representation already solved.
 
 ### 5. Onboarding
 
