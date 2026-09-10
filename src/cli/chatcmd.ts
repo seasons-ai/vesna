@@ -1,3 +1,5 @@
+import { PRESETS, findPreset } from "../providers/catalog";
+
 export interface ChatCommand {
   name: string;
   help: string;
@@ -14,6 +16,8 @@ export const CHAT_COMMANDS: ChatCommand[] = [
   { name: "theme", help: "list palettes, or switch: /theme hanami" },
   { name: "copy", help: "copy the last answer to the clipboard" },
   { name: "clear", help: "start a fresh conversation" },
+  { name: "provider", help: "list services, or switch: /provider ollama" },
+  { name: "model", help: "list models, or switch: /model qwen3" },
   { name: "help", help: "this list" },
   { name: "exit", help: "leave" },
 ];
@@ -38,4 +42,66 @@ export function parseChatInput(line: string): ChatInput {
     return { kind: "unknown", name };
   }
   return { kind: "command", name, argument };
+}
+
+/** One line per catalog entry: id, where its credential comes from, label. */
+export function describeProviders(
+  current: string,
+  env: Record<string, string | undefined>,
+): string[] {
+  return PRESETS.map((preset) => {
+    const mark = preset.id === current ? "  (current)" : "";
+    const credential =
+      preset.env === undefined
+        ? preset.auth === "codex"
+          ? "borrowed from codex"
+          : "no key needed"
+        : env[preset.env]
+          ? `$${preset.env}`
+          : `needs $${preset.env}`;
+    return `${preset.id.padEnd(13)}${credential.padEnd(22)}${preset.label}${mark}`;
+  });
+}
+
+export type SwitchOutcome =
+  | { kind: "unknown"; message: string }
+  | { kind: "pinned"; message: string }
+  | { kind: "switched"; message: string };
+
+export function switchOutcome(
+  id: string,
+  state: {
+    pinned: boolean;
+    dropped: number;
+    /**
+     * The preset actually in effect, from the resolved config — never the
+     * raw `.vesna/config.yaml` string. `pinned` is true whenever that file
+     * names a provider at all, even a typo that resolves to nothing and
+     * falls back to a default (src/cli/config.ts), so naming the pin from
+     * the raw string here could tell the user "this project pins gruq" when
+     * nothing of the sort was ever resolved.
+     */
+    active?: string;
+  },
+): SwitchOutcome {
+  const preset = findPreset(id);
+  if (preset === undefined) {
+    return { kind: "unknown", message: `no provider called "${id}" — /provider for the list` };
+  }
+  if (state.pinned) {
+    const named = state.active !== undefined ? ` (currently ${state.active})` : "";
+    return {
+      kind: "pinned",
+      message:
+        `this project pins its provider${named} in .vesna/config.yaml — ` +
+        `changed the machine default to ${id}, unchanged here`,
+    };
+  }
+  const base = `provider: ${preset.id}  model ${preset.model}`;
+  if (state.dropped === 0) return { kind: "switched", message: base };
+  const plural = state.dropped === 1 ? "call" : "calls";
+  return {
+    kind: "switched",
+    message: `${base}  ·  dropped ${state.dropped} unanswered tool ${plural}`,
+  };
 }

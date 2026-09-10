@@ -12,7 +12,9 @@ import type { NodeDef } from "../../src/registry/types";
 import { createTraceStore } from "../../src/store/trace";
 import type { CompletionRequest, CompletionResult, Provider } from "../../src/providers/types";
 import type { VesnaConfig } from "../../src/cli/config";
-import { findPreset } from "../../src/providers/catalog";
+import type { ProviderHandle } from "../../src/cli/context";
+import { findPreset, type Preset } from "../../src/providers/catalog";
+import { readSettings, settingsPath } from "../../src/cli/settings";
 import { listSessions, openSession, readSession } from "../../src/store/sessions";
 import { createPlanNodes } from "../../src/nodes/plan";
 import { createSink } from "../../src/spec/sink";
@@ -101,6 +103,35 @@ function done(text: string): CompletionResult {
 
 function reply(text: string): Provider {
   return provider(async () => done(text));
+}
+
+/**
+ * A ProviderHandle whose `switch` is observed rather than actually talking to
+ * anything, so /provider can be driven end to end: what it was asked to
+ * become, and — via `fail` — what a host that refuses the connection looks
+ * like from here.
+ */
+function providerHandle(options: { fail?: string } = {}) {
+  let preset = findPreset("codex")!;
+  let model = preset.model;
+  const calls: { preset: Preset; model: string; baseUrl?: string }[] = [];
+  const handle: ProviderHandle = {
+    id: "fake",
+    get preset() {
+      return preset;
+    },
+    get model() {
+      return model;
+    },
+    complete: async () => done("x"),
+    async switch(next, nextModel, nextBaseUrl) {
+      calls.push({ preset: next, model: nextModel, ...(nextBaseUrl ? { baseUrl: nextBaseUrl } : {}) });
+      if (options.fail !== undefined) throw new Error(options.fail);
+      preset = next;
+      model = nextModel;
+    },
+  };
+  return { handle, calls };
 }
 
 /**
@@ -771,6 +802,86 @@ test("switching says how to make it stick, because it does not", async () => {
   const app = await start(reply("x"));
   app.input.type("/theme mono\r");
   await until(() => /config/i.test(app.screen()), "the note about persistence");
+  await quit(app);
+});
+
+test("/provider with no name lists the catalog and marks the current service", async () => {
+  const { handle } = providerHandle();
+  const app = await start(reply("x"), { rows: 24, cols: 100 }, { provider: handle });
+  app.input.type("/provider\r");
+  await until(() => app.screen().includes("ollama"), "the listing");
+  const screen = app.screen();
+  for (const id of ["anthropic", "openai", "codex", "ollama"]) expect(screen).toContain(id);
+  expect(screen).toMatch(/codex.*current|current.*codex/s);
+  await quit(app);
+});
+
+test("/provider switches, remembers it on the machine, and carries the conversation", async () => {
+  const settingsHome = await mkdtemp(join(tmpdir(), "vesna-settings-"));
+  const { handle, calls } = providerHandle();
+  const base = await deps(reply("x"));
+  const app = await start(reply("x"), { rows: 14, cols: 64 }, {
+    ...base,
+    provider: handle,
+    config: { ...base.config, pinned: false },
+    env: {},
+    home: settingsHome,
+  });
+
+  app.input.type("hi\r");
+  await until(() => app.screen().includes("x"), "the first answer");
+
+  app.input.type("/provider ollama\r");
+  await until(() => /provider: ollama/.test(app.screen()), "the switch confirmation");
+
+  expect(calls).toEqual([{ preset: findPreset("ollama")!, model: "llama3.2", baseUrl: "http://127.0.0.1:11434/v1" }]);
+  const written = readSettings(settingsPath({}, settingsHome));
+  expect(written).toEqual({ provider: "ollama", model: "llama3.2", baseUrl: "http://127.0.0.1:11434/v1" });
+
+  // Switching does not clear the transcript: what was said stays on screen.
+  expect(app.screen()).toContain("hi");
+  await quit(app);
+});
+
+test("an unreachable provider leaves the settings file and the running session untouched", async () => {
+  const settingsHome = await mkdtemp(join(tmpdir(), "vesna-settings-"));
+  const { handle, calls } = providerHandle({ fail: "connection refused" });
+  const base = await deps(reply("x"));
+  const app = await start(reply("x"), { rows: 14, cols: 64 }, {
+    ...base,
+    provider: handle,
+    config: { ...base.config, pinned: false },
+    env: {},
+    home: settingsHome,
+  });
+
+  app.input.type("/provider ollama\r");
+  await until(() => /connection refused/.test(app.screen()), "the failure notice");
+
+  expect(calls).toHaveLength(1);
+  expect(handle.preset.id).toBe("codex");
+  expect(app.screen()).not.toContain("provider: ollama");
+  expect(readSettings(settingsPath({}, settingsHome))).toEqual({});
+  await quit(app);
+});
+
+test("a pinned project changes the machine default and says this directory is unchanged", async () => {
+  const settingsHome = await mkdtemp(join(tmpdir(), "vesna-settings-"));
+  const { handle, calls } = providerHandle();
+  // The default test config already sets pinned: true.
+  const app = await start(reply("x"), { rows: 14, cols: 64 }, {
+    provider: handle,
+    env: {},
+    home: settingsHome,
+  });
+
+  app.input.type("/provider ollama\r");
+  await until(() => /unchanged here/.test(app.screen()), "the pinned notice");
+
+  expect(calls).toHaveLength(0);
+  expect(handle.preset.id).toBe("codex");
+  const written = readSettings(settingsPath({}, settingsHome));
+  expect(written.provider).toBe("ollama");
   await quit(app);
 });
 

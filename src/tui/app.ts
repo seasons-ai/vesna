@@ -1,17 +1,22 @@
 import { mkdir, writeFile } from "node:fs/promises";
+import { homedir } from "node:os";
 import { join } from "node:path";
 import { stringify as toYaml } from "yaml";
 import { applyParameters } from "../crystallize/apply";
 import { proposeFlow } from "../crystallize/propose";
-import { CHAT_COMMANDS, parseChatInput } from "../cli/chatcmd";
+import { CHAT_COMMANDS, describeProviders, parseChatInput, switchOutcome } from "../cli/chatcmd";
 import { describeDropped } from "../cli/dropped";
 import { EXIT } from "../cli/exit";
 import { formatParameter } from "../cli/format";
+import { settingsPath, writeSettings } from "../cli/settings";
+import { carryHistory } from "../loop/carry";
 import { createSession, type Session } from "../loop/session";
+import { findPreset } from "../providers/catalog";
 import type { Provider } from "../providers/types";
 import type { Registry } from "../registry/types";
 import type { TraceStore } from "../store/types";
 import { permits, type VesnaConfig } from "../cli/config";
+import type { ProviderHandle } from "../cli/context";
 import { createEditor, applyKey, type EditorState } from "./editor";
 import { emptyState } from "./emptystate";
 import { resolveGlyphs, type Glyphs } from "./glyphs";
@@ -60,6 +65,9 @@ export interface AppDeps {
   policy?: Policy;
   /** Where the plan nodes write. Told which spec is open. */
   sink?: SpecSink;
+  /** Where `/provider` writes the machine-wide default. Defaults to the real environment and home. */
+  env?: Record<string, string | undefined>;
+  home?: string;
 }
 
 export interface AppIo {
@@ -640,7 +648,7 @@ export async function runApp(deps: AppDeps, io: AppIo): Promise<number> {
           copy,
           theme,
           applyTheme,
-          () => newSession(deps, approve),
+          (messages) => newSession(deps, approve, messages),
         );
         transcript.endTurn();
         draw();
@@ -755,7 +763,7 @@ async function command(
   onCopy: (text: string) => Promise<void>,
   theme: Theme,
   setTheme: (name: string) => boolean,
-  makeSession: () => Session,
+  makeSession: (messages?: AgentMessage[]) => Session,
 ): Promise<Session> {
 
   if (name === "help") {
@@ -810,6 +818,63 @@ async function command(
     transcript.clear();
     transcript.notice("new conversation", "muted");
     return makeSession();
+  }
+
+  if (name === "provider") {
+    // The TUI is always handed a ProviderHandle (see buildContext in
+    // src/cli/context.ts) — the plain Provider in AppDeps is the interface
+    // every other consumer needs, and this is the one place that needs more.
+    const handle = deps.provider as ProviderHandle;
+    const env = deps.env ?? process.env;
+    const wanted = argument.trim();
+
+    if (wanted === "") {
+      for (const line of describeProviders(handle.preset.id, env)) {
+        transcript.notice(line, "muted");
+      }
+      return session;
+    }
+
+    const carried = carryHistory(session.messages);
+    const outcome = switchOutcome(wanted, {
+      pinned: deps.config.pinned,
+      dropped: carried.dropped,
+      active: handle.preset.id,
+    });
+
+    if (outcome.kind === "unknown") {
+      transcript.notice(outcome.message, "warn");
+      return session;
+    }
+
+    const preset = findPreset(wanted)!;
+    const path = settingsPath(env, deps.home ?? homedir());
+    const settings = {
+      provider: preset.id,
+      model: preset.model,
+      ...(preset.baseUrl !== undefined ? { baseUrl: preset.baseUrl } : {}),
+    };
+
+    if (outcome.kind === "pinned") {
+      // Only the machine default moves. The running conversation, and the
+      // provider serving it, are exactly what this project pins them to.
+      writeSettings(path, settings);
+      transcript.notice(outcome.message, "ok");
+      return session;
+    }
+
+    // Build the replacement before writing anything or touching the session:
+    // a host that refuses the connection must leave both exactly as they
+    // were, rather than half-applying a switch that never completed.
+    try {
+      await handle.switch(preset, preset.model, preset.baseUrl);
+    } catch (error) {
+      transcript.notice(`could not switch to ${preset.id}: ${(error as Error).message}`, "error");
+      return session;
+    }
+    writeSettings(path, settings);
+    transcript.notice(outcome.message, "ok");
+    return makeSession(carried.messages);
   }
 
   if (name === "crystallize") {
