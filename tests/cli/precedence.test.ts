@@ -91,6 +91,27 @@ test("a project pinning only the provider never sends its key to the machine's a
   });
 });
 
+test("a provider nobody ships is named as a mistake, not resolved to a default", async () => {
+  await withDirs(async (root, home) => {
+    project(root, "provider: gruq\n");
+    await expect(loadConfig(root, {}, home)).rejects.toThrow(
+      /config\.yaml names an unknown provider "gruq"/,
+    );
+    // The list is the point: the fix has to be guessable from the message.
+    await expect(loadConfig(root, {}, home)).rejects.toThrow(/groq/);
+    await expect(loadConfig(root, {}, home)).rejects.toThrow(/ollama/);
+  });
+});
+
+test("an unknown provider in the machine settings names that file, not the project", async () => {
+  await withDirs(async (root, home) => {
+    writeSettings(settingsPath({}, home), { provider: "gruq" });
+    await expect(loadConfig(root, {}, home)).rejects.toThrow(
+      /settings\.yaml names an unknown provider "gruq"/,
+    );
+  });
+});
+
 /**
  * The network, replaced for the duration of one call, so "where did it go and
  * what did it carry" is answerable without either a live host or a real

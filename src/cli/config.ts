@@ -2,7 +2,7 @@ import { readFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { parse as parseYaml } from "yaml";
-import { findPreset, presetFor, type Preset } from "../providers/catalog";
+import { PRESETS, presetFor, type Preset } from "../providers/catalog";
 import type { ModelPrice } from "../providers/cost";
 import { readSettings, settingsPath, type GlobalSettings } from "./settings";
 
@@ -95,14 +95,25 @@ export async function loadConfig(
     }
   }
 
-  const settings = readSettings(settingsPath(env, home));
+  const machinePath = settingsPath(env, home);
+  const settings = readSettings(machinePath);
 
   const pinned = typeof raw.provider === "string" && raw.provider !== "";
-  const providerName =
-    (pinned ? (raw.provider as string) : undefined) ?? settings.provider ?? "anthropic";
-  const preset =
-    presetFor(providerName, typeof raw.auth === "string" ? raw.auth : undefined) ??
-    findPreset("anthropic")!;
+  const named = (pinned ? (raw.provider as string) : undefined) ?? settings.provider;
+  const providerName = named ?? "anthropic";
+  const resolved = presetFor(providerName, typeof raw.auth === "string" ? raw.auth : undefined);
+
+  if (resolved === undefined) {
+    // Same reason malformed YAML above is a throw: silently falling back to a
+    // default turns a typo into a mystery. `provider: gruq` used to resolve to
+    // Anthropic without a word, so the failure surfaced much later as a
+    // service nobody chose — for the one field this whole file is about.
+    throw new Error(
+      `${pinned ? path : machinePath} names an unknown provider "${providerName}" — ` +
+        `valid ids: ${PRESETS.map((entry) => entry.id).join(", ")}`,
+    );
+  }
+  const preset = resolved;
 
   // Provider, model and address are one tuple, not three keys that happen to
   // live in the same file. The machine settings describe exactly one service,
