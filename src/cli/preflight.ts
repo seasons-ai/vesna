@@ -90,6 +90,10 @@ export function usable(credential: Credential): boolean {
 export function remedy(config: VesnaConfig, credential: Credential): string[] {
   const lines: string[] = [];
 
+  // `configured` means "a project file or global settings exist" — not "a
+  // project file exists" (see src/cli/config.ts). So this hint about writing
+  // .vesna/config.yaml is suppressed whenever global settings already supply
+  // something to work with; the credential problem below is the real one.
   if (!config.configured) {
     lines.push(
       "there is no .vesna/config.yaml here, so Vesna fell back to its defaults",

@@ -56,7 +56,8 @@ test("with nothing available it still writes something honest to edit", async ()
 test("the file it writes is a config Vesna can actually read back", async () => {
   const dir = await root();
   await writeStarterConfig(dir, { provider: "openai", auth: "codex" });
-  const config = await loadConfig(dir);
+  // An isolated, empty home: the real ~/.vesna/settings.yaml must not leak in.
+  const config = await loadConfig(dir, {}, await home());
   expect(config.configured).toBe(true);
   expect(config.provider).toBe("openai");
   expect(config.auth).toBe("codex");
