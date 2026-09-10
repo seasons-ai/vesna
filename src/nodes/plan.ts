@@ -16,19 +16,26 @@ import { spawnInterruptible } from "./spawn";
  */
 
 export interface PlanInput {
+  /** What this piece of work is called. Names the spec when there is none yet. */
+  title?: string;
   stage?: string;
   criteria?: { id: string; text: string }[];
   tasks?: { id: string; title: string; dependsOn?: string[] }[];
 }
 
 export function createPlanNodes(sink: SpecSink): NodeDef[] {
-  const plan: NodeDef<PlanInput, { recorded: number }> = {
+  const plan: NodeDef<PlanInput, { recorded: number; spec: string; opened: boolean }> = {
     type: "plan",
     description:
       "Record the plan for the work in hand: the stage you are entering, the acceptance criteria, and the tasks. Declaring a task does not start or finish it.",
     inputSchema: {
       type: "object",
       properties: {
+        title: {
+          type: "string",
+          description:
+            "A short name for this piece of work. Used to open a spec if none is open yet.",
+        },
         stage: {
           type: "string",
           enum: [...STAGES],
@@ -58,11 +65,20 @@ export function createPlanNodes(sink: SpecSink): NodeDef[] {
     },
     effect: "pure",
     async run(input) {
-      if (!sink.open) throw new Error("no spec is open — ask the user to run /spec new <name>");
+      // Planning opens a spec when there is none. Refusing here made the whole
+      // panel unreachable to anyone who had not already read the source.
+      const title = input.title ?? input.tasks?.[0]?.title ?? "untitled work";
+      const slug = sink.ensure(title);
 
       let recorded = 0;
-      if (input.stage !== undefined && (STAGES as readonly string[]).includes(input.stage)) {
-        sink.emit({ t: "stage.entered", stage: input.stage as Stage });
+      const named = (STAGES as readonly string[]).includes(input.stage ?? "")
+        ? (input.stage as Stage)
+        : undefined;
+      // Recording tasks is entering the build stage. Making the model say so
+      // separately means a plan that forgets shows a count and no tasks.
+      const stage = named ?? ((input.tasks?.length ?? 0) > 0 ? "build" : undefined);
+      if (stage !== undefined) {
+        sink.emit({ t: "stage.entered", stage });
         recorded += 1;
       }
       for (const criterion of input.criteria ?? []) {
@@ -78,7 +94,7 @@ export function createPlanNodes(sink: SpecSink): NodeDef[] {
         });
         recorded += 1;
       }
-      return { recorded };
+      return { recorded, spec: slug, opened: sink.created };
     },
   };
 
@@ -92,7 +108,7 @@ export function createPlanNodes(sink: SpecSink): NodeDef[] {
     },
     effect: "pure",
     async run(input) {
-      if (!sink.open) throw new Error("no spec is open — ask the user to run /spec new <name>");
+      if (!sink.open) throw new Error("record a plan first, with the plan tool");
       sink.emit({ t: "task.started", id: input.id });
       return { started: input.id };
     },
@@ -115,7 +131,7 @@ export function createPlanNodes(sink: SpecSink): NodeDef[] {
     },
     effect: "write",
     async run(input, ctx) {
-      if (!sink.open) throw new Error("no spec is open — ask the user to run /spec new <name>");
+      if (!sink.open) throw new Error("record a plan first, with the plan tool");
 
       const result = await spawnInterruptible(["/bin/sh", "-c", input.check], {
         cwd: ctx.cwd,

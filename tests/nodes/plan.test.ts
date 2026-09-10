@@ -102,13 +102,37 @@ test("a failing check is an answer, not a thrown error", async () => {
   ).resolves.toBeDefined();
 });
 
-test("with no spec open the nodes say so instead of writing nowhere", async () => {
+test("planning with nothing open opens a spec rather than refusing", async () => {
   const it = await ready();
   it.sink.slug = null;
-  for (const type of ["plan", "task_start", "task_verify"]) {
+
+  const result = await it.by("plan").run(
+    { title: "Reliable cancellation", tasks: [{ id: "T1", title: "one" }] },
+    ctx(it.project),
+  );
+
+  expect(result.opened).toBe(true);
+  expect(result.spec).toBe("reliable-cancellation");
+  expect(readSpec(it.root, result.spec)!.tasks.map((t) => t.id)).toEqual(["T1"]);
+});
+
+test("an unnamed plan takes its name from the first task", async () => {
+  const it = await ready();
+  it.sink.slug = null;
+  const result = await it.by("plan").run(
+    { tasks: [{ id: "T1", title: "cancel the shell" }] },
+    ctx(it.project),
+  );
+  expect(result.spec).toBe("cancel-the-shell");
+});
+
+test("the other two still need a plan first — they have nothing to open one from", async () => {
+  const it = await ready();
+  it.sink.slug = null;
+  for (const type of ["task_start", "task_verify"]) {
     await expect(
       it.by(type).run({ id: "T1", check: "true" }, ctx(it.project)),
-    ).rejects.toThrow(/no spec is open/);
+    ).rejects.toThrow(/record a plan first/);
   }
 });
 

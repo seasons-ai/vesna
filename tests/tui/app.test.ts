@@ -13,6 +13,9 @@ import { createTraceStore } from "../../src/store/trace";
 import type { CompletionRequest, CompletionResult, Provider } from "../../src/providers/types";
 import type { VesnaConfig } from "../../src/cli/config";
 import { listSessions, openSession, readSession } from "../../src/store/sessions";
+import { createPlanNodes } from "../../src/nodes/plan";
+import { createSink } from "../../src/spec/sink";
+import { specsRoot } from "../../src/spec/store";
 
 /**
  * A terminal that keeps the visible rows, by applying the same move-and-clear
@@ -1213,5 +1216,33 @@ test("/mode with a name nobody has is refused, and the mode is left alone", asyn
   const app = await start(reply("x"), { rows: 20, cols: 100 });
   app.input.type("/mode reckless\r");
   await until(() => /plan, ask or auto/.test(app.screen()), "the refusal");
+  await quit(app);
+});
+
+test("planning opens the column by itself — no command to know first", async () => {
+  const registry = createRegistry();
+  const base = await deps(reply("x"));
+  const sink = createSink(specsRoot(base.root));
+  for (const node of createPlanNodes(sink)) registry.register(node);
+
+  const caller = toolCaller("plan", {
+    title: "Reliable cancellation",
+    tasks: [{ id: "T1", title: "cancel the shell" }],
+  });
+  const app = await start(caller, { rows: 20, cols: 130 }, {
+    ...base,
+    provider: caller,
+    registry,
+    sink,
+    config: { ...base.config, permissions: { nodes: ["plan"] } },
+    policy: { mode: "auto", allow: {}, deny: {} },
+  });
+
+  expect(app.screen()).not.toContain("Reliable cancellation");
+  app.input.type("do the work\r");
+  await until(() => app.screen().includes("cancel the shell"), "the tree");
+
+  expect(app.screen()).toContain("Reliable cancellation");
+  expect(app.screen()).toMatch(/plan: Reliable cancellation/);
   await quit(app);
 });

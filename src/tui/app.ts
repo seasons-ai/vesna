@@ -208,8 +208,22 @@ export async function runApp(deps: AppDeps, io: AppIo): Promise<number> {
     return true;
   }
 
-  /** The tree is the log reduced, so it is re-read rather than patched. */
+  /**
+   * The tree is the log reduced, so it is re-read rather than patched. It also
+   * picks up a spec the agent opened for itself: planning is what makes the
+   * column appear, and the user should not have had to know a command first.
+   */
   function refreshSpec(): void {
+    const slug = deps.sink?.slug;
+    if (slug !== undefined && slug !== null && spec?.id !== slug) {
+      const opened = readSpec(specs, slug);
+      if (opened !== null) {
+        spec = opened;
+        showGarden = true;
+        transcript.notice(`plan: ${opened.title}  (ctrl-g hides it)`, "ok");
+        return;
+      }
+    }
     if (spec !== null) spec = readSpec(specs, spec.id) ?? spec;
   }
 

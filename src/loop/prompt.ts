@@ -76,9 +76,8 @@ function planningSection(tools: ToolSpec[]): string | null {
     "the stage, the acceptance criteria, and the tasks. The user watches that",
     "panel to see where the work stands, and an unrecorded plan is invisible.",
     "",
-    "`plan` needs an open spec. If it refuses because there is none, say so and",
-    "ask the user to run `/spec new <name>` — do not carry on silently, and do",
-    "not invent somewhere else to put the plan.",
+    "Give `plan` a short `title` for the work. It opens a spec by that name if",
+    "none is open, so there is nothing to ask the user for first.",
   ];
 
   if (has("task_start")) {

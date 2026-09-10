@@ -348,13 +348,16 @@ and piped output carries no escape codes at all.
 
 ## The garden
 
-A piece of work gets a spec: `/spec new reliable cancellation` opens a column
-on the right showing where it stands — the stages, the acceptance criteria once
+Ask for work of several steps and a column opens on the right showing where it
+stands — the stages, the acceptance criteria once
 there are any, the tasks and who is working on them.
+
+You do not have to start it: recording a plan opens a spec named after the
+work, and says so. The commands are there for when you want to steer.
 
 ```text
 /spec                       what there is
-/spec new <name>            start one
+/spec new <name>            start one by hand
 /spec open <slug>           switch to it
 ctrl-g                      show or hide the column
 ```

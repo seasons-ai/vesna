@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { appendFileSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { project, type SpecEvent, type SpecTree } from "./project";
@@ -23,14 +24,30 @@ export function specsRoot(projectRoot: string): string {
   return join(projectRoot, ".vesna", "specs");
 }
 
-/** A directory name that cannot surprise: lowercase, dashes, nothing else. */
+/**
+ * A directory name that cannot surprise: lowercase, dashes, nothing else.
+ *
+ * A name in another script loses almost everything to that rule — two Russian
+ * titles sharing one latin word both became that word, and the second silently
+ * continued the first one's spec. So anything that did not survive intact is
+ * given a short digest of the whole name, which keeps different names apart
+ * and keeps the same name stable across sessions.
+ */
 export function slugify(name: string): string {
-  const slug = name
+  const kept = name
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, "-")
     .replace(/^-+|-+$/g, "")
-    .slice(0, 48);
-  return slug === "" ? "spec" : slug;
+    .slice(0, 40);
+
+  // Punctuation is not meaning, so losing it costs nothing. Losing letters is
+  // what makes two different names into the same directory.
+  const meaningful = name.match(/[\p{L}\p{N}]/gu)?.length ?? 0;
+  const latin = name.match(/[A-Za-z0-9]/g)?.length ?? 0;
+  if (latin === meaningful) return kept === "" ? "spec" : kept;
+
+  const digest = createHash("sha256").update(name).digest("hex").slice(0, 6);
+  return kept === "" ? `spec-${digest}` : `${kept}-${digest}`;
 }
 
 function eventsPath(root: string, slug: string): string {

@@ -13,7 +13,8 @@ test("specs live in the project, beside the code they describe", () => {
 test("a name becomes a directory that cannot surprise anyone", () => {
   expect(slugify("Add abort handling!")).toBe("add-abort-handling");
   expect(slugify("  spaces  and---dashes  ")).toBe("spaces-and-dashes");
-  expect(slugify("Привет")).toBe("spec");
+  // A name with no latin at all still gets a directory of its own.
+  expect(slugify("Привет")).toMatch(/^spec-[0-9a-f]{6}$/);
   expect(slugify("")).toBe("spec");
 });
 
@@ -79,4 +80,24 @@ test("a torn line costs its own event and no others", async () => {
   appendEvent(dir, slug, { t: "task.added", id: "T2", title: "after" });
 
   expect(readSpec(dir, slug)!.tasks.map((t) => t.title)).toEqual(["before", "after"]);
+});
+
+test("a name in another script still gets a directory of its own", () => {
+  const one = slugify("Подсветка синтаксиса");
+  const two = slugify("История разговоров");
+  expect(one).not.toBe(two);
+  expect(one).toMatch(/^[a-z0-9-]+$/);
+});
+
+test("two names that share their only latin word do not share a directory", () => {
+  // Both collapsed to "tui" before, and the second silently continued the first.
+  expect(slugify("Подсветка синтаксиса в TUI")).not.toBe(slugify("История чатов в TUI"));
+});
+
+test("the same name always gives the same directory, or reopening would break", () => {
+  expect(slugify("Подсветка синтаксиса в TUI")).toBe(slugify("Подсветка синтаксиса в TUI"));
+});
+
+test("a latin name is untouched, because those already read well", () => {
+  expect(slugify("Reliable cancellation")).toBe("reliable-cancellation");
 });

@@ -98,14 +98,16 @@ test("with planning tools available the agent is told to use them", () => {
   expect(text).toMatch(/several steps|multi|more than one step/i);
 });
 
-test("it is told a plan needs a spec, and how the user opens one", () => {
+test("it is told to name the work, not to ask the user for a spec first", () => {
   const text = systemPrompt(context({ tools: [tool("plan", "record the plan")] }));
-  expect(text).toContain("/spec new");
+  expect(text).toContain("title");
+  // Requiring a command from the user was the thing that made this unreachable.
+  expect(text).not.toContain("/spec new");
 });
 
 test("without the planning tools none of that is said", () => {
   const text = systemPrompt(context({ tools: [tool("read", "read a file")] }));
-  expect(text).not.toContain("/spec new");
+  expect(text).not.toMatch(/`plan`/);
 });
 
 test("it is told to prove a task rather than declare it finished", () => {

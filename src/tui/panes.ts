@@ -132,6 +132,24 @@ export function gardenPane(tree: SpecTree, options: PaneOptions): Pane {
       text: `${theme.paint(role, mark(glyph))} ${theme.paint(state === "todo" ? "faint" : "text", truncate(stage, width - 2))}`,
     });
 
+    // Tasks are the substance of the tree. Hiding them because a stage label
+    // was never set is exactly what makes the panel look broken.
+    if (stage === "build" && tree.tasks.length > 0) {
+      for (const task of tree.tasks) {
+        const { glyph: taskGlyph, role: taskRole } = TASK_MARK[task.state];
+        lines.push({
+          text: `  ${theme.paint(taskRole, mark(taskGlyph))} ${theme.paint("text", truncate(task.title, width - 4))}`,
+          id: `task:${task.id}`,
+        });
+        if (task.agent !== undefined) {
+          lines.push({
+            text: `    ${theme.paint("petal", mark("❀"))} ${theme.paint("muted", truncate(task.agent, width - 6))}`,
+          });
+        }
+      }
+      continue;
+    }
+
     if (state !== "active") continue;
 
     if (stage === "spec") {
@@ -146,34 +164,6 @@ export function gardenPane(tree: SpecTree, options: PaneOptions): Pane {
       }
     }
 
-    if (stage === "build") {
-      for (const task of tree.tasks) {
-        const { glyph: taskGlyph, role: taskRole } = TASK_MARK[task.state];
-        lines.push({
-          text: `  ${theme.paint(taskRole, mark(taskGlyph))} ${theme.paint("text", truncate(task.title, width - 4))}`,
-          id: `task:${task.id}`,
-        });
-        if (task.agent !== undefined) {
-          lines.push({
-            text: `    ${theme.paint("petal", mark("❀"))} ${theme.paint("muted", truncate(task.agent, width - 6))}`,
-          });
-        }
-      }
-    }
-  }
-
-  // Blocked work is what a person can unblock, so it is never folded away.
-  const blocked = tree.tasks.filter((task) => task.state === "blocked" || task.state === "failed");
-  const buildActive = tree.stages.some((s) => s.stage === "build" && s.state === "active");
-  if (blocked.length > 0 && !buildActive) {
-    lines.push({ text: "" });
-    for (const task of blocked) {
-      const { glyph, role } = TASK_MARK[task.state];
-      lines.push({
-        text: `${theme.paint(role, mark(glyph))} ${theme.paint("muted", truncate(task.title, width - 2))}`,
-        id: `task:${task.id}`,
-      });
-    }
   }
 
   return sized(lines, options.rows);
