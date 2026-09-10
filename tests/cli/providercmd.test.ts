@@ -7,7 +7,7 @@ import {
   switchFailed,
   switchOutcome,
 } from "../../src/cli/chatcmd";
-import { findPreset } from "../../src/providers/catalog";
+import { PRESETS, findPreset } from "../../src/providers/catalog";
 
 test("/provider is a command the parser knows", () => {
   expect(CHAT_COMMANDS.map((c) => c.name)).toContain("provider");
@@ -128,4 +128,14 @@ test("the listing says what the subscription preset actually needs", () => {
   const line = lines.find((entry) => entry.startsWith("subscription"))!;
   expect(line).toContain("oauth");
   expect(line).not.toContain("no key needed");
+});
+
+// `needs $OPENROUTER_API_KEY` is 25 characters and the middle column was 22, so
+// two rows read "needs $ANTHROPIC_API_KEYAnthropic".
+test("every row keeps its columns apart, whatever the ids and variables are", () => {
+  const lines = describeProviders("ollama", {});
+  for (const preset of PRESETS) {
+    const line = lines.find((entry) => entry.startsWith(preset.id))!;
+    expect(line).toContain(`  ${preset.label}`);
+  }
 });

@@ -75,10 +75,19 @@ export function describeProviders(
   current: string,
   env: Record<string, string | undefined>,
 ): string[] {
+  // Measured, not guessed: `needs $OPENROUTER_API_KEY` is 25 characters, so a
+  // fixed 22-column middle ran the label straight into the variable name.
+  const ids = column(PRESETS.map((preset) => preset.id));
+  const needs = column(PRESETS.map((preset) => requirement(preset, env)));
   return PRESETS.map((preset) => {
     const mark = preset.id === current ? "  (current)" : "";
-    return `${preset.id.padEnd(13)}${requirement(preset, env).padEnd(22)}${preset.label}${mark}`;
+    return `${preset.id.padEnd(ids)}${requirement(preset, env).padEnd(needs)}${preset.label}${mark}`;
   });
+}
+
+/** Wide enough for the longest entry, with a gap after it. */
+function column(values: string[]): number {
+  return Math.max(...values.map((value) => value.length)) + 2;
 }
 
 /**
