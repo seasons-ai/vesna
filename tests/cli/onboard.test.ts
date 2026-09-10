@@ -221,3 +221,31 @@ test("an empty address is asked for again rather than accepted", async () => {
     expect(readSettings(settingsPath({}, home)).baseUrl).toBe("http://127.0.0.1:9000/v1");
   });
 });
+
+/**
+ * `subscription` needs an `oauth` block that only a hand-written project config
+ * can supply, and onboarding never touches a project directory — so it could be
+ * chosen from this menu and never completed. It stays in the catalog, because
+ * it works once configured; it stops being offered here.
+ */
+test("the subscription preset is not offered by a menu that cannot complete it", async () => {
+  await withHome(async (home) => {
+    const screen = io(["subscription", "ollama", ""]);
+    const done = await runOnboarding({
+      io: screen,
+      env: {},
+      home,
+      config: { configured: true } as any,
+      async verify(_preset, model) {
+        return model;
+      },
+    });
+
+    const written = screen.written.join("\n");
+    // Not in the menu, and answering it anyway says why rather than "unknown".
+    expect(written).not.toMatch(/^ {2}subscription —/m);
+    expect(written).toContain("oauth block");
+    expect(done).toBe(true);
+    expect(readSettings(settingsPath({}, home)).provider).toBe("ollama");
+  });
+});

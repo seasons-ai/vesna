@@ -152,3 +152,15 @@ test("`vesna init` pins the resolved preset id, not the dialect it collapses ont
   const config = await loadConfig(dir, { VESNA_HOME: vesnaHome }, vesnaHome);
   expect(config.preset.id).toBe("ollama");
 });
+
+// `vesna init` on a subscription setup wrote "No key needed for this endpoint",
+// which is the one thing that is not true of it: it needs an oauth block, and
+// this file is the only place one can go.
+test("pinning the subscription preset writes what it actually needs", async () => {
+  const dir = await root();
+  await writeStarterConfig(dir, { provider: "subscription", auth: "subscription" });
+  const text = await readFile(join(dir, ".vesna", "config.yaml"), "utf8");
+  expect(text).not.toContain("No key needed");
+  expect(text).toContain("oauth");
+  expect(text).toContain("clientId");
+});

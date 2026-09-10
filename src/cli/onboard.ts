@@ -1,4 +1,4 @@
-import { PRESETS, findPreset, needsAddress, type Preset } from "../providers/catalog";
+import { PRESETS, findPreset, needsAddress, needsOauth, type Preset } from "../providers/catalog";
 import type { PromptIO } from "../tui/prompt";
 import { settingsPath, writeSettings, type GlobalSettings } from "./settings";
 import type { VesnaConfig } from "./config";
@@ -46,7 +46,11 @@ export async function runOnboarding(options: OnboardOptions): Promise<boolean> {
   const { io, env, home, config, verify } = options;
 
   io.write("Which service should Vesna talk to?");
-  for (const preset of PRESETS) {
+  // Everything except the presets this menu cannot finish. `subscription`
+  // needs an `oauth` block, and onboarding writes machine settings and never
+  // touches a project directory — offering it meant offering a dead end.
+  const offered = PRESETS.filter((preset) => !needsOauth(preset));
+  for (const preset of offered) {
     const credential =
       preset.env !== undefined && env[preset.env] ? ` — key found in $${preset.env}` : "";
     io.write(`  ${preset.id} — ${preset.label}${credential}`);
@@ -55,9 +59,17 @@ export async function runOnboarding(options: OnboardOptions): Promise<boolean> {
   let preset: Preset | undefined;
   while (preset === undefined) {
     const answer = (await io.question("service: ")).trim();
-    preset = findPreset(answer);
-    if (preset === undefined) {
+    const chosen = findPreset(answer);
+    if (chosen === undefined) {
       io.write(`unknown service "${answer}" — pick one of the ids above`);
+    } else if (needsOauth(chosen)) {
+      // A real preset, so "unknown" would be a lie. It is set up by hand.
+      io.write(
+        `${chosen.id} needs an oauth block (issuer, clientId, baseUrl) in .vesna/config.yaml — ` +
+          "pick one of the ids above",
+      );
+    } else {
+      preset = chosen;
     }
   }
 

@@ -1,4 +1,4 @@
-import { PRESETS, findPreset, needsAddress, type Preset } from "../providers/catalog";
+import { PRESETS, findPreset, needsAddress, needsOauth, type Preset } from "../providers/catalog";
 
 export interface ChatCommand {
   name: string;
@@ -51,19 +51,24 @@ export function describeProviders(
 ): string[] {
   return PRESETS.map((preset) => {
     const mark = preset.id === current ? "  (current)" : "";
-    const credential = needsAddress(preset)
-      ? // Not a credential, but this is the column that says what is missing,
-        // and an address is what stands between `custom` and being usable.
-        "needs a baseUrl"
-      : preset.env === undefined
-        ? preset.auth === "codex"
-          ? "borrowed from codex"
-          : "no key needed"
-        : env[preset.env]
-          ? `$${preset.env}`
-          : `needs $${preset.env}`;
-    return `${preset.id.padEnd(13)}${credential.padEnd(22)}${preset.label}${mark}`;
+    return `${preset.id.padEnd(13)}${requirement(preset, env).padEnd(22)}${preset.label}${mark}`;
   });
+}
+
+/**
+ * The middle column: what stands between this preset and a working call.
+ *
+ * Two of them need something that is not a credential at all, and saying "no
+ * key needed" of those was true and useless — `custom` has no address, and
+ * `subscription` needs an oauth block only a project config can carry.
+ */
+function requirement(preset: Preset, env: Record<string, string | undefined>): string {
+  if (needsAddress(preset)) return "needs a baseUrl";
+  if (needsOauth(preset)) return "oauth in config.yaml";
+  if (preset.env === undefined) {
+    return preset.auth === "codex" ? "borrowed from codex" : "no key needed";
+  }
+  return env[preset.env] ? `$${preset.env}` : `needs $${preset.env}`;
 }
 
 /**

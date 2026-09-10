@@ -121,6 +121,19 @@ export function needsAddress(preset: Preset): boolean {
 }
 
 /**
+ * Whether this preset can only be set up by hand.
+ *
+ * `subscription` is Vesna's own sign-in, and Vesna ships no OAuth client
+ * identity of its own or anyone else's — so it needs an `oauth` block that
+ * only a hand-written `.vesna/config.yaml` can supply. It works when it is
+ * configured; what it cannot be is chosen from a menu that writes machine
+ * settings and never touches a project directory.
+ */
+export function needsOauth(preset: Preset): boolean {
+  return preset.auth === "subscription";
+}
+
+/**
  * What an older config means.
  *
  * Before the catalog, `provider` was a dialect and `auth` said how to get a

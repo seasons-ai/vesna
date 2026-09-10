@@ -120,3 +120,12 @@ test("switching to a service with no address is refused, and says where to put o
 test("a service with no address is refused even where only the machine default would move", () => {
   expect(switchOutcome("custom", { pinned: true, dropped: 0 }).kind).toBe("unaddressed");
 });
+
+// "no key needed" was true and useless: what subscription needs is an oauth
+// block Vesna cannot supply, in a file this listing can at least name.
+test("the listing says what the subscription preset actually needs", () => {
+  const lines = describeProviders("ollama", {});
+  const line = lines.find((entry) => entry.startsWith("subscription"))!;
+  expect(line).toContain("oauth");
+  expect(line).not.toContain("no key needed");
+});

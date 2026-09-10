@@ -87,6 +87,19 @@ function render(starter: Starter): string {
       `model: ${starter.model ?? CODEX_DEFAULT_MODEL}`,
       "# Credentials are borrowed read-only from the Codex CLI. Renew with `codex login`.",
     );
+  } else if (starter.auth === "subscription") {
+    // The one thing that is not true of this setup is "no key needed": Vesna
+    // ships no OAuth client identity of its own or anyone else's, so this file
+    // is the only place the missing half can come from.
+    if (starter.model) lines.push(`model: ${starter.model}`);
+    lines.push(
+      "# Vesna's own sign-in needs an OAuth client you supply. Fill this in, then",
+      "# run `vesna auth login`.",
+      "# oauth:",
+      "#   issuer: https://auth.openai.com",
+      "#   clientId: <your client id>",
+      "#   baseUrl: https://chatgpt.com/backend-api/codex",
+    );
   } else if (starter.provider === "anthropic") {
     if (starter.model) lines.push(`model: ${starter.model}`);
     lines.push("# Reads whatever the Anthropic SDK reads: ANTHROPIC_API_KEY, or an OAuth profile.");
