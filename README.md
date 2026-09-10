@@ -178,6 +178,14 @@ address of its own, or after a `/provider` switch records the one it used.
 Keys are never written here. This file records the *name* of an environment
 variable at most; the value stays in your environment.
 
+Because the file is Vesna's, a value in it that matches no service is reported
+rather than fatal. The settings are ignored, and the commands that need a
+service — a chat, `vesna do`, `vesna auth`, `vesna init` — refuse and name the
+file and the valid ids, while `vesna --help`, `vesna --version`, `vesna doctor`
+and a `--dry-run` go on working. A provider named in a project's
+`.vesna/config.yaml` still stops everything: a person wrote that line, in that
+directory, on purpose.
+
 ### Services
 
 `provider:` names a service from a catalog, not a wire format. Adding one is an

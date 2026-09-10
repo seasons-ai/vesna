@@ -27,6 +27,18 @@ export interface VesnaConfig {
   configured: boolean;
   /** The resolved service, from the catalog. */
   preset: Preset;
+  /**
+   * Why the machine settings could not be used, when they could not.
+   *
+   * `~/.vesna/settings.yaml` is Vesna's own file, and `readSettings` already
+   * tolerates a corrupt one rather than stranding the user with no way in. A
+   * value in it that no preset matches is the same kind of trouble, so it does
+   * not throw either: the settings are ignored, the preset falls back, and the
+   * reason is carried here for the commands that actually need a service to
+   * refuse with (see `needsProvider` in src/cli/main.ts). A provider the
+   * *project* file names is still a throw — a human wrote that one on purpose.
+   */
+  settingsProblem?: string;
   /** True when the project config names a provider, so a command can say it cannot change it here. */
   pinned: boolean;
   provider: ProviderId;
@@ -103,17 +115,27 @@ export async function loadConfig(
   const providerName = named ?? "anthropic";
   const resolved = presetFor(providerName, typeof raw.auth === "string" ? raw.auth : undefined);
 
-  if (resolved === undefined) {
-    // Same reason malformed YAML above is a throw: silently falling back to a
-    // default turns a typo into a mystery. `provider: gruq` used to resolve to
-    // Anthropic without a word, so the failure surfaced much later as a
-    // service nobody chose — for the one field this whole file is about.
-    throw new Error(
-      `${pinned ? path : machinePath} names an unknown provider "${providerName}" — ` +
-        `valid ids: ${PRESETS.map((entry) => entry.id).join(", ")}`,
-    );
+  // Silently falling back to a default turns a typo into a mystery:
+  // `provider: gruq` used to resolve to Anthropic without a word, so the
+  // failure surfaced much later as a service nobody chose. Both branches below
+  // still say so; they differ only in when.
+  let settingsProblem: string | undefined;
+  let preset: Preset;
+  if (resolved !== undefined) {
+    preset = resolved;
+  } else if (pinned) {
+    // A human wrote this line, in this directory, on purpose.
+    throw new Error(unknownProvider(path, providerName));
+  } else {
+    // Vesna's own file. Throwing here ran before `route` ever saw the
+    // arguments, so a one-character typo in it made `vesna --help`,
+    // `--version`, `doctor` and `run --dry-run` all exit 2 — the exact
+    // breakage src/cli/entry.ts exists to prevent, from a file the user may
+    // not know exists. The settings are dropped, the built-in default stands
+    // in, and the reason travels on the config for whoever needs a service.
+    settingsProblem = unknownProvider(machinePath, providerName);
+    preset = presetFor("anthropic", undefined)!;
   }
-  const preset = resolved;
 
   // Provider, model and address are one tuple, not three keys that happen to
   // live in the same file. The machine settings describe exactly one service,
@@ -133,6 +155,7 @@ export async function loadConfig(
     // actually asking.
     configured: text !== null || settings.provider !== undefined,
     preset,
+    ...(settingsProblem !== undefined ? { settingsProblem } : {}),
     pinned,
     provider: preset.dialect === "anthropic" ? "anthropic" : "openai",
     auth: preset.auth ?? "key",
@@ -151,6 +174,18 @@ export async function loadConfig(
     ascii: raw.ascii === true ? true : raw.ascii === false ? false : undefined,
     mouse: raw.mouse === false ? false : undefined,
   };
+}
+
+/**
+ * One wording for both files, so the only difference between them is which
+ * path is named — and the list, because the fix has to be guessable from the
+ * message.
+ */
+function unknownProvider(path: string, name: string): string {
+  return (
+    `${path} names an unknown provider "${name}" — ` +
+    `valid ids: ${PRESETS.map((entry) => entry.id).join(", ")}`
+  );
 }
 
 function describe(value: unknown): string {

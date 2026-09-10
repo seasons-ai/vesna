@@ -106,6 +106,45 @@ export function route(argv: string[], state: { configured: boolean }): Route {
   return "error";
 }
 
+/**
+ * Whether this route has to know which service is configured.
+ *
+ * `~/.vesna/settings.yaml` is Vesna's own file and an unusable value in it is
+ * reported rather than thrown (see `settingsProblem` in src/cli/config.ts), so
+ * something has to decide where that report becomes a refusal. The line is
+ * "does this command reach a model, or write the answer into a file that
+ * outlives it" — `--help`, `--version`, `doctor`, `flows`, `traces` and
+ * `run --dry-run` do neither, and used to exit 2 all the same.
+ *
+ * `init` is on the true side because it pins whatever is in effect into the
+ * user's own `.vesna/config.yaml`: pinning a fallback nobody chose is the
+ * silent-default failure again, written down permanently this time.
+ * `crystallize` reads a trace and writes a flow without ever asking for a
+ * service, and `onboard` is how a machine file gets rewritten in the first
+ * place.
+ */
+export function needsProvider(route: Route, flags: { dryRun: boolean }): boolean {
+  switch (route) {
+    case "chat":
+    case "do":
+    case "auth":
+    case "init":
+    case "heal":
+      return true;
+    case "run":
+      return !flags.dryRun;
+    case "onboard":
+    case "crystallize":
+    case "flows":
+    case "traces":
+    case "doctor":
+    case "usage":
+    case "version":
+    case "error":
+      return false;
+  }
+}
+
 async function loadFlowFile(root: string, name: string) {
   return parseFlow(await readFile(join(root, ".vesna", "flows", `${name}.yaml`), "utf8"));
 }
@@ -159,6 +198,18 @@ export async function main(argv: string[]): Promise<number> {
     console.error(`vesna: unknown command "${command}"`);
     console.error("");
     console.error(USAGE);
+    return EXIT.error;
+  }
+
+  // The machine file could not be used. It is Vesna's own file, so this is a
+  // refusal for the commands that need a service and nothing at all for the
+  // rest — the alternative, throwing out of `loadConfig` above, ran before
+  // `route` had even looked at the arguments.
+  if (
+    earlyConfig.settingsProblem !== undefined &&
+    needsProvider(action, { dryRun: flags["dry-run"] !== undefined })
+  ) {
+    console.error(`vesna: ${earlyConfig.settingsProblem}`);
     return EXIT.error;
   }
 

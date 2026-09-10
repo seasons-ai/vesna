@@ -103,12 +103,51 @@ test("a provider nobody ships is named as a mistake, not resolved to a default",
   });
 });
 
-test("an unknown provider in the machine settings names that file, not the project", async () => {
+/**
+ * The machine file is Vesna's own, and `readSettings` already tolerates a
+ * corrupt one rather than stranding the user with no way in. A value in it
+ * that no preset matches gets the same treatment: reported, not thrown, so
+ * `vesna --help` and `vesna doctor` still work (tests/integration/
+ * machine-settings.test.ts asserts their exit codes). It is still reported —
+ * resolving `gruq` quietly to Anthropic is what f5620a9 removed.
+ */
+test("an unknown provider in the machine settings is reported, not thrown, and names that file", async () => {
   await withDirs(async (root, home) => {
     writeSettings(settingsPath({}, home), { provider: "gruq" });
-    await expect(loadConfig(root, {}, home)).rejects.toThrow(
-      /settings\.yaml names an unknown provider "gruq"/,
-    );
+    const config = await loadConfig(root, {}, home);
+    expect(config.settingsProblem).toMatch(/settings\.yaml names an unknown provider "gruq"/);
+    expect(config.settingsProblem).toContain("ollama");
+  });
+});
+
+test("settings that could not be used supply nothing at all, not half a service", async () => {
+  await withDirs(async (root, home) => {
+    writeSettings(settingsPath({}, home), {
+      provider: "gruq",
+      model: "some-model",
+      baseUrl: "https://gruq.example/v1",
+    });
+    const config = await loadConfig(root, {}, home);
+    expect(config.preset.id).toBe("anthropic");
+    expect(config.model).toBe(findPreset("anthropic")!.model);
+    expect(config.baseUrl).toBeUndefined();
+  });
+});
+
+test("a project that names a real provider is unaffected by an unusable machine file", async () => {
+  await withDirs(async (root, home) => {
+    writeSettings(settingsPath({}, home), { provider: "gruq" });
+    project(root, "provider: ollama\n");
+    const config = await loadConfig(root, {}, home);
+    expect(config.preset.id).toBe("ollama");
+    expect(config.settingsProblem).toBeUndefined();
+  });
+});
+
+test("a usable machine file leaves no problem behind", async () => {
+  await withDirs(async (root, home) => {
+    writeSettings(settingsPath({}, home), { provider: "ollama" });
+    expect((await loadConfig(root, {}, home)).settingsProblem).toBeUndefined();
   });
 });
 
