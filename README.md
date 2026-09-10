@@ -134,29 +134,157 @@ bun install
 bun test
 ```
 
-### Models
+### The first run
 
-Vesna talks to two provider families. The internal message shape is its own, and
-each adapter translates at the edge — so a flow written against one model runs
-against another.
+`vesna` with nothing configured sets itself up, then continues into the chat in
+the same process. It asks which service to talk to, asks for a model, and then
+makes a real call — a short one — before writing anything. A setup that reports
+success because a file was written, rather than because a model answered, is
+the kind of claim this codebase does not accept from its own agent either.
+
+```console
+$ vesna
+Which service should Vesna talk to?
+  anthropic — Anthropic
+  openai — OpenAI
+  codex — ChatGPT subscription, borrowed from the Codex CLI
+  openrouter — OpenRouter
+  groq — Groq — key found in $GROQ_API_KEY
+  ollama — Ollama (local)
+  lmstudio — LM Studio (local)
+  vllm — vLLM (local)
+  custom — Anything else that speaks the OpenAI API
+service: ollama
+model [llama3.2]: qwen3
+verified — Ollama (local) answered as qwen3
+```
+
+What it writes is `~/.vesna/settings.yaml`, which belongs to Vesna and to this
+machine. No project directory is touched: which model you talk to is a property
+of your subscription and your laptop, not of a repository, and nothing should
+have to exist in a folder before you can work in it.
+
+```yaml
+# Written by Vesna. Safe to edit, safe to delete.
+# A .vesna/config.yaml in a project overrides everything here.
+provider: ollama
+model: qwen3
+```
+
+The address is not there because the service already carries one. A `baseUrl:`
+appears when you point a service somewhere else, when the service has no
+address of its own, or after a `/provider` switch records the one it used.
+
+Keys are never written here. This file records the *name* of an environment
+variable at most; the value stays in your environment.
+
+### Services
+
+`provider:` names a service from a catalog, not a wire format. Adding one is an
+entry in `src/providers/catalog.ts` — data, not a code change.
+
+| id | what it is | what it needs |
+| --- | --- | --- |
+| `anthropic` | Anthropic | `ANTHROPIC_API_KEY`, or an OAuth profile |
+| `openai` | OpenAI | `OPENAI_API_KEY` |
+| `codex` | ChatGPT subscription, borrowed from the Codex CLI | a `codex login` you already did |
+| `openrouter` | OpenRouter | `OPENROUTER_API_KEY` |
+| `groq` | Groq | `GROQ_API_KEY` |
+| `ollama`, `lmstudio`, `vllm` | local servers | nothing |
+| `custom` | anything else speaking the OpenAI API | a `baseUrl` you supply |
+| `subscription` | ChatGPT subscription, Vesna's own sign-in | an `oauth` block you write by hand |
+
+Underneath are three wire dialects — Anthropic's, OpenAI chat-completions, and
+OpenAI Responses — and each preset says which one it speaks. The internal
+message shape is Vesna's own and each adapter translates at the edge, so a flow
+written against one model runs against another.
+
+Two entries come with caveats, and they are caveats rather than plans:
+
+- **`custom`** ships no address, because "anything else" cannot have one. It
+  asks for a `baseUrl` during the first run, and refuses to build without one
+  rather than quietly falling back to api.openai.com. It cannot take an API key
+  yet: a key belongs to a named environment variable, and `custom` names none.
+  Use it for endpoints that need no credential; for one that does, add an
+  entry to the catalog naming the variable to read — that is a data change, not
+  a code change.
+- **`subscription`** needs an OAuth client identity that Vesna does not ship —
+  its own or anyone else's — so it can only be set up by hand, in a project
+  config (below). It is deliberately not offered by the first-run menu, which
+  writes machine settings and never touches a project directory.
+
+### Changing your mind
+
+Both from inside the conversation, and both remembered on the machine:
+
+```console
+› /provider
+anthropic     needs $ANTHROPIC_API_KEY   Anthropic
+openai        needs $OPENAI_API_KEY      OpenAI
+codex         borrowed from codex        ChatGPT subscription, borrowed from the Codex CLI
+subscription  oauth in config.yaml       ChatGPT subscription, Vesna's own sign-in
+openrouter    needs $OPENROUTER_API_KEY  OpenRouter
+groq          $GROQ_API_KEY              Groq
+ollama        no key needed              Ollama (local)  (current)
+lmstudio      no key needed              LM Studio (local)
+vllm          no key needed              vLLM (local)
+custom        needs a baseUrl            Anything else that speaks the OpenAI API
+
+› /provider groq
+provider: groq  model llama-3.3-70b-versatile
+
+› /model
+llama-3.3-70b-versatile  (current)
+llama-3.1-8b-instant
+
+› /model llama-3.1-8b-instant
+model: llama-3.1-8b-instant
+```
+
+The conversation carries across a change of provider; only an unanswered tool
+call left behind by an interrupt is dropped, and you are told when that
+happens. A service whose credential is missing is refused here rather than
+switched to, because the alternative is a chat that reports success and a next
+run that exits 1.
+
+`/model` with no argument asks the endpoint itself what it serves — a question
+to a service you are already talking to, not a scan of your machine. Anthropic
+and the two subscription endpoints have a fixed roster instead, so for those it
+is a written-down list.
+
+### Pinning a project
+
+A repository that must use one service says so in `.vesna/config.yaml`, and
+that file wins over the machine settings. Write it with `vesna init`, which
+pins whatever is in effect right now:
+
+```console
+$ vesna init
+Wrote /work/acme/.vesna/config.yaml
+            Groq / llama-3.3-70b-versatile, pinned from the settings currently in effect
+```
 
 ```yaml
 # .vesna/config.yaml
-provider: anthropic
-model: claude-opus-5
-```
+provider: groq
+auth: key
+model: llama-3.3-70b-versatile
+baseUrl: https://api.groq.com/openai/v1
 
-The second adapter speaks the OpenAI chat-completions protocol, which means one
-adapter covers **OpenAI, AIMLAPI, OpenRouter, DeepSeek, Together, vLLM and
-Ollama** — anything that implements it:
-
-```yaml
-provider: openai
-model: llama3.1
-baseUrl: http://localhost:11434/v1   # Ollama; omit for api.openai.com
+# Not written by init: rates are yours to state.
 prices:
-  llama3.1: { input: 0, output: 0 }  # USD per million tokens
+  llama-3.3-70b-versatile: { input: 0.59, output: 0.79 }  # USD per million tokens
 ```
+
+A project that pins its provider owns the model that goes with it, so
+`/provider` and `/model` there change the machine default instead, and say that
+this directory is unchanged — `/model` moving only the model of whatever
+service the machine already defaults to, never its provider. The two files are never mixed: the machine settings
+supply a model or an address only when they name the same service the project
+pinned, because a provider, a model and an address are one tuple — half of one
+service and half of another is a request to the wrong host with the wrong key.
+
+`vesna init` never overwrites an existing config. The file is yours.
 
 Vesna ships prices only for models whose rates it can state accurately. For
 anything else, `prices` is where you supply them — a cost report built on an
@@ -164,25 +292,42 @@ invented number is worse than no cost report.
 
 ### Credentials
 
-Only `vesna do` calls a model. The engine, the fan-out, and the repair path all
-run offline, so most of Vesna needs no credentials at all.
+The engine, the fan-out and the repair path run offline; only live work — the
+chat, `vesna do`, and a node that melted back into live mode — calls a model.
 
-Vesna reads whatever the Anthropic SDK reads, in the SDK's own order:
+Each service reads the variable its own catalog entry names, and only that one.
+An `OPENAI_API_KEY` sitting in your environment is never sent to Groq.
 
 ```bash
 export ANTHROPIC_API_KEY=...   # a static key
 ant auth login                 # or OAuth: refreshed automatically, no key to manage
 ```
 
-For the OpenAI provider, set `OPENAI_API_KEY` — or point `baseUrl` at a local
-host, which needs no credential at all.
+For Anthropic, Vesna reads whatever the Anthropic SDK reads, in the SDK's own
+order. `vesna auth` reports which one will actually be used — including the
+common trap where a stale `ANTHROPIC_API_KEY` silently shadows an OAuth profile
+you thought you were using.
 
-A ChatGPT subscription is an authentication *mode* of the same provider rather
-than a provider of its own. It is opted into, and needs an OAuth client of your
-own: Vesna ships no client identity, its own or anyone else's.
+```console
+$ vesna auth
+provider:   groq  model llama-3.3-70b-versatile
+            Groq
+endpoint:   https://api.groq.com/openai/v1
+credential: GROQ_API_KEY
+```
+
+The same verdict is used by the check that runs before a conversation and by
+`/provider`, so no surface can tell you that you are signed in while the next
+command fails.
+
+A ChatGPT subscription comes in two forms. `codex` borrows the credentials the
+Codex CLI already holds — read-only, never refreshed, renewed with `codex
+login`. `subscription` is Vesna's own sign-in, and needs an OAuth client of
+your own, since Vesna ships no client identity:
 
 ```yaml
-provider: openai
+# .vesna/config.yaml — hand-written; nothing generates this
+provider: subscription
 auth: subscription
 oauth:
   issuer: https://auth.openai.com
@@ -203,19 +348,8 @@ one you land on afterwards. Tokens go to `~/.config/vesna/auth.json` at mode 600
 and are refreshed automatically.
 
 A subscription token is accepted only by the Responses endpoint, so Vesna
-switches wire format with the auth mode — that is why this is a mode and not
-just a different key.
-
-`vesna auth` reports which one will actually be used — including the common trap
-where a stale `ANTHROPIC_API_KEY` silently shadows an OAuth profile you thought
-you were using.
-
-```console
-$ vesna auth
-credential: OAuth profile "default"
-            OAuth profile from `ant auth login`
-profiles:   default (~/.config/anthropic)
-```
+switches wire format with the service — that is why these are two catalog
+entries and not one key swapped for another.
 
 Subscription credentials from Claude Pro or Max are a different mechanism and
 are not supported: a consumer subscription covers Anthropic's own products, not
