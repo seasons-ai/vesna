@@ -6,6 +6,7 @@ import { applyParameters } from "../crystallize/apply";
 import { proposeFlow } from "../crystallize/propose";
 import {
   CHAT_COMMANDS,
+  describeHeader,
   describeModels,
   describeProviders,
   modelSwitchOutcome,
@@ -647,6 +648,7 @@ export async function runApp(deps: AppDeps, io: AppIo): Promise<number> {
           continue;
         }
 
+        const modelBefore = (deps.provider as Partial<ProviderHandle>).model;
         session = await command(
           input.name,
           input.argument,
@@ -659,6 +661,12 @@ export async function runApp(deps: AppDeps, io: AppIo): Promise<number> {
           applyTheme,
           (messages) => newSession(deps, approve, messages),
         );
+        // The stored conversation records which model answered it, and that
+        // was the startup one for the whole file after a mid-session switch.
+        const modelAfter = (deps.provider as Partial<ProviderHandle>).model;
+        if (modelAfter !== undefined && modelAfter !== modelBefore) {
+          remember({ t: "model", model: modelAfter });
+        }
         transcript.endTurn();
         draw();
         continue;
@@ -1003,13 +1011,20 @@ function newSession(
 }
 
 function header(deps: AppDeps, theme: Theme, glyphs: Glyphs): string {
-  const { config } = deps;
-  const mode = config.provider === "openai" ? `${config.provider}/${config.auth}` : config.provider;
+  // The live handle, not deps.config: the config is how the process started,
+  // and `/provider` and `/model` move the connection out from under it. A
+  // plain Provider (most tests, and any consumer that never switches) carries
+  // neither field, hence the fallbacks.
+  const handle = deps.provider as Partial<ProviderHandle>;
+  const { model, service } = describeHeader(
+    handle.model ?? deps.config.model,
+    handle.preset ?? deps.config.preset,
+  );
   const dot = theme.paint("muted", glyphs.bullet);
   // Every span here paints. A bare one would close the run before it with
   // SGR 39 and then render at the terminal's own default foreground, because
   // only the background is re-established per row.
-  return `${theme.paint("petal", glyphs.mark)} ${theme.paint("petal", "vesna")} ${dot} ${theme.paint("text", config.model)} ${dot} ${theme.paint("muted", mode)}`;
+  return `${theme.paint("petal", glyphs.mark)} ${theme.paint("petal", "vesna")} ${dot} ${theme.paint("text", model)} ${dot} ${theme.paint("muted", service)}`;
 }
 
 function hint(theme: Theme, busy: boolean, confirmExit: boolean, glyphs: Glyphs): string {

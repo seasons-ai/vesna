@@ -1,4 +1,4 @@
-import { PRESETS, findPreset } from "../providers/catalog";
+import { PRESETS, findPreset, type Preset } from "../providers/catalog";
 
 export interface ChatCommand {
   name: string;
@@ -61,6 +61,24 @@ export function describeProviders(
           : `needs $${preset.env}`;
     return `${preset.id.padEnd(13)}${credential.padEnd(22)}${preset.label}${mark}`;
   });
+}
+
+/**
+ * The two moving parts of the chat header: which model is answering, and which
+ * service it is being asked through.
+ *
+ * It takes the model and the preset rather than a `VesnaConfig` on purpose.
+ * The config is a snapshot of how the process started, and after `/provider`
+ * or `/model` the pair actually in effect lives on the provider handle — the
+ * header is the one line the user reads to know who is answering, so it has to
+ * be given the live values rather than reach for a frozen object itself.
+ */
+export function describeHeader(model: string, preset: Preset): { model: string; service: string } {
+  const dialect = preset.dialect === "anthropic" ? "anthropic" : "openai";
+  return {
+    model,
+    service: dialect === "anthropic" ? dialect : `${dialect}/${preset.auth ?? "key"}`,
+  };
 }
 
 export type SwitchOutcome =

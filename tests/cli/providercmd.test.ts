@@ -1,6 +1,7 @@
 import { test, expect } from "bun:test";
 import { CHAT_COMMANDS, parseChatInput } from "../../src/cli/chatcmd";
-import { describeProviders, switchFailed, switchOutcome } from "../../src/cli/chatcmd";
+import { describeHeader, describeProviders, switchFailed, switchOutcome } from "../../src/cli/chatcmd";
+import { findPreset } from "../../src/providers/catalog";
 
 test("/provider is a command the parser knows", () => {
   expect(CHAT_COMMANDS.map((c) => c.name)).toContain("provider");
@@ -59,4 +60,22 @@ test("a pinned project names the resolved provider, never an unresolved typo", (
 test("a failed switch names the provider and the error, not just a generic refusal", () => {
   const message = switchFailed("ollama", new Error("connect ECONNREFUSED 127.0.0.1:11434"));
   expect(message).toBe("could not switch to ollama: connect ECONNREFUSED 127.0.0.1:11434");
+});
+
+// The header is drawn from these two values every frame. They come in as
+// arguments rather than being read off a config, because after a switch the
+// pair in effect lives on the provider handle and the config is stale.
+test("the header names the model and the service it is being asked through", () => {
+  expect(describeHeader("llama3.2", findPreset("ollama")!)).toEqual({
+    model: "llama3.2",
+    service: "openai/key",
+  });
+  expect(describeHeader("gpt-5.6-sol", findPreset("codex")!)).toEqual({
+    model: "gpt-5.6-sol",
+    service: "openai/codex",
+  });
+  expect(describeHeader("claude-opus-5", findPreset("anthropic")!)).toEqual({
+    model: "claude-opus-5",
+    service: "anthropic",
+  });
 });

@@ -907,7 +907,9 @@ test("/model with no name lists the roster and marks the current one", async () 
   const { handle } = providerHandle();
   const app = await start(reply("x"), { rows: 24, cols: 100 }, { provider: handle });
   app.input.type("/model\r");
-  await until(() => app.screen().includes("gpt-5.6-sol"), "the listing");
+  // The header names the current model too, now that it follows the handle —
+  // so waiting for the model id alone would win before the listing is drawn.
+  await until(() => app.screen().includes("(current)"), "the listing");
   expect(app.screen()).toMatch(/gpt-5.6-sol.*current|current.*gpt-5.6-sol/s);
   await quit(app);
 });
@@ -1082,6 +1084,67 @@ test("/model after /provider addresses the preset it switched to, not the host t
     model: "llama3.2-mini",
     baseUrl: "http://127.0.0.1:11434/v1",
   });
+  await quit(app);
+});
+
+/**
+ * The header is the one line the user reads to know who is answering, and it
+ * was drawn from `deps.config` — a snapshot of how the process started, which
+ * nothing mutates. `/provider` moved the connection and left the header saying
+ * the old service and the old model.
+ *
+ * Asserting on the whole screen would prove nothing: the switch confirmation in
+ * the transcript names the new model too. Only the header row counts.
+ */
+test("the header follows the switch, not the config the process started with", async () => {
+  const { handle } = providerHandle();
+  const base = await deps(reply("x"));
+  const app = await start(reply("x"), { rows: 14, cols: 64 }, {
+    ...base,
+    provider: handle,
+    config: { ...base.config, pinned: false },
+    env: {},
+    home: await mkdtemp(join(tmpdir(), "vesna-settings-")),
+  });
+  const headerRow = () => app.screen().split("\n")[0]!;
+
+  expect(headerRow()).toContain("gpt-5.6-sol");
+
+  app.input.type("/provider ollama\r");
+  await until(() => /provider: ollama/.test(app.screen()), "the switch confirmation");
+
+  expect(headerRow()).toContain("llama3.2");
+  expect(headerRow()).not.toContain("gpt-5.6-sol");
+  await quit(app);
+});
+
+test("the stored conversation records the model that answered it, not the one at startup", async () => {
+  const store = await mkdtemp(join(tmpdir(), "vesna-hist-"));
+  const record = await openSession({ root: store, cwd: "/w", model: "gpt-5.6-sol" });
+  const { handle } = providerHandle();
+  const base = await deps(reply("x"));
+  const app = await start(reply("x"), { rows: 14, cols: 64 }, {
+    ...base,
+    provider: handle,
+    config: { ...base.config, pinned: false },
+    env: {},
+    home: await mkdtemp(join(tmpdir(), "vesna-settings-")),
+    record,
+    sessionsRoot: store,
+  });
+
+  app.input.type("/provider ollama\r");
+  await until(() => /provider: ollama/.test(app.screen()), "the switch confirmation");
+
+  // The write is a promise the app deliberately does not await, so poll for it
+  // — and read it back through the real loader, not the in-memory summary.
+  for (let attempt = 0; attempt < 100; attempt += 1) {
+    const stored = await readSession(store, record.id);
+    if (stored?.summary.model === "llama3.2") break;
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  }
+  const stored = await readSession(store, record.id);
+  expect(stored!.summary.model).toBe("llama3.2");
   await quit(app);
 });
 

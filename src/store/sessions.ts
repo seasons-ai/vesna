@@ -25,6 +25,8 @@ export type SessionEvent =
   | { t: "notice"; text: string; tone: string }
   /** What the model itself saw, so resuming is the conversation and not a summary. */
   | { t: "messages"; added: AgentMessage[] }
+  /** A mid-conversation `/provider` or `/model`: from here on, someone else answered. */
+  | { t: "model"; model: string }
   | { t: "usage"; inputTokens: number; outputTokens: number; costUsd: number };
 
 export interface SessionSummary {
@@ -111,6 +113,9 @@ export async function openSession(options: {
         summary.messages += 1;
         if (summary.title === "") summary.title = titleOf(event.text);
       }
+      // The model recorded at `openSession` is the one the process started
+      // with; a switch mid-conversation makes it wrong for everything after.
+      if (event.t === "model") summary.model = event.model;
       if (event.t === "usage") summary.costUsd = event.costUsd;
       summary.updatedAt = new Date().toISOString();
       await writeFile(metaPath, JSON.stringify(summary, null, 2));
