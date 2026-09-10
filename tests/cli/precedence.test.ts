@@ -3,6 +3,8 @@ import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { loadConfig } from "../../src/cli/config";
+import { buildProviderFor } from "../../src/cli/context";
+import { findPreset } from "../../src/providers/catalog";
 import { settingsPath, writeSettings } from "../../src/cli/settings";
 
 function withDirs(fn: (root: string, home: string) => Promise<void>) {
@@ -37,14 +39,87 @@ test("global settings supply the provider when the project says nothing", async 
   });
 });
 
-test("the project config beats global settings", async () => {
+/**
+ * Provider, model and address are one tuple, not three keys that happen to sit
+ * in the same file. A project that names only the provider must take the whole
+ * tuple from the service it named — never half of it from a different one.
+ */
+test("the project config beats global settings, model and address included", async () => {
   await withDirs(async (root, home) => {
-    writeSettings(settingsPath({}, home), { provider: "groq" });
+    writeSettings(settingsPath({}, home), {
+      provider: "groq",
+      model: "llama-3.3-70b-versatile",
+      baseUrl: "https://api.groq.com/openai/v1",
+    });
     project(root, "provider: anthropic\n");
     const config = await loadConfig(root, {}, home);
     expect(config.preset.id).toBe("anthropic");
+    expect(config.model).toBe(findPreset("anthropic")!.model);
+    expect(config.baseUrl).toBeUndefined();
   });
 });
+
+/**
+ * The same rule, watched at the wire instead of in the resolved object, and
+ * with the pair that makes it a credential leak rather than a wrong answer:
+ * the machine points at Groq, the project pins OpenAI, and the only key on the
+ * machine is OpenAI's. The address and the key must belong to one service.
+ */
+test("a project pinning only the provider never sends its key to the machine's address", async () => {
+  await withDirs(async (root, home) => {
+    writeSettings(settingsPath({}, home), {
+      provider: "groq",
+      model: "llama-3.3-70b-versatile",
+      baseUrl: "https://api.groq.com/openai/v1",
+    });
+    project(root, "provider: openai\n");
+
+    const env = { OPENAI_API_KEY: "sk-openai-secret" };
+    const config = await loadConfig(root, env, home);
+    const provider = await buildProviderFor(config.preset, config.baseUrl, env);
+
+    const sent = await onTheWire(() =>
+      provider.complete({
+        model: config.model,
+        messages: [{ role: "user", content: [{ type: "text", text: "hi" }] }],
+      }),
+    );
+
+    expect(sent.url).toBe("https://api.openai.com/v1/chat/completions");
+    expect(sent.url).not.toContain("groq");
+    expect(sent.auth).toBe("Bearer sk-openai-secret");
+  });
+});
+
+/**
+ * The network, replaced for the duration of one call, so "where did it go and
+ * what did it carry" is answerable without either a live host or a real
+ * request escaping the test run. Returns the single request that was sent.
+ */
+async function onTheWire(fn: () => Promise<unknown>): Promise<{ url: string; auth: string | null }> {
+  const real = globalThis.fetch;
+  const seen: { url: string; auth: string | null }[] = [];
+  globalThis.fetch = (async (input: unknown, init?: RequestInit) => {
+    seen.push({
+      url: String(input),
+      auth: new Headers(init?.headers).get("authorization"),
+    });
+    return Response.json({
+      model: "m",
+      choices: [{ finish_reason: "stop", message: { role: "assistant", content: "ok" } }],
+      usage: {},
+    });
+  }) as typeof fetch;
+
+  try {
+    await fn();
+  } finally {
+    globalThis.fetch = real;
+  }
+
+  if (seen.length !== 1) throw new Error(`expected exactly one request, saw ${seen.length}`);
+  return seen[0]!;
+}
 
 test("a project model applies over a global one", async () => {
   await withDirs(async (root, home) => {

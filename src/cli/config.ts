@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { parse as parseYaml } from "yaml";
 import { findPreset, presetFor, type Preset } from "../providers/catalog";
 import type { ModelPrice } from "../providers/cost";
-import { readSettings, settingsPath } from "./settings";
+import { readSettings, settingsPath, type GlobalSettings } from "./settings";
 
 export type ProviderId = "anthropic" | "openai";
 
@@ -104,8 +104,17 @@ export async function loadConfig(
     presetFor(providerName, typeof raw.auth === "string" ? raw.auth : undefined) ??
     findPreset("anthropic")!;
 
-  const model = raw.model ?? settings.model ?? preset.model;
-  const baseUrl = raw.baseUrl ?? settings.baseUrl ?? preset.baseUrl;
+  // Provider, model and address are one tuple, not three keys that happen to
+  // live in the same file. The machine settings describe exactly one service,
+  // so a project naming a different one inherits nothing from them: pinning
+  // `provider: openai` while the machine points at Groq would otherwise post
+  // this project's OPENAI_API_KEY to api.groq.com — the two halves of one
+  // request taken from two different services.
+  const machine: GlobalSettings =
+    settings.provider !== undefined && settings.provider === preset.id ? settings : {};
+
+  const model = raw.model ?? machine.model ?? preset.model;
+  const baseUrl = raw.baseUrl ?? machine.baseUrl ?? preset.baseUrl;
 
   return {
     // `configured` used to mean "a project file exists". It now means "there
