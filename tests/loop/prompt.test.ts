@@ -89,3 +89,28 @@ test("an empty AGENTS.md counts as no notes rather than an empty section", async
   await writeFile(join(root, ".vesna", "AGENTS.md"), "   \n\n");
   expect(await readProjectNotes(root)).toBeUndefined();
 });
+
+test("with planning tools available the agent is told to use them", () => {
+  const text = systemPrompt(
+    context({ tools: [tool("plan", "record the plan"), tool("shell", "run a command")] }),
+  );
+  expect(text).toMatch(/plan/i);
+  expect(text).toMatch(/several steps|multi|more than one step/i);
+});
+
+test("it is told a plan needs a spec, and how the user opens one", () => {
+  const text = systemPrompt(context({ tools: [tool("plan", "record the plan")] }));
+  expect(text).toContain("/spec new");
+});
+
+test("without the planning tools none of that is said", () => {
+  const text = systemPrompt(context({ tools: [tool("read", "read a file")] }));
+  expect(text).not.toContain("/spec new");
+});
+
+test("it is told to prove a task rather than declare it finished", () => {
+  const text = systemPrompt(
+    context({ tools: [tool("plan", "p"), tool("task_verify", "prove a task")] }),
+  );
+  expect(text).toMatch(/task_verify/);
+});

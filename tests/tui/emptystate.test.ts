@@ -64,3 +64,13 @@ test("ASCII mode uses the ASCII mark and stays ascii throughout", () => {
   expect(lines.join("\n")).toMatch(/^[\x00-\x7f]*$/);
   expect(lines.join("\n")).toContain("*");
 });
+
+test("the empty screen names the two columns, which are otherwise undiscoverable", () => {
+  const text = at(90, 16).join("\n");
+  expect(text).toContain("/spec");
+  expect(text).toContain("ctrl-b");
+});
+
+test("those hints go when the window is too small for the examples anyway", () => {
+  expect(at(40, 16).join("\n")).not.toContain("ctrl-b");
+});

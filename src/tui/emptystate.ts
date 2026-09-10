@@ -16,9 +16,20 @@ const WORDMARK_PLAIN = "vesna";
 
 const EXAMPLES: [string, string][] = [
   ["ask for something", "read src/*.ts and find the dead code"],
+  ["plan a piece of work", "/spec new reliable cancellation"],
   ["freeze what worked", "/crystallize report"],
   ["run it forever", "vesna run report --map clients.csv"],
 ];
+
+/**
+ * A panel nobody knows how to open may as well not exist. The conversations
+ * column was built, documented and never found, because the only mention of
+ * it was one line among nine in /help.
+ */
+const keysLine = (glyphs: Glyphs) =>
+  ["ctrl-b conversations", "ctrl-g the plan", "/help everything else"].join(
+    ` ${glyphs.bullet} `,
+  );
 
 /** Below these the examples do not fit without wrapping into nonsense. */
 const EXAMPLES_MIN_COLS = 62;
@@ -72,6 +83,9 @@ export function emptyState(options: {
         `${indent}${theme.paint("faint", left.padEnd(label))}   ${theme.paint("muted", right)}`,
       );
     }
+
+    // Last, so that a short window drops it before it drops anything useful.
+    lines.push("", centre(theme.paint("faint", keysLine(glyphs))));
   }
 
   return lines.slice(0, rows);

@@ -49,11 +49,52 @@ export function systemPrompt(context: PromptContext): string {
     ].join("\n"),
   ];
 
+  const planning = planningSection(tools);
+  if (planning !== null) sections.push(planning);
+
   if (notes !== undefined && notes !== "") {
     sections.push(["# Project instructions", "", notes].join("\n"));
   }
 
   return sections.join("\n\n");
+}
+
+/**
+ * Tools alone do not get used.
+ *
+ * The planning nodes were offered for a while and never called once: the model
+ * did thirty-one shell calls and no planning, because nothing told it that
+ * work of several steps is worth recording, or that the panel showing it needs
+ * a spec the user has to open.
+ */
+function planningSection(tools: ToolSpec[]): string | null {
+  const has = (name: string) => tools.some((tool) => tool.name === name);
+  if (!has("plan")) return null;
+
+  const lines = [
+    "When a request takes several steps, record it with `plan` before starting:",
+    "the stage, the acceptance criteria, and the tasks. The user watches that",
+    "panel to see where the work stands, and an unrecorded plan is invisible.",
+    "",
+    "`plan` needs an open spec. If it refuses because there is none, say so and",
+    "ask the user to run `/spec new <name>` — do not carry on silently, and do",
+    "not invent somewhere else to put the plan.",
+  ];
+
+  if (has("task_start")) {
+    lines.push("", "Say which task you are on with `task_start` as you pick it up.");
+  }
+
+  if (has("task_verify")) {
+    lines.push(
+      "",
+      "You cannot mark a task finished by saying so. `task_verify` takes a command",
+      "that fails when the work is not done — a test, a typecheck, a grep — and the",
+      "exit status decides. If it fails, read the output and fix the work.",
+    );
+  }
+
+  return lines.join("\n");
 }
 
 function toolSection(tools: ToolSpec[]): string {
