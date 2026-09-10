@@ -53,6 +53,19 @@ export async function runOnboarding(options: OnboardOptions): Promise<boolean> {
     }
   }
 
+  // A call known in advance to fail is not a proof of anything. Asking for a
+  // key we cannot get is not this task's job — writing one to disk is not
+  // ours to invent — so the honest move is to say what is missing and stop
+  // before spending the user's time on a model question too.
+  if (preset.env !== undefined && !env[preset.env]) {
+    const alsoLogin =
+      preset.id === "anthropic" || preset.auth === "subscription" || preset.auth === "codex"
+        ? " — or run `vesna auth login`"
+        : "";
+    io.write(`${preset.label} needs a key: set $${preset.env} and run this again${alsoLogin}`);
+    return false;
+  }
+
   const modelAnswer = (await io.question(`model [${preset.model}]: `)).trim();
   const model = modelAnswer === "" ? preset.model : modelAnswer;
 

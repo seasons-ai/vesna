@@ -108,7 +108,13 @@ export function fromOpenAIMessage(message: OpenAIMessage): ContentBlock[] {
 
 export function createOpenAICompatibleProvider(options: OpenAICompatibleOptions = {}): Provider {
   const baseUrl = (options.baseUrl ?? "https://api.openai.com/v1").replace(/\/+$/, "");
-  const apiKey = options.apiKey ?? process.env.OPENAI_API_KEY;
+  // No fallback to a hardcoded env var here: which variable holds the key is
+  // a property of the preset (see catalog.ts), not of this dialect. Reading
+  // process.env.OPENAI_API_KEY unconditionally used to mean a Groq preset
+  // with no key of its own would silently authenticate with whatever
+  // OpenAI key happened to be on the machine — sending a stranger's
+  // credential to a third-party host. The caller decides what key applies.
+  const apiKey = options.apiKey;
 
   return {
     id: options.id ?? "openai",

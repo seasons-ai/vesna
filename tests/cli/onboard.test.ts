@@ -82,6 +82,27 @@ test("a key already in the environment is offered rather than asked for", async 
   });
 });
 
+test("a needed key that is absent stops before the call, and writes nothing", async () => {
+  await withHome(async (home) => {
+    let called = false;
+    const screen = io(["groq", ""]);
+    const done = await runOnboarding({
+      io: screen,
+      env: {},
+      home,
+      async verify() {
+        called = true;
+        return "unreachable";
+      },
+    });
+
+    expect(done).toBe(false);
+    expect(called).toBe(false);
+    expect(screen.written.join("\n")).toContain("$GROQ_API_KEY");
+    expect(existsSync(settingsPath({}, home))).toBe(false);
+  });
+});
+
 test("an unknown answer asks again instead of giving up", async () => {
   await withHome(async (home) => {
     const screen = io(["nonsense", "ollama", ""]);

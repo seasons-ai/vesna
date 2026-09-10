@@ -39,6 +39,11 @@ export type BuildProvider = (preset: Preset, baseUrl: string | undefined) => Pro
 /**
  * Builds the provider a preset names.
  *
+ * `env` is a parameter rather than a reach for `process.env` so a test can
+ * hand this a fake one — and, in production, so the key looked up is always
+ * the variable *this preset* names (`preset.env`), never a dialect-wide
+ * default that a different service's credential could satisfy by accident.
+ *
  * The `oauth` block is optional because most presets never need it — it only
  * matters for `auth: "subscription"`, where Vesna ships no client identity of
  * its own and the caller's `.vesna/config.yaml` must supply one.
@@ -46,6 +51,7 @@ export type BuildProvider = (preset: Preset, baseUrl: string | undefined) => Pro
 export async function buildProviderFor(
   preset: Preset,
   baseUrl: string | undefined,
+  env: Record<string, string | undefined> = process.env,
   oauth?: { issuer: string; clientId: string; baseUrl: string; scope?: string },
 ): Promise<Provider> {
   if (preset.dialect === "anthropic") return createAnthropicProvider();
@@ -81,7 +87,15 @@ export async function buildProviderFor(
     });
   }
 
-  return createOpenAICompatibleProvider({ baseUrl: baseUrl ?? preset.baseUrl, id: preset.id });
+  // Only the variable this preset names may supply the key. A preset with no
+  // `env` (ollama, lmstudio, vllm, a bare `custom`) gets no key at all, never
+  // a stand-in borrowed from some other service's variable.
+  const apiKey = preset.env !== undefined ? env[preset.env] : undefined;
+  return createOpenAICompatibleProvider({
+    baseUrl: baseUrl ?? preset.baseUrl,
+    id: preset.id,
+    ...(apiKey !== undefined ? { apiKey } : {}),
+  });
 }
 
 /**
@@ -139,7 +153,7 @@ export async function buildContext(root: string) {
     config.preset,
     config.model,
     config.baseUrl,
-    (preset, baseUrl) => buildProviderFor(preset, baseUrl, config.oauth),
+    (preset, baseUrl) => buildProviderFor(preset, baseUrl, process.env, config.oauth),
   );
   const registry = createRegistry();
   registerBuiltins(registry);
