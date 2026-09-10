@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { chooseStarter, writeStarterConfig } from "../../src/cli/init";
 import { loadConfig } from "../../src/cli/config";
+import { PRESETS } from "../../src/providers/catalog";
 
 async function home(files: Record<string, string> = {}): Promise<string> {
   const dir = await mkdtemp(join(tmpdir(), "vesna-init-home-"));
@@ -86,3 +87,27 @@ test("it returns the path it wrote, so the caller can say where", async () => {
   const path = await writeStarterConfig(dir, { provider: "anthropic", auth: "key" });
   expect(path).toBe(join(dir, ".vesna", "config.yaml"));
 });
+
+// A pin must survive the round trip for every catalog entry, driven from the
+// catalog itself: a preset added later (or one whose dialect collapses onto
+// another, like ollama onto openai) is covered without anyone remembering to
+// add a case. This is what caught `writeStarterConfig` pinning the collapsed
+// dialect (`provider: openai`) for an Ollama setup, which then resolved back
+// to plain OpenAI on the next load.
+for (const preset of PRESETS) {
+  test(`pinning the "${preset.id}" preset round-trips back to itself`, async () => {
+    const dir = await root();
+    await writeStarterConfig(dir, {
+      provider: preset.id,
+      auth: preset.auth ?? "key",
+      model: preset.model,
+      baseUrl: preset.baseUrl,
+      env: preset.env,
+    });
+
+    // An isolated, empty home: real machine-wide settings must not leak in
+    // and silently paper over a pin that did not actually take.
+    const config = await loadConfig(dir, {}, await home());
+    expect(config.preset.id).toBe(preset.id);
+  });
+}
