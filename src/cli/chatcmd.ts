@@ -230,6 +230,8 @@ export type ModelSwitchOutcome =
   | { kind: "pinned"; message: string }
   /** Pinned here, and no machine default to move the model onto. */
   | { kind: "no-default"; message: string }
+  /** Pinned here, and the machine default is a different service entirely. */
+  | { kind: "other-service"; message: string }
   | { kind: "switched"; message: string };
 
 /**
@@ -255,10 +257,19 @@ export type ModelSwitchOutcome =
  * there is nothing to move a model onto — a `model:` with no provider beside
  * it is inherited by nobody (see `loadConfig`) — so that is its own outcome
  * rather than a file written for the look of it.
+ *
+ * `active` is the service the name came from: `/model` with no argument lists
+ * the roster of whatever is answering here, so the name the user then types is
+ * that service's. Moving it onto the machine default is only honest while the
+ * two are the same service. Where they differ — machine default ollama, this
+ * directory pinning codex — writing the model alone still produces a settings
+ * file whose provider and model come from two different places, which is the
+ * `/provider` tuple split again on the model axis. Required rather than
+ * optional so a call site cannot leave it out and get the old behaviour back.
  */
 export function modelSwitchOutcome(
   model: string,
-  state: { pinned: boolean; dropped: number; machineProvider?: string },
+  state: { pinned: boolean; dropped: number; active: string; machineProvider?: string },
 ): ModelSwitchOutcome {
   if (state.pinned && state.machineProvider === undefined) {
     return {
@@ -266,6 +277,15 @@ export function modelSwitchOutcome(
       message:
         "this project pins its provider in .vesna/config.yaml, and there is no machine " +
         "default to change — nothing happened",
+    };
+  }
+  if (state.pinned && state.machineProvider !== state.active) {
+    return {
+      kind: "other-service",
+      message:
+        `this project pins ${state.active} in .vesna/config.yaml, and the machine default ` +
+        `is ${state.machineProvider} — ${model} is a ${state.active} model, so it cannot ` +
+        `become the ${state.machineProvider} default; nothing happened`,
     };
   }
   if (state.pinned) {

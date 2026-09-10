@@ -1111,11 +1111,14 @@ test("a model the host refuses leaves the settings file and the running session 
 
 /**
  * The repro: a machine default of ollama, a directory pinning codex, and
- * `/model x`. The machine default provider became codex — this project's pin,
- * which is precisely the thing that is not supposed to leave this directory —
- * and the message mentioned only the model.
+ * `/model gpt-5.6-sol-mini`. The roster came from codex — the service
+ * answering here — and the write landed on ollama, so every other directory
+ * went on to ask Ollama for a ChatGPT model id.
+ *
+ * The assertion is the file as a second directory reads it, not the notice:
+ * a message that honestly names ollama does not make the pair it wrote real.
  */
-test("a pinned project changes the machine default model and leaves its provider alone", async () => {
+test("a model listed by one service is not written onto a machine default naming another", async () => {
   const settingsHome = await mkdtemp(join(tmpdir(), "vesna-settings-"));
   writeSettings(settingsPath({}, settingsHome), {
     provider: "ollama",
@@ -1124,7 +1127,46 @@ test("a pinned project changes the machine default model and leaves its provider
   });
   const { handle, calls } = providerHandle();
   // The default test config already sets pinned: true, on the codex preset.
-  const app = await start(reply("x"), { rows: 14, cols: 80 }, {
+  const app = await start(reply("x"), { rows: 16, cols: 96 }, {
+    provider: handle,
+    env: {},
+    home: settingsHome,
+  });
+
+  app.input.type("/model gpt-5.6-sol-mini\r");
+  await until(() => /nothing happened/.test(app.screen()), "the refusal");
+
+  expect(calls).toHaveLength(0);
+  expect(handle.model).toBe("gpt-5.6-sol");
+  expect(readSettings(settingsPath({}, settingsHome))).toEqual({
+    provider: "ollama",
+    model: "llama3.2",
+    baseUrl: "http://127.0.0.1:11434/v1",
+  });
+
+  // What a directory that pins nothing gets out of that file: still the pair
+  // Ollama was set up with, not a model it was never asked to serve.
+  const elsewhere = await mkdtemp(join(tmpdir(), "vesna-elsewhere-"));
+  const config = await loadConfig(elsewhere, {}, settingsHome);
+  expect(config.preset.id).toBe("ollama");
+  expect(config.model).toBe("llama3.2");
+  await quit(app);
+});
+
+/**
+ * The same command where the two agree: the machine default is codex, this
+ * directory pins codex, and the roster the name came from is codex's. There
+ * the model moves, because the pair it lands in is one service's.
+ */
+test("a pinned project moves the machine default model when it is the same service", async () => {
+  const settingsHome = await mkdtemp(join(tmpdir(), "vesna-settings-"));
+  writeSettings(settingsPath({}, settingsHome), {
+    provider: "codex",
+    model: "gpt-5.6-sol",
+    baseUrl: CODEX_BASE_URL,
+  });
+  const { handle, calls } = providerHandle();
+  const app = await start(reply("x"), { rows: 16, cols: 96 }, {
     provider: handle,
     env: {},
     home: settingsHome,
@@ -1133,13 +1175,14 @@ test("a pinned project changes the machine default model and leaves its provider
   app.input.type("/model gpt-5.6-sol-mini\r");
   await until(() => /unchanged here/.test(app.screen()), "the pinned notice");
 
+  // Nothing changed here: the project pins its own service and model.
   expect(calls).toHaveLength(0);
   expect(handle.model).toBe("gpt-5.6-sol");
-  expect(readSettings(settingsPath({}, settingsHome))).toEqual({
-    provider: "ollama",
-    model: "gpt-5.6-sol-mini",
-    baseUrl: "http://127.0.0.1:11434/v1",
-  });
+
+  const elsewhere = await mkdtemp(join(tmpdir(), "vesna-elsewhere-"));
+  const config = await loadConfig(elsewhere, {}, settingsHome);
+  expect(config.preset.id).toBe("codex");
+  expect(config.model).toBe("gpt-5.6-sol-mini");
   await quit(app);
 });
 

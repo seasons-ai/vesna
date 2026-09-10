@@ -937,10 +937,15 @@ async function command(
     const outcome = modelSwitchOutcome(wanted, {
       pinned: deps.config.pinned,
       dropped: carried.dropped,
+      // The handle, because the roster above came from the handle: whichever
+      // service listed the models is the service the typed name belongs to.
+      active: handle.preset.id,
       ...(machine.provider !== undefined ? { machineProvider: machine.provider } : {}),
     });
 
-    if (outcome.kind === "no-default") {
+    // Named by what may proceed, for the same reason /provider is: both
+    // branches below write `~/.vesna/settings.yaml`.
+    if (outcome.kind !== "switched" && outcome.kind !== "pinned") {
       transcript.notice(outcome.message, "warn");
       return session;
     }

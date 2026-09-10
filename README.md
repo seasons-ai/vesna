@@ -281,8 +281,11 @@ prices:
 
 A project that pins its provider owns the model that goes with it, so
 `/provider` and `/model` there change the machine default instead, and say that
-this directory is unchanged — `/model` moving only the model of whatever
-service the machine already defaults to, never its provider. The two files are never mixed: the machine settings
+this directory is unchanged. `/model` moves only that default's model, never
+its provider — and only where the machine already defaults to the same service
+this directory is talking to. The roster you picked the name from is that
+service's, so setting it beside a different provider's name would leave the two
+halves of one file describing two services. The two files are never mixed: the machine settings
 supply a model or an address only when they name the same service the project
 pinned, because a provider, a model and an address are one tuple — half of one
 service and half of another is a request to the wrong host with the wrong key.
