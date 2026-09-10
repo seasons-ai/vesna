@@ -17,9 +17,9 @@ import { specsRoot } from "../spec/store";
 import { createPlanNodes } from "../nodes/plan";
 import { colorDepth, resolveTheme } from "../tui/theme";
 import { loadConfig, type VesnaConfig } from "./config";
+import { CODEX_BASE_URL } from "../providers/catalog";
 
-/** The subscription endpoint the Codex CLI talks to. */
-export const CODEX_BASE_URL = "https://chatgpt.com/backend-api/codex";
+export { CODEX_BASE_URL } from "../providers/catalog";
 
 async function buildProvider(config: VesnaConfig) {
   if (config.provider !== "openai") return createAnthropicProvider();
