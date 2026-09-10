@@ -332,7 +332,9 @@ credential: GROQ_API_KEY
 
 The same verdict is used by the check that runs before a conversation and by
 `/provider`, so no surface can tell you that you are signed in while the next
-command fails.
+command fails. That covers having somewhere to send the request at all: a
+`custom` with no `baseUrl` is refused here, not reported against the address
+the OpenAI dialect would otherwise have fallen back to.
 
 A ChatGPT subscription comes in two forms. `codex` borrows the credentials the
 Codex CLI already holds — read-only, never refreshed, renewed with `codex

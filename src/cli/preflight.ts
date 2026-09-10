@@ -2,7 +2,7 @@ import { codexAuthPath, readCodexAuth } from "../auth/codex";
 import { authPath, isExpired, loadAuth } from "../auth/store";
 import { configDir, credentialSource, listProfiles, type CredentialSource } from "./auth";
 import type { VesnaConfig } from "./config";
-import type { Preset } from "../providers/catalog";
+import { needsAddress, type Preset } from "../providers/catalog";
 import { CODEX_BASE_URL } from "./context";
 
 /**
@@ -35,7 +35,15 @@ export type Credential =
        */
       env?: string;
     }
-  | { mode: "anthropic"; source: CredentialSource; dir: string; profiles: string[] };
+  | { mode: "anthropic"; source: CredentialSource; dir: string; profiles: string[] }
+  /**
+   * A preset with nowhere to send a request. There is no credential question
+   * to answer yet — and, more to the point, no endpoint to report: the openai
+   * dialect falls back to api.openai.com when it is given none, so this module
+   * naming a host here would name the one host `needsAddress` exists to stop
+   * anyone reaching by accident.
+   */
+  | { mode: "unaddressed"; id: string };
 
 type Env = Record<string, string | undefined>;
 
@@ -65,6 +73,16 @@ export async function inspectCredential(
   }
 
   if (config.provider === "openai") {
+    // Before anything else, and asking the same question src/cli/context.ts
+    // asks before it builds a provider. Skipping it is how `vesna auth`
+    // reported `endpoint: https://api.openai.com/v1` and `credential: none
+    // needed (local endpoint)` with exit 0 for an unaddressed `custom`, while
+    // the very next command refused to build it at all — the disagreement the
+    // header of this module says cannot happen.
+    if (config.baseUrl === undefined && needsAddress(config.preset)) {
+      return { mode: "unaddressed", id: config.preset.id };
+    }
+
     const endpoint = config.baseUrl ?? "https://api.openai.com/v1";
     // `VesnaConfig.provider` collapses groq, openrouter, custom and openai
     // into one dialect value, so the actual variable to check has to come
@@ -132,6 +150,9 @@ export function usable(credential: Credential): boolean {
       return credential.state === "valid";
     case "anthropic":
       return credential.source.kind !== "none" && credential.source.kind !== "missing_profile";
+    case "unaddressed":
+      // Not "no credential": no service. Nothing can be used yet.
+      return false;
   }
 }
 
@@ -167,6 +188,11 @@ export function remedy(config: VesnaConfig, credential: Credential): string[] {
         "  ant auth login              # OAuth, refreshed automatically, no static key",
       );
       break;
+    case "unaddressed":
+      // The line to add, rather than a command to run: this one is settled by
+      // editing a file, and the two files that may carry it are both named.
+      lines.push("  baseUrl: http://127.0.0.1:8080/v1   # in ~/.vesna/settings.yaml or .vesna/config.yaml");
+      break;
   }
   return lines;
 }
@@ -186,5 +212,9 @@ export function problem(credential: Credential): string {
       return credential.source.kind === "missing_profile"
         ? `ANTHROPIC_PROFILE names "${credential.source.profile}", which does not exist`
         : "no Anthropic credentials found";
+    case "unaddressed":
+      // The same words `/provider` uses for the same refusal (see
+      // src/cli/chatcmd.ts), so the two surfaces read as one program.
+      return `${credential.id} has no address of its own`;
   }
 }

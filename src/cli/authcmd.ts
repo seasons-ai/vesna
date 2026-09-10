@@ -86,7 +86,12 @@ export async function authCommand(
 
     const credential = await inspectCredential(config, process.env, homedir());
 
-    if (credential.mode === "codex") {
+    if (credential.mode === "unaddressed") {
+      // No endpoint line to print, because there is no endpoint: printing the
+      // openai dialect's fallback here is what told the user they were set up
+      // to talk to api.openai.com. The problem and remedy below say the rest.
+      console.log(`endpoint:   ${theme.paint("warn", "not configured")}`);
+    } else if (credential.mode === "codex") {
       console.log(`endpoint:   ${credential.endpoint}`);
       if (credential.state === "missing") {
         console.log(`credential: ${theme.paint("warn", "no codex subscription token")}`);

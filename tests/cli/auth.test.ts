@@ -4,6 +4,7 @@ import { authCommand } from "../../src/cli/authcmd";
 import type { VesnaConfig } from "../../src/cli/config";
 import { findPreset } from "../../src/providers/catalog";
 import { resolveTheme } from "../../src/tui/theme";
+import { EXIT } from "../../src/cli/exit";
 
 test("an API key in the environment wins", () => {
   const source = credentialSource({ ANTHROPIC_API_KEY: "sk-x" }, ["default"]);
@@ -83,4 +84,41 @@ test("the status names the service, not the dialect it happens to speak", async 
 
   expect(lines[0]).toContain("groq");
   expect(lines[0]).not.toContain("openai");
+});
+
+/**
+ * `vesna auth` for a `custom` with no baseUrl printed
+ * `endpoint: https://api.openai.com/v1` and `credential: none needed (local
+ * endpoint)`, and exited 0 — then `vesna do "hi"` refused to build the
+ * provider. The status screen names no host now, because there is no host:
+ * the fallback it was printing is the one d20cce8 exists to stop reaching.
+ */
+test("the status refuses an unaddressed custom rather than naming a host nobody chose", async () => {
+  const config = {
+    configured: true,
+    preset: findPreset("custom")!,
+    pinned: true,
+    provider: "openai",
+    auth: "key",
+    model: "local-model",
+    theme: "mono",
+    prices: {},
+    permissions: {},
+  } as VesnaConfig;
+
+  const lines: string[] = [];
+  const real = console.log;
+  console.log = (...args: unknown[]) => void lines.push(args.join(" "));
+  let status: number;
+  try {
+    status = await authCommand(undefined, config, resolveTheme("mono", { depth: 0 }), "/tmp");
+  } finally {
+    console.log = real;
+  }
+
+  expect(status).toBe(EXIT.error);
+  expect(lines.join("\n")).not.toContain("api.openai.com");
+  expect(lines.join("\n")).toContain("custom has no address of its own");
+  // The two files that may carry one, so the fix is guessable from the screen.
+  expect(lines.join("\n")).toContain("baseUrl");
 });

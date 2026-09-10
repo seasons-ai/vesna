@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { inspectCredential, problem, remedy, usable, type Credential } from "../../src/cli/preflight";
 import type { VesnaConfig } from "../../src/cli/config";
 import { findPreset } from "../../src/providers/catalog";
+import { buildProviderFor } from "../../src/cli/context";
 
 function config(over: Partial<VesnaConfig> = {}): VesnaConfig {
   return {
@@ -228,4 +229,46 @@ test("codex behaviour is unchanged by the preset-aware guard", async () => {
     dir,
   );
   expect(usable(c)).toBe(true);
+});
+
+/**
+ * The one thing this module's header promises: `vesna auth` and the command
+ * after it cannot disagree.
+ *
+ * `inspectCredential` never asked `needsAddress`, so for a `custom` with no
+ * baseUrl it reported `https://api.openai.com/v1` — the openai dialect's
+ * fallback, and the exact host d20cce8 exists to stop anyone reaching by
+ * accident — and called it `none needed (local endpoint)`, exit 0. The next
+ * command refused to build the provider at all.
+ */
+test("an unaddressed custom is refused by the status command, not blessed", async () => {
+  const conf = config({ preset: findPreset("custom")!, provider: "openai", auth: "key" });
+  const c = await inspectCredential(conf, {}, await home());
+
+  expect(usable(c)).toBe(false);
+  expect(problem(c)).toBe("custom has no address of its own");
+  expect(problem(c)).not.toContain("api.openai.com");
+  expect(JSON.stringify(c)).not.toContain("api.openai.com");
+  expect(remedy(conf, c).join(" ")).toContain("baseUrl");
+});
+
+test("the status verdict and the next command's outcome agree about an unaddressed custom", async () => {
+  const conf = config({ preset: findPreset("custom")!, provider: "openai", auth: "key" });
+  const c = await inspectCredential(conf, {}, await home());
+
+  // Two independent answers to "can this run?", which used to be yes and no.
+  expect(usable(c)).toBe(false);
+  await expect(buildProviderFor(conf.preset, conf.baseUrl, {})).rejects.toThrow(/needs a baseUrl/);
+});
+
+test("a custom that has been given an address is reported exactly as before", async () => {
+  const conf = config({
+    preset: findPreset("custom")!,
+    provider: "openai",
+    auth: "key",
+    baseUrl: "http://127.0.0.1:8080/v1",
+  });
+  const c = await inspectCredential(conf, {}, await home());
+  expect(usable(c)).toBe(true);
+  expect(c.mode === "openai-key" && c.endpoint).toBe("http://127.0.0.1:8080/v1");
 });
