@@ -130,6 +130,22 @@ export function switchFailed(id: string, error: Error): string {
   return `could not switch to ${id}: ${error.message}`;
 }
 
+/**
+ * The wording for a switch refused because the service cannot authenticate.
+ *
+ * `problem` and `hints` come from `src/cli/preflight.ts`, so this says exactly
+ * what `vesna auth` and the check before a conversation say — a switch that
+ * succeeded here and then failed on the next run is the disagreement that
+ * module exists to prevent.
+ */
+export function switchBlocked(
+  id: string,
+  problem: string,
+  hints: string[],
+): { message: string; hints: string[] } {
+  return { message: `not switching to ${id}: ${problem}`, hints };
+}
+
 /** One line per model on offer, the current one marked. */
 export function describeModels(models: string[], current: string): string[] {
   return models.map((model) => `${model}${model === current ? "  (current)" : ""}`);

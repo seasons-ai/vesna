@@ -886,6 +886,57 @@ test("an unreachable provider leaves the settings file and the running session u
   await quit(app);
 });
 
+/**
+ * `vesna auth`, the check before a conversation and onboarding all route
+ * through `inspectCredential`. `/provider` consulted nothing: it reported
+ * success, wrote the machine default, and the next bare `vesna` exited 1 with
+ * "GROQ_API_KEY is not set". The user had disabled their own CLI from inside a
+ * chat, and nothing on screen named the fix — though the listing above it
+ * already prints `needs $GROQ_API_KEY`.
+ */
+test("/provider refuses a service whose credential is missing, rather than disabling the next run", async () => {
+  const settingsHome = await mkdtemp(join(tmpdir(), "vesna-settings-"));
+  const { handle, calls } = providerHandle();
+  const base = await deps(reply("x"));
+  const app = await start(reply("x"), { rows: 20, cols: 80 }, {
+    ...base,
+    provider: handle,
+    config: { ...base.config, pinned: false },
+    env: {},
+    home: settingsHome,
+  });
+
+  app.input.type("/provider groq\r");
+  await until(() => /GROQ_API_KEY/.test(app.screen()), "the refusal");
+
+  expect(calls).toHaveLength(0);
+  expect(handle.preset.id).toBe("codex");
+  expect(readSettings(settingsPath({}, settingsHome))).toEqual({});
+  expect(app.screen()).not.toContain("provider: groq");
+  await quit(app);
+});
+
+test("/provider switches when the credential the preset names is there", async () => {
+  const settingsHome = await mkdtemp(join(tmpdir(), "vesna-settings-"));
+  const { handle, calls } = providerHandle();
+  const base = await deps(reply("x"));
+  const app = await start(reply("x"), { rows: 20, cols: 80 }, {
+    ...base,
+    provider: handle,
+    config: { ...base.config, pinned: false },
+    env: { GROQ_API_KEY: "gk-present" },
+    home: settingsHome,
+  });
+
+  app.input.type("/provider groq\r");
+  await until(() => /provider: groq/.test(app.screen()), "the switch confirmation");
+
+  expect(calls).toHaveLength(1);
+  expect(handle.preset.id).toBe("groq");
+  expect(readSettings(settingsPath({}, settingsHome)).provider).toBe("groq");
+  await quit(app);
+});
+
 test("a pinned project changes the machine default and says this directory is unchanged", async () => {
   const settingsHome = await mkdtemp(join(tmpdir(), "vesna-settings-"));
   const { handle, calls } = providerHandle();

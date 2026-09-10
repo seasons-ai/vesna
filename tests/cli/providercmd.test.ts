@@ -1,6 +1,12 @@
 import { test, expect } from "bun:test";
 import { CHAT_COMMANDS, parseChatInput } from "../../src/cli/chatcmd";
-import { describeHeader, describeProviders, switchFailed, switchOutcome } from "../../src/cli/chatcmd";
+import {
+  describeHeader,
+  describeProviders,
+  switchBlocked,
+  switchFailed,
+  switchOutcome,
+} from "../../src/cli/chatcmd";
 import { findPreset } from "../../src/providers/catalog";
 
 test("/provider is a command the parser knows", () => {
@@ -85,4 +91,16 @@ test("the header names the model and the service it is being asked through", () 
     model: "claude-opus-5",
     service: "anthropic",
   });
+});
+
+// The refusal repeats the verdict `vesna auth` and the pre-chat check already
+// give, rather than inventing a second opinion for this one surface.
+test("a switch blocked by a missing credential says which one, and how to supply it", () => {
+  const blocked = switchBlocked("groq", "GROQ_API_KEY is not set", [
+    "  export GROQ_API_KEY=...   # or point baseUrl at a local host",
+  ]);
+  expect(blocked.message).toBe("not switching to groq: GROQ_API_KEY is not set");
+  expect(blocked.hints).toEqual([
+    "  export GROQ_API_KEY=...   # or point baseUrl at a local host",
+  ]);
 });

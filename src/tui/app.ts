@@ -11,6 +11,7 @@ import {
   describeProviders,
   modelSwitchOutcome,
   parseChatInput,
+  switchBlocked,
   switchFailed,
   switchOutcome,
 } from "../cli/chatcmd";
@@ -18,6 +19,7 @@ import { describeDropped } from "../cli/dropped";
 import { EXIT } from "../cli/exit";
 import { formatParameter } from "../cli/format";
 import { settingsPath, writeSettings } from "../cli/settings";
+import { asPreset, inspectCredential, problem, remedy, usable } from "../cli/preflight";
 import { carryHistory } from "../loop/carry";
 import { createSession, type Session } from "../loop/session";
 import { findPreset } from "../providers/catalog";
@@ -865,6 +867,20 @@ async function command(
     }
 
     const preset = findPreset(wanted)!;
+
+    // The same verdict `vesna auth`, the check before a conversation and
+    // onboarding all use. Without it this command reported success, wrote the
+    // machine default, and left the next bare `vesna` exiting 1 on a
+    // credential that was never there — a CLI disabled from inside a chat.
+    const probe = asPreset(deps.config, preset);
+    const credential = await inspectCredential(probe, env, deps.home ?? homedir());
+    if (!usable(credential)) {
+      const blocked = switchBlocked(preset.id, problem(credential), remedy(probe, credential));
+      transcript.notice(blocked.message, "warn");
+      for (const line of blocked.hints) transcript.notice(line, "muted");
+      return session;
+    }
+
     const path = settingsPath(env, deps.home ?? homedir());
     const settings = {
       provider: preset.id,

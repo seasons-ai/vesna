@@ -2,6 +2,7 @@ import { codexAuthPath, readCodexAuth } from "../auth/codex";
 import { authPath, isExpired, loadAuth } from "../auth/store";
 import { configDir, credentialSource, listProfiles, type CredentialSource } from "./auth";
 import type { VesnaConfig } from "./config";
+import type { Preset } from "../providers/catalog";
 import { CODEX_BASE_URL } from "./context";
 
 /**
@@ -95,6 +96,28 @@ export async function inspectCredential(
   const dir = configDir(env, process.platform, home);
   const profiles = await listProfiles(dir);
   return { mode: "anthropic", source: credentialSource(env, profiles), dir, profiles };
+}
+
+/**
+ * The config a preset would produce, for asking about a service before
+ * switching to it.
+ *
+ * `/provider` has to answer "could this one authenticate?" about a preset that
+ * is not in effect yet, and `inspectCredential` reads a whole `VesnaConfig` —
+ * so the three fields that describe the service get replaced and the rest
+ * (where the project lives, whether it is configured, the oauth block) is kept
+ * as it is. Building this inline at the call site is what let `/provider` skip
+ * the question entirely.
+ */
+export function asPreset(config: VesnaConfig, preset: Preset): VesnaConfig {
+  return {
+    ...config,
+    preset,
+    provider: preset.dialect === "anthropic" ? "anthropic" : "openai",
+    auth: preset.auth ?? "key",
+    model: preset.model,
+    baseUrl: preset.baseUrl,
+  };
 }
 
 export function usable(credential: Credential): boolean {
