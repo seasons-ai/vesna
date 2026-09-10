@@ -23,7 +23,7 @@ import { runTui } from "../tui/stdin";
 import { buildContext, buildProviderFor, CODEX_BASE_URL } from "./context";
 import { EXIT } from "./exit";
 import { isHelp, isVersion, VERSION } from "./entry";
-import { parseFlags } from "./flags";
+import { isFlagSet, parseFlags } from "./flags";
 import { formatParameter } from "./format";
 import { describeDropped } from "./dropped";
 import { diagnose } from "./doctor";
@@ -207,7 +207,7 @@ export async function main(argv: string[]): Promise<number> {
   // `route` had even looked at the arguments.
   if (
     earlyConfig.settingsProblem !== undefined &&
-    needsProvider(action, { dryRun: flags["dry-run"] !== undefined })
+    needsProvider(action, { dryRun: isFlagSet(flags, "dry-run") })
   ) {
     console.error(`vesna: ${earlyConfig.settingsProblem}`);
     return EXIT.error;
@@ -322,7 +322,7 @@ export async function main(argv: string[]): Promise<number> {
           ),
         ];
 
-    if (flags["dry-run"]) {
+    if (isFlagSet(flags, "dry-run")) {
       const plan = planRun(flow, registry, rows[0] ?? {});
       console.log(`${flow.name}  ${rows.length} row${rows.length === 1 ? "" : "s"}`);
       console.log(`  order:    ${plan.order.join(" -> ")}`);
