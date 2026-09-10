@@ -110,3 +110,33 @@ export function switchOutcome(
 export function switchFailed(id: string, error: Error): string {
   return `could not switch to ${id}: ${error.message}`;
 }
+
+/** One line per model on offer, the current one marked. */
+export function describeModels(models: string[], current: string): string[] {
+  return models.map((model) => `${model}${model === current ? "  (current)" : ""}`);
+}
+
+export type ModelSwitchOutcome =
+  | { kind: "pinned"; message: string }
+  | { kind: "switched"; message: string };
+
+/**
+ * `/model` never rejects a name as unknown — the roster comes from the
+ * endpoint itself or a fixed list, not a catalog to validate against — so
+ * unlike `switchOutcome` there is no "unknown" case here. What it does share
+ * with `/provider` is which file gets to say no: a project that pins its
+ * provider in `.vesna/config.yaml` also owns the model that goes with it, so
+ * the same `pinned` flag applies and the switch only ever touches the machine
+ * default.
+ */
+export function modelSwitchOutcome(model: string, state: { pinned: boolean }): ModelSwitchOutcome {
+  if (state.pinned) {
+    return {
+      kind: "pinned",
+      message:
+        "this project pins its provider in .vesna/config.yaml — " +
+        `changed the machine default model to ${model}, unchanged here`,
+    };
+  }
+  return { kind: "switched", message: `model: ${model}` };
+}

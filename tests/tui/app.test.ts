@@ -890,6 +890,88 @@ test("a pinned project changes the machine default and says this directory is un
   await quit(app);
 });
 
+test("/model with no name lists the roster and marks the current one", async () => {
+  const { handle } = providerHandle();
+  const app = await start(reply("x"), { rows: 24, cols: 100 }, { provider: handle });
+  app.input.type("/model\r");
+  await until(() => app.screen().includes("gpt-5.6-sol"), "the listing");
+  expect(app.screen()).toMatch(/gpt-5.6-sol.*current|current.*gpt-5.6-sol/s);
+  await quit(app);
+});
+
+test("/model switches, remembers it on the machine, and leaves the conversation running", async () => {
+  const settingsHome = await mkdtemp(join(tmpdir(), "vesna-settings-"));
+  const { handle, calls } = providerHandle();
+  const base = await deps(reply("x"));
+  const app = await start(reply("x"), { rows: 14, cols: 64 }, {
+    ...base,
+    provider: handle,
+    config: { ...base.config, pinned: false },
+    env: {},
+    home: settingsHome,
+  });
+
+  app.input.type("hi\r");
+  await until(() => app.screen().includes("x"), "the first answer");
+
+  app.input.type("/model gpt-5.6-sol-mini\r");
+  await until(() => /model: gpt-5\.6-sol-mini/.test(app.screen()), "the switch confirmation");
+
+  expect(calls).toEqual([{ preset: findPreset("codex")!, model: "gpt-5.6-sol-mini" }]);
+  const written = readSettings(settingsPath({}, settingsHome));
+  expect(written).toEqual({ provider: "codex", model: "gpt-5.6-sol-mini" });
+
+  // Switching the model does not restart the conversation.
+  expect(app.screen()).toContain("hi");
+  await quit(app);
+});
+
+test("a model the host refuses leaves the settings file and the running session untouched", async () => {
+  const settingsHome = await mkdtemp(join(tmpdir(), "vesna-settings-"));
+  const { handle, calls } = providerHandle({ fail: "connection refused" });
+  const base = await deps(reply("x"));
+  const app = await start(reply("x"), { rows: 14, cols: 64 }, {
+    ...base,
+    provider: handle,
+    config: { ...base.config, pinned: false },
+    env: {},
+    home: settingsHome,
+  });
+
+  app.input.type("hi\r");
+  await until(() => app.screen().includes("x"), "the first answer");
+
+  app.input.type("/model gpt-5.6-sol-mini\r");
+  await until(() => /connection refused/.test(app.screen()), "the failure notice");
+
+  expect(calls).toHaveLength(1);
+  expect(handle.model).toBe("gpt-5.6-sol");
+  expect(app.screen()).not.toContain("model: gpt-5.6-sol-mini");
+  expect(readSettings(settingsPath({}, settingsHome))).toEqual({});
+  expect(app.screen()).toContain("hi");
+  await quit(app);
+});
+
+test("a pinned project changes the machine default model and says this directory is unchanged", async () => {
+  const settingsHome = await mkdtemp(join(tmpdir(), "vesna-settings-"));
+  const { handle, calls } = providerHandle();
+  // The default test config already sets pinned: true.
+  const app = await start(reply("x"), { rows: 14, cols: 64 }, {
+    provider: handle,
+    env: {},
+    home: settingsHome,
+  });
+
+  app.input.type("/model gpt-5.6-sol-mini\r");
+  await until(() => /unchanged here/.test(app.screen()), "the pinned notice");
+
+  expect(calls).toHaveLength(0);
+  expect(handle.model).toBe("gpt-5.6-sol");
+  const written = readSettings(settingsPath({}, settingsHome));
+  expect(written.model).toBe("gpt-5.6-sol-mini");
+  await quit(app);
+});
+
 test("a conversation is written down as it happens, not at exit", async () => {
   const store = await mkdtemp(join(tmpdir(), "vesna-hist-"));
   const record = await openSession({ root: store, cwd: "/w", model: "m" });

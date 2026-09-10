@@ -4,7 +4,15 @@ import { join } from "node:path";
 import { stringify as toYaml } from "yaml";
 import { applyParameters } from "../crystallize/apply";
 import { proposeFlow } from "../crystallize/propose";
-import { CHAT_COMMANDS, describeProviders, parseChatInput, switchFailed, switchOutcome } from "../cli/chatcmd";
+import {
+  CHAT_COMMANDS,
+  describeModels,
+  describeProviders,
+  modelSwitchOutcome,
+  parseChatInput,
+  switchFailed,
+  switchOutcome,
+} from "../cli/chatcmd";
 import { describeDropped } from "../cli/dropped";
 import { EXIT } from "../cli/exit";
 import { formatParameter } from "../cli/format";
@@ -12,6 +20,7 @@ import { settingsPath, writeSettings } from "../cli/settings";
 import { carryHistory } from "../loop/carry";
 import { createSession, type Session } from "../loop/session";
 import { findPreset } from "../providers/catalog";
+import { listModels } from "../providers/models";
 import type { Provider } from "../providers/types";
 import type { Registry } from "../registry/types";
 import type { TraceStore } from "../store/types";
@@ -875,6 +884,51 @@ async function command(
     writeSettings(path, settings);
     transcript.notice(outcome.message, "ok");
     return makeSession(carried.messages);
+  }
+
+  if (name === "model") {
+    // Same reasoning as /provider above: AppDeps hands out a plain Provider,
+    // but the TUI always receives the richer handle that can report and
+    // switch model.
+    const handle = deps.provider as ProviderHandle;
+    const wanted = argument.trim();
+
+    if (wanted === "") {
+      const models = await listModels(handle.preset, deps.config.baseUrl);
+      for (const line of describeModels(models, handle.model)) {
+        transcript.notice(line, "muted");
+      }
+      return session;
+    }
+
+    const outcome = modelSwitchOutcome(wanted, { pinned: deps.config.pinned });
+    const env = deps.env ?? process.env;
+    const path = settingsPath(env, deps.home ?? homedir());
+    const settings = {
+      provider: handle.preset.id,
+      model: wanted,
+      ...(deps.config.baseUrl !== undefined ? { baseUrl: deps.config.baseUrl } : {}),
+    };
+
+    if (outcome.kind === "pinned") {
+      // Only the machine default moves. The running conversation, and the
+      // model serving it, are exactly what this project pins them to.
+      writeSettings(path, settings);
+      transcript.notice(outcome.message, "ok");
+      return session;
+    }
+
+    // Build the replacement before writing anything: a host that refuses the
+    // connection must leave the running session exactly as it was.
+    try {
+      await handle.switch(handle.preset, wanted, deps.config.baseUrl);
+    } catch (error) {
+      transcript.notice(switchFailed(wanted, error as Error), "error");
+      return session;
+    }
+    writeSettings(path, settings);
+    transcript.notice(outcome.message, "ok");
+    return session;
   }
 
   if (name === "crystallize") {
