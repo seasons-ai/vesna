@@ -103,6 +103,48 @@ test("a needed key that is absent stops before the call, and writes nothing", as
   });
 });
 
+test("an anthropic credential that is not ANTHROPIC_API_KEY still lets onboarding proceed", async () => {
+  await withHome(async (home) => {
+    let called = false;
+    const screen = io(["anthropic", ""]);
+    const done = await runOnboarding({
+      io: screen,
+      // No ANTHROPIC_API_KEY at all — only ANTHROPIC_AUTH_TOKEN, one of the
+      // other sources src/cli/preflight.ts already knows about. A check
+      // against ANTHROPIC_API_KEY alone would wrongly refuse this user.
+      env: { ANTHROPIC_AUTH_TOKEN: "borrowed-token" },
+      home,
+      async verify(_preset, model) {
+        called = true;
+        return model;
+      },
+    });
+
+    expect(called).toBe(true);
+    expect(done).toBe(true);
+  });
+});
+
+test("an anthropic preset with no credential at all still refuses", async () => {
+  await withHome(async (home) => {
+    let called = false;
+    const screen = io(["anthropic", ""]);
+    const done = await runOnboarding({
+      io: screen,
+      env: {},
+      home,
+      async verify() {
+        called = true;
+        return "unreachable";
+      },
+    });
+
+    expect(done).toBe(false);
+    expect(called).toBe(false);
+    expect(existsSync(settingsPath({}, home))).toBe(false);
+  });
+});
+
 test("an unknown answer asks again instead of giving up", async () => {
   await withHome(async (home) => {
     const screen = io(["nonsense", "ollama", ""]);

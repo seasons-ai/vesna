@@ -2,6 +2,7 @@ import { PRESETS, findPreset, type Preset } from "../providers/catalog";
 import type { PromptIO } from "../tui/prompt";
 import { settingsPath, writeSettings, type GlobalSettings } from "./settings";
 import type { VesnaConfig } from "./config";
+import { inspectCredential, problem, remedy, usable } from "./preflight";
 
 /**
  * The first five minutes.
@@ -53,16 +54,47 @@ export async function runOnboarding(options: OnboardOptions): Promise<boolean> {
     }
   }
 
-  // A call known in advance to fail is not a proof of anything. Asking for a
-  // key we cannot get is not this task's job — writing one to disk is not
-  // ours to invent — so the honest move is to say what is missing and stop
-  // before spending the user's time on a model question too.
-  if (preset.env !== undefined && !env[preset.env]) {
-    const alsoLogin =
-      preset.id === "anthropic" || preset.auth === "subscription" || preset.auth === "codex"
-        ? " — or run `vesna auth login`"
-        : "";
-    io.write(`${preset.label} needs a key: set $${preset.env} and run this again${alsoLogin}`);
+  // A call known in advance to fail is not a proof of anything.
+  //
+  // For anthropic, whether a credential exists is not this module's question
+  // to answer a second time: a working setup can be a plain key, an OAuth
+  // profile on disk, or ANTHROPIC_AUTH_TOKEN, and src/cli/preflight.ts already
+  // resolves all three the same way `vesna auth` and the real preflight check
+  // do. Asking `env["ANTHROPIC_API_KEY"]` directly, as this used to, refused a
+  // perfectly working profile-authenticated user because it only ever checked
+  // one of the three sources.
+  //
+  // The other presets stay on the plain `preset.env` check below rather than
+  // routing through the same module: `inspectCredential`'s openai-dialect
+  // branch only ever reads `OPENAI_API_KEY`, because `VesnaConfig.provider`
+  // collapses every openai-compatible vendor (openai, groq, openrouter, a
+  // custom host) into one `"openai"` value — it has no way to see that this
+  // preset's key lives in `GROQ_API_KEY`. Routing groq or openrouter through
+  // it here would make onboarding refuse a working groq setup whenever
+  // `OPENAI_API_KEY` happens to be unset, which is the exact bug this task
+  // already fixed once in `buildProviderFor`. That gap in preflight.ts is
+  // pre-existing and reaches beyond onboarding (`vesna chat`/`do` share it
+  // too), so it is not fixed here.
+  if (preset.dialect === "anthropic") {
+    const preflightConfig: VesnaConfig = {
+      configured: true,
+      preset,
+      pinned: false,
+      provider: "anthropic",
+      auth: "key",
+      model: preset.model,
+      theme: "vesna",
+      prices: {},
+      permissions: {},
+    };
+    const credential = await inspectCredential(preflightConfig, env, home);
+    if (!usable(credential)) {
+      io.write(problem(credential));
+      for (const line of remedy(preflightConfig, credential)) io.write(line);
+      return false;
+    }
+  } else if (preset.env !== undefined && !env[preset.env]) {
+    io.write(`${preset.label} needs a key: set $${preset.env} and run this again`);
     return false;
   }
 
