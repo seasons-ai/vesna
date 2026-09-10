@@ -20,6 +20,10 @@ test("settingsPath honours VESNA_HOME over the home directory", () => {
   expect(settingsPath({}, "/home/x")).toBe("/home/x/.vesna/settings.yaml");
 });
 
+test("an empty VESNA_HOME falls back to the home directory rather than resolving to the cwd", () => {
+  expect(settingsPath({ VESNA_HOME: "" }, "/home/x")).toBe("/home/x/.vesna/settings.yaml");
+});
+
 test("a missing file reads as empty settings rather than throwing", () => {
   withHome((home) => {
     expect(readSettings(settingsPath({}, home))).toEqual({});

@@ -1,8 +1,10 @@
 import { readFile } from "node:fs/promises";
+import { homedir } from "node:os";
 import { join } from "node:path";
 import { parse as parseYaml } from "yaml";
+import { findPreset, presetFor, type Preset } from "../providers/catalog";
 import type { ModelPrice } from "../providers/cost";
-import { DEFAULT_MODEL } from "../providers/types";
+import { readSettings, settingsPath } from "./settings";
 
 export type ProviderId = "anthropic" | "openai";
 
@@ -15,11 +17,18 @@ export type AuthMode = "key" | "subscription" | "codex";
 
 /** What the Codex subscription endpoint serves today. */
 export const CODEX_DEFAULT_MODEL = "gpt-5.6-sol";
-const AUTH_MODES: AuthMode[] = ["key", "subscription", "codex"];
 
 export interface VesnaConfig {
-  /** Whether a .vesna/config.yaml was actually found. */
+  /**
+   * Whether there is something to work with — a project config, machine-wide
+   * settings, or both. A directory with neither is still usable (the preset's
+   * own default applies), but a caller that needs credentials should say so.
+   */
   configured: boolean;
+  /** The resolved service, from the catalog. */
+  preset: Preset;
+  /** True when the project config names a provider, so a command can say it cannot change it here. */
+  pinned: boolean;
   provider: ProviderId;
   /** How to authenticate the provider. Only the openai provider has a choice. */
   auth: AuthMode;
@@ -56,7 +65,11 @@ export interface VesnaConfig {
   mouse?: boolean;
 }
 
-export async function loadConfig(root: string): Promise<VesnaConfig> {
+export async function loadConfig(
+  root: string,
+  env: Record<string, string | undefined> = process.env,
+  home: string = homedir(),
+): Promise<VesnaConfig> {
   const path = join(root, ".vesna", "config.yaml");
 
   let text: string | null = null;
@@ -82,14 +95,29 @@ export async function loadConfig(root: string): Promise<VesnaConfig> {
     }
   }
 
-  const provider: ProviderId = raw.provider === "openai" ? "openai" : "anthropic";
-  const auth: AuthMode = AUTH_MODES.includes(raw.auth) ? raw.auth : "key";
+  const settings = readSettings(settingsPath(env, home));
+
+  const pinned = typeof raw.provider === "string" && raw.provider !== "";
+  const providerName =
+    (pinned ? (raw.provider as string) : undefined) ?? settings.provider ?? "anthropic";
+  const preset =
+    presetFor(providerName, typeof raw.auth === "string" ? raw.auth : undefined) ??
+    findPreset("anthropic")!;
+
+  const model = raw.model ?? settings.model ?? preset.model;
+  const baseUrl = raw.baseUrl ?? settings.baseUrl ?? preset.baseUrl;
+
   return {
-    configured: text !== null,
-    provider,
-    auth,
-    model: raw.model ?? defaultModel(provider, auth),
-    baseUrl: raw.baseUrl,
+    // `configured` used to mean "a project file exists". It now means "there
+    // is something to work with", which is the question every caller was
+    // actually asking.
+    configured: text !== null || settings.provider !== undefined,
+    preset,
+    pinned,
+    provider: preset.dialect === "anthropic" ? "anthropic" : "openai",
+    auth: preset.auth ?? "key",
+    model,
+    ...(baseUrl !== undefined ? { baseUrl } : {}),
     theme: raw.theme ?? "vesna",
     prices: raw.prices ?? {},
     oauth: raw.oauth,
@@ -103,11 +131,6 @@ export async function loadConfig(root: string): Promise<VesnaConfig> {
     ascii: raw.ascii === true ? true : raw.ascii === false ? false : undefined,
     mouse: raw.mouse === false ? false : undefined,
   };
-}
-
-function defaultModel(provider: ProviderId, auth: AuthMode): string {
-  if (provider === "anthropic") return DEFAULT_MODEL;
-  return auth === "codex" ? CODEX_DEFAULT_MODEL : "gpt-4o-mini";
 }
 
 function describe(value: unknown): string {

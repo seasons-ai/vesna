@@ -4,10 +4,13 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { inspectCredential, problem, remedy, usable, type Credential } from "../../src/cli/preflight";
 import type { VesnaConfig } from "../../src/cli/config";
+import { findPreset } from "../../src/providers/catalog";
 
 function config(over: Partial<VesnaConfig> = {}): VesnaConfig {
   return {
     configured: true,
+    preset: findPreset("codex")!,
+    pinned: true,
     provider: "openai",
     auth: "codex",
     model: "m",

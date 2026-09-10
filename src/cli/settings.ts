@@ -24,7 +24,8 @@ export interface GlobalSettings {
 }
 
 export function settingsPath(env: Record<string, string | undefined>, home: string): string {
-  return join(env.VESNA_HOME ?? join(home, ".vesna"), "settings.yaml");
+  const base = env.VESNA_HOME !== undefined && env.VESNA_HOME !== "" ? env.VESNA_HOME : join(home, ".vesna");
+  return join(base, "settings.yaml");
 }
 
 export function readSettings(path: string): GlobalSettings {

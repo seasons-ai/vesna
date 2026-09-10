@@ -12,6 +12,7 @@ import type { NodeDef } from "../../src/registry/types";
 import { createTraceStore } from "../../src/store/trace";
 import type { CompletionRequest, CompletionResult, Provider } from "../../src/providers/types";
 import type { VesnaConfig } from "../../src/cli/config";
+import { findPreset } from "../../src/providers/catalog";
 import { listSessions, openSession, readSession } from "../../src/store/sessions";
 import { createPlanNodes } from "../../src/nodes/plan";
 import { createSink } from "../../src/spec/sink";
@@ -132,6 +133,8 @@ async function deps(p: Provider, overrides: Partial<AppDeps> = {}): Promise<AppD
   const root = await mkdtemp(join(tmpdir(), "vesna-app-"));
   const config: VesnaConfig = {
     configured: true,
+    preset: findPreset("codex")!,
+    pinned: true,
     provider: "openai",
     auth: "codex",
     model: "test-model",
