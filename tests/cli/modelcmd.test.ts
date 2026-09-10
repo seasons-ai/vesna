@@ -28,12 +28,30 @@ test("switching reports the model it switched to, and the loss only when there w
   );
 });
 
-test("a pinned project is told the machine default moved, not this directory", () => {
-  const outcome = modelSwitchOutcome("qwen3", { pinned: true, dropped: 0 });
+// The machine default is a whole service, not a loose model field. Announcing
+// "the machine default model is now qwen3" without naming whose model moved is
+// how `/model` came to change the machine's *provider* to whatever this
+// directory happened to pin.
+test("a pinned project is told which machine default moved, not this directory", () => {
+  const outcome = modelSwitchOutcome("qwen3", {
+    pinned: true,
+    dropped: 0,
+    machineProvider: "ollama",
+  });
   expect(outcome.kind).toBe("pinned");
-  expect(outcome.message).toContain(".vesna/config.yaml");
-  expect(outcome.message).toContain("qwen3");
-  expect(outcome.message).toContain("unchanged here");
+  expect(outcome.message).toBe(
+    "this project pins its provider in .vesna/config.yaml — changed the machine " +
+      "default model for ollama to qwen3, unchanged here",
+  );
+});
+
+test("a pinned project with no machine default at all is told nothing happened", () => {
+  const outcome = modelSwitchOutcome("qwen3", { pinned: true, dropped: 0 });
+  expect(outcome.kind).toBe("no-default");
+  expect(outcome.message).toBe(
+    "this project pins its provider in .vesna/config.yaml, and there is no machine " +
+      "default to change — nothing happened",
+  );
 });
 
 test("a failed model switch reads the same as a failed provider switch", () => {

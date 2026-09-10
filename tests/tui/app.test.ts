@@ -14,7 +14,7 @@ import type { CompletionRequest, CompletionResult, Provider } from "../../src/pr
 import type { VesnaConfig } from "../../src/cli/config";
 import type { ProviderHandle } from "../../src/cli/context";
 import { CODEX_BASE_URL, findPreset, type Preset } from "../../src/providers/catalog";
-import { readSettings, settingsPath } from "../../src/cli/settings";
+import { readSettings, settingsPath, writeSettings } from "../../src/cli/settings";
 import { listSessions, openSession, readSession } from "../../src/store/sessions";
 import { createPlanNodes } from "../../src/nodes/plan";
 import { createSink } from "../../src/spec/sink";
@@ -1029,11 +1029,22 @@ test("a model the host refuses leaves the settings file and the running session 
   await quit(app);
 });
 
-test("a pinned project changes the machine default model and says this directory is unchanged", async () => {
+/**
+ * The repro: a machine default of ollama, a directory pinning codex, and
+ * `/model x`. The machine default provider became codex — this project's pin,
+ * which is precisely the thing that is not supposed to leave this directory —
+ * and the message mentioned only the model.
+ */
+test("a pinned project changes the machine default model and leaves its provider alone", async () => {
   const settingsHome = await mkdtemp(join(tmpdir(), "vesna-settings-"));
+  writeSettings(settingsPath({}, settingsHome), {
+    provider: "ollama",
+    model: "llama3.2",
+    baseUrl: "http://127.0.0.1:11434/v1",
+  });
   const { handle, calls } = providerHandle();
-  // The default test config already sets pinned: true.
-  const app = await start(reply("x"), { rows: 14, cols: 64 }, {
+  // The default test config already sets pinned: true, on the codex preset.
+  const app = await start(reply("x"), { rows: 14, cols: 80 }, {
     provider: handle,
     env: {},
     home: settingsHome,
@@ -1044,8 +1055,30 @@ test("a pinned project changes the machine default model and says this directory
 
   expect(calls).toHaveLength(0);
   expect(handle.model).toBe("gpt-5.6-sol");
-  const written = readSettings(settingsPath({}, settingsHome));
-  expect(written.model).toBe("gpt-5.6-sol-mini");
+  expect(readSettings(settingsPath({}, settingsHome))).toEqual({
+    provider: "ollama",
+    model: "gpt-5.6-sol-mini",
+    baseUrl: "http://127.0.0.1:11434/v1",
+  });
+  await quit(app);
+});
+
+test("a pinned project with no machine default writes no half a default", async () => {
+  const settingsHome = await mkdtemp(join(tmpdir(), "vesna-settings-"));
+  const { handle } = providerHandle();
+  const app = await start(reply("x"), { rows: 14, cols: 80 }, {
+    provider: handle,
+    env: {},
+    home: settingsHome,
+  });
+
+  app.input.type("/model gpt-5.6-sol-mini\r");
+  await until(() => /nothing happened/.test(app.screen()), "the notice");
+
+  // A model with no provider beside it is inherited by nobody: writing one
+  // would be a machine default that quietly does nothing.
+  expect(readSettings(settingsPath({}, settingsHome))).toEqual({});
+  expect(handle.model).toBe("gpt-5.6-sol");
   await quit(app);
 });
 

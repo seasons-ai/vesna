@@ -18,7 +18,7 @@ import {
 import { describeDropped } from "../cli/dropped";
 import { EXIT } from "../cli/exit";
 import { formatParameter } from "../cli/format";
-import { settingsPath, writeSettings } from "../cli/settings";
+import { readSettings, settingsPath, writeSettings } from "../cli/settings";
 import { asPreset, inspectCredential, problem, remedy, usable } from "../cli/preflight";
 import { carryHistory } from "../loop/carry";
 import { createSession, type Session } from "../loop/session";
@@ -928,25 +928,38 @@ async function command(
     }
 
     const carried = carryHistory(session.messages);
+    const env = deps.env ?? process.env;
+    const path = settingsPath(env, deps.home ?? homedir());
+    const machine = readSettings(path);
     const outcome = modelSwitchOutcome(wanted, {
       pinned: deps.config.pinned,
       dropped: carried.dropped,
+      ...(machine.provider !== undefined ? { machineProvider: machine.provider } : {}),
     });
-    const env = deps.env ?? process.env;
-    const path = settingsPath(env, deps.home ?? homedir());
+
+    if (outcome.kind === "no-default") {
+      transcript.notice(outcome.message, "warn");
+      return session;
+    }
+
+    if (outcome.kind === "pinned") {
+      // Only the machine default's model moves, and only that: its provider is
+      // whatever the machine already chose. This project's pin is a fact about
+      // this directory, so writing it into the machine default — which is what
+      // `provider: handle.preset.id` did here — takes the one setting that was
+      // supposed to stay local and makes it global.
+      writeSettings(path, { ...machine, model: wanted });
+      transcript.notice(outcome.message, "ok");
+      return session;
+    }
+
+    // Not pinned: the handle is what is in effect here, so its own service and
+    // address are the tuple worth recording alongside the new model.
     const settings = {
       provider: handle.preset.id,
       model: wanted,
       ...(handle.baseUrl !== undefined ? { baseUrl: handle.baseUrl } : {}),
     };
-
-    if (outcome.kind === "pinned") {
-      // Only the machine default moves. The running conversation, and the
-      // model serving it, are exactly what this project pins them to.
-      writeSettings(path, settings);
-      transcript.notice(outcome.message, "ok");
-      return session;
-    }
 
     // Build the replacement before writing anything or touching the session:
     // a host that refuses the connection must leave both exactly as they

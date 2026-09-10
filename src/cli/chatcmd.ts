@@ -153,6 +153,8 @@ export function describeModels(models: string[], current: string): string[] {
 
 export type ModelSwitchOutcome =
   | { kind: "pinned"; message: string }
+  /** Pinned here, and no machine default to move the model onto. */
+  | { kind: "no-default"; message: string }
   | { kind: "switched"; message: string };
 
 /**
@@ -169,17 +171,34 @@ export type ModelSwitchOutcome =
  * behind by an earlier interrupt. The dialect never changes underneath
  * `/model`, so in practice this is always 0 — but the count comes from the
  * same `carryHistory` call `/provider` makes, not a special case.
+ *
+ * `machineProvider` is the service `~/.vesna/settings.yaml` already names, and
+ * it is what the pinned message reports. A model belongs to a provider: the
+ * pinned branch used to write `provider: <this project's preset>` alongside
+ * the new model, so setting a model in a directory that pins codex moved the
+ * whole machine default onto codex. When there is no machine default at all
+ * there is nothing to move a model onto — a `model:` with no provider beside
+ * it is inherited by nobody (see `loadConfig`) — so that is its own outcome
+ * rather than a file written for the look of it.
  */
 export function modelSwitchOutcome(
   model: string,
-  state: { pinned: boolean; dropped: number },
+  state: { pinned: boolean; dropped: number; machineProvider?: string },
 ): ModelSwitchOutcome {
+  if (state.pinned && state.machineProvider === undefined) {
+    return {
+      kind: "no-default",
+      message:
+        "this project pins its provider in .vesna/config.yaml, and there is no machine " +
+        "default to change — nothing happened",
+    };
+  }
   if (state.pinned) {
     return {
       kind: "pinned",
       message:
-        "this project pins its provider in .vesna/config.yaml — " +
-        `changed the machine default model to ${model}, unchanged here`,
+        "this project pins its provider in .vesna/config.yaml — changed the machine " +
+        `default model for ${state.machineProvider} to ${model}, unchanged here`,
     };
   }
   const base = `model: ${model}`;
