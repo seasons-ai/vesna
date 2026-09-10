@@ -5,6 +5,8 @@ import { join } from "node:path";
 import { chooseStarter, writeStarterConfig } from "../../src/cli/init";
 import { loadConfig } from "../../src/cli/config";
 import { PRESETS } from "../../src/providers/catalog";
+import { main } from "../../src/cli/main";
+import { writeSettings, settingsPath } from "../../src/cli/settings";
 
 async function home(files: Record<string, string> = {}): Promise<string> {
   const dir = await mkdtemp(join(tmpdir(), "vesna-init-home-"));
@@ -88,12 +90,17 @@ test("it returns the path it wrote, so the caller can say where", async () => {
   expect(path).toBe(join(dir, ".vesna", "config.yaml"));
 });
 
-// A pin must survive the round trip for every catalog entry, driven from the
-// catalog itself: a preset added later (or one whose dialect collapses onto
-// another, like ollama onto openai) is covered without anyone remembering to
-// add a case. This is what caught `writeStarterConfig` pinning the collapsed
-// dialect (`provider: openai`) for an Ollama setup, which then resolved back
-// to plain OpenAI on the next load.
+// `writeStarterConfig` -> `loadConfig` -> `presetFor` round-trips back to the
+// same preset id, given the correct id as input — for every catalog entry,
+// driven from the catalog itself so a preset added later is covered without
+// anyone remembering to add a case.
+//
+// This does NOT exercise the actual regression it was written alongside: the
+// bug lived in `src/cli/main.ts`'s `init` action, in the choice of which
+// value to pass as `provider` (the collapsed `earlyConfig.provider` versus
+// the resolved `earlyConfig.preset.id`) — a call this loop never makes, since
+// it supplies `preset.id` itself. See the `vesna init` end-to-end test below
+// for the test that actually exercises that dispatch code and catches it.
 for (const preset of PRESETS) {
   test(`pinning the "${preset.id}" preset round-trips back to itself`, async () => {
     const dir = await root();
@@ -111,3 +118,37 @@ for (const preset of PRESETS) {
     expect(config.preset.id).toBe(preset.id);
   });
 }
+
+// The actual regression: `vesna init` (src/cli/main.ts's "init" action) must
+// pin `earlyConfig.preset.id`, not the collapsed `earlyConfig.provider`. Both
+// are legal strings ("ollama" vs "openai") so nothing but running the real
+// dispatch catches a swap back to the wrong one — the loop above supplies
+// `provider.id` itself and never touches this choice.
+test("`vesna init` pins the resolved preset id, not the dialect it collapses onto (ollama, not openai)", async () => {
+  const dir = await root();
+  const vesnaHome = await mkdtemp(join(tmpdir(), "vesna-init-vhome-"));
+  // Machine-wide settings resolve to ollama — same as if `/provider ollama`
+  // had been run earlier. `VESNA_HOME` makes this independent of the real
+  // home directory, and independent of any real ~/.vesna/settings.yaml.
+  writeSettings(settingsPath({ VESNA_HOME: vesnaHome }, vesnaHome), { provider: "ollama" });
+
+  const previousCwd = process.cwd();
+  const previousVesnaHome = process.env.VESNA_HOME;
+  const previousLog = console.log;
+  process.chdir(dir);
+  process.env.VESNA_HOME = vesnaHome;
+  console.log = () => {}; // silence `vesna init`'s own report for this test
+  let exitCode: number;
+  try {
+    exitCode = await main(["init"]);
+  } finally {
+    console.log = previousLog;
+    process.chdir(previousCwd);
+    if (previousVesnaHome === undefined) delete process.env.VESNA_HOME;
+    else process.env.VESNA_HOME = previousVesnaHome;
+  }
+
+  expect(exitCode).toBe(0);
+  const config = await loadConfig(dir, { VESNA_HOME: vesnaHome }, vesnaHome);
+  expect(config.preset.id).toBe("ollama");
+});
