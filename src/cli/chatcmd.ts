@@ -128,8 +128,17 @@ export type ModelSwitchOutcome =
  * provider in `.vesna/config.yaml` also owns the model that goes with it, so
  * the same `pinned` flag applies and the switch only ever touches the machine
  * default.
+ *
+ * `dropped` exists for the same reason it does in `switchOutcome`: switching
+ * rebuilds the session, and a rebuild can strand an unanswered tool call left
+ * behind by an earlier interrupt. The dialect never changes underneath
+ * `/model`, so in practice this is always 0 — but the count comes from the
+ * same `carryHistory` call `/provider` makes, not a special case.
  */
-export function modelSwitchOutcome(model: string, state: { pinned: boolean }): ModelSwitchOutcome {
+export function modelSwitchOutcome(
+  model: string,
+  state: { pinned: boolean; dropped: number },
+): ModelSwitchOutcome {
   if (state.pinned) {
     return {
       kind: "pinned",
@@ -138,5 +147,11 @@ export function modelSwitchOutcome(model: string, state: { pinned: boolean }): M
         `changed the machine default model to ${model}, unchanged here`,
     };
   }
-  return { kind: "switched", message: `model: ${model}` };
+  const base = `model: ${model}`;
+  if (state.dropped === 0) return { kind: "switched", message: base };
+  const plural = state.dropped === 1 ? "call" : "calls";
+  return {
+    kind: "switched",
+    message: `${base}  ·  dropped ${state.dropped} unanswered tool ${plural}`,
+  };
 }

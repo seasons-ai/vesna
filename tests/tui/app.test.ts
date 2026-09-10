@@ -107,14 +107,17 @@ function reply(text: string): Provider {
 
 /**
  * A ProviderHandle whose `switch` is observed rather than actually talking to
- * anything, so /provider can be driven end to end: what it was asked to
- * become, and — via `fail` — what a host that refuses the connection looks
- * like from here.
+ * anything, so /provider and /model can be driven end to end: what each was
+ * asked to become, what a host that refuses the connection looks like (via
+ * `fail`), and — via `requests`, the `model` field of every completion
+ * request actually sent — whether a switch that *says* it worked also
+ * changed what the next turn asks for.
  */
 function providerHandle(options: { fail?: string } = {}) {
   let preset = findPreset("codex")!;
   let model = preset.model;
   const calls: { preset: Preset; model: string; baseUrl?: string }[] = [];
+  const requests: string[] = [];
   const handle: ProviderHandle = {
     id: "fake",
     get preset() {
@@ -123,7 +126,10 @@ function providerHandle(options: { fail?: string } = {}) {
     get model() {
       return model;
     },
-    complete: async () => done("x"),
+    async complete(request) {
+      requests.push(request.model);
+      return done("x");
+    },
     async switch(next, nextModel, nextBaseUrl) {
       calls.push({ preset: next, model: nextModel, ...(nextBaseUrl ? { baseUrl: nextBaseUrl } : {}) });
       if (options.fail !== undefined) throw new Error(options.fail);
@@ -131,7 +137,7 @@ function providerHandle(options: { fail?: string } = {}) {
       model = nextModel;
     },
   };
-  return { handle, calls };
+  return { handle, calls, requests };
 }
 
 /**
@@ -969,6 +975,62 @@ test("a pinned project changes the machine default model and says this directory
   expect(handle.model).toBe("gpt-5.6-sol");
   const written = readSettings(settingsPath({}, settingsHome));
   expect(written.model).toBe("gpt-5.6-sol-mini");
+  await quit(app);
+});
+
+/**
+ * The announcement and the settings file both said the switch worked before
+ * this test existed — the session handed to the *next* turn still carried
+ * the model it was built with, because newSession read deps.config.model, a
+ * snapshot frozen at startup, instead of the handle that had actually moved.
+ * Only a request the fake provider itself receives can catch that: it is the
+ * one thing neither the transcript nor settings.yaml can lie about.
+ */
+test("/model changes the model actually sent on the next request, not just the announcement", async () => {
+  const { handle, requests } = providerHandle();
+  const base = await deps(reply("x"));
+  const app = await start(reply("x"), { rows: 14, cols: 64 }, {
+    ...base,
+    provider: handle,
+    config: { ...base.config, pinned: false },
+    env: {},
+    home: await mkdtemp(join(tmpdir(), "vesna-settings-")),
+  });
+
+  app.input.type("hi\r");
+  await until(() => requests.length === 1, "the first request");
+  expect(requests[0]).toBe("gpt-5.6-sol");
+
+  app.input.type("/model gpt-5.6-sol-mini\r");
+  await until(() => /model: gpt-5\.6-sol-mini/.test(app.screen()), "the switch confirmation");
+
+  app.input.type("again\r");
+  await until(() => requests.length === 2, "the second request");
+  expect(requests[1]).toBe("gpt-5.6-sol-mini");
+  await quit(app);
+});
+
+test("/provider changes the model actually sent on the next request, not just the announcement", async () => {
+  const { handle, requests } = providerHandle();
+  const base = await deps(reply("x"));
+  const app = await start(reply("x"), { rows: 14, cols: 64 }, {
+    ...base,
+    provider: handle,
+    config: { ...base.config, pinned: false },
+    env: {},
+    home: await mkdtemp(join(tmpdir(), "vesna-settings-")),
+  });
+
+  app.input.type("hi\r");
+  await until(() => requests.length === 1, "the first request");
+  expect(requests[0]).toBe("gpt-5.6-sol");
+
+  app.input.type("/provider ollama\r");
+  await until(() => /provider: ollama/.test(app.screen()), "the switch confirmation");
+
+  app.input.type("again\r");
+  await until(() => requests.length === 2, "the second request");
+  expect(requests[1]).toBe("llama3.2");
   await quit(app);
 });
 

@@ -18,12 +18,18 @@ test("the listing marks the current model and leaves the others alone", () => {
   ]);
 });
 
-test("switching reports the model it switched to", () => {
-  expect(modelSwitchOutcome("qwen3", { pinned: false }).message).toBe("model: qwen3");
+test("switching reports the model it switched to, and the loss only when there was one", () => {
+  expect(modelSwitchOutcome("qwen3", { pinned: false, dropped: 0 }).message).toBe("model: qwen3");
+  expect(modelSwitchOutcome("qwen3", { pinned: false, dropped: 2 }).message).toContain(
+    "dropped 2 unanswered tool calls",
+  );
+  expect(modelSwitchOutcome("qwen3", { pinned: false, dropped: 1 }).message).toContain(
+    "dropped 1 unanswered tool call",
+  );
 });
 
 test("a pinned project is told the machine default moved, not this directory", () => {
-  const outcome = modelSwitchOutcome("qwen3", { pinned: true });
+  const outcome = modelSwitchOutcome("qwen3", { pinned: true, dropped: 0 });
   expect(outcome.kind).toBe("pinned");
   expect(outcome.message).toContain(".vesna/config.yaml");
   expect(outcome.message).toContain("qwen3");

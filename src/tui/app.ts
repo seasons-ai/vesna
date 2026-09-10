@@ -901,7 +901,11 @@ async function command(
       return session;
     }
 
-    const outcome = modelSwitchOutcome(wanted, { pinned: deps.config.pinned });
+    const carried = carryHistory(session.messages);
+    const outcome = modelSwitchOutcome(wanted, {
+      pinned: deps.config.pinned,
+      dropped: carried.dropped,
+    });
     const env = deps.env ?? process.env;
     const path = settingsPath(env, deps.home ?? homedir());
     const settings = {
@@ -918,8 +922,9 @@ async function command(
       return session;
     }
 
-    // Build the replacement before writing anything: a host that refuses the
-    // connection must leave the running session exactly as it was.
+    // Build the replacement before writing anything or touching the session:
+    // a host that refuses the connection must leave both exactly as they
+    // were, rather than half-applying a switch that never completed.
     try {
       await handle.switch(handle.preset, wanted, deps.config.baseUrl);
     } catch (error) {
@@ -928,7 +933,11 @@ async function command(
     }
     writeSettings(path, settings);
     transcript.notice(outcome.message, "ok");
-    return session;
+    // Rebuilt through the same path /provider uses: the dialect never
+    // changes here, so carryHistory should never actually drop anything, but
+    // the model the new session is seeded with has to come from newSession
+    // reading the handle, not from the stale snapshot in deps.config.
+    return makeSession(carried.messages);
   }
 
   if (name === "crystallize") {
@@ -974,9 +983,14 @@ function newSession(
   }) => Promise<"allow" | "deny">,
   resumed?: AgentMessage[],
 ): Session {
+  // After a mid-session /model or /provider switch, the handle is what is
+  // actually current — deps.config.model is only a snapshot of how the
+  // process started. A plain Provider (most tests, and any consumer that
+  // never switches) has no `model` field, hence the fallback.
+  const model = (deps.provider as ProviderHandle).model ?? deps.config.model;
   return createSession(deps.provider, deps.registry, {
     cwd: deps.root,
-    model: deps.config.model,
+    model,
     prices: deps.config.prices,
     notes: deps.notes,
 
