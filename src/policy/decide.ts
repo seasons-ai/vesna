@@ -1,4 +1,5 @@
 import { isAbsolute, relative, resolve } from "node:path";
+import { isReadOnlyCommand } from "./readonly";
 
 /**
  * Whether an action may proceed.
@@ -135,7 +136,14 @@ export function decide(action: Action, policy: Policy, cwd: string): Decision {
   // A node with nothing to match on cannot be remembered, so asking about it
   // would ask forever. Reading is also simply not worth a question. The effect
   // class the registry already declares is exactly the right line to draw.
-  const harmless = action.effect === "pure";
+  // A node declares its worst case, but a command's real effect is visible in
+  // the command. Asking permission to run `ls` teaches the user to stop
+  // reading the question, which costs more than it ever saves.
+  const harmless =
+    action.effect === "pure" ||
+    (action.node === "shell" &&
+      typeof action.input.command === "string" &&
+      isReadOnlyCommand(action.input.command));
 
   // Deny first: the always-ask list exists to stop something being allowed
   // silently, and refusing outright is stricter than asking.

@@ -92,3 +92,10 @@ test("a merge is its own commit, so it can be reverted as a unit", async () => {
   const parents = await runGit(["rev-list", "--parents", "-n", "1", "HEAD"], repo);
   expect(parents.stdout.trim().split(" ")).toHaveLength(3);
 });
+
+test("a missing branch is an error, not a content conflict", async () => {
+  const report = await mergeAll(await repository(), [{ task: "missing", branch: "does-not-exist" }]);
+  expect(report.conflict).toBeUndefined();
+  expect(report.error?.task).toBe("missing");
+  expect(report.error?.message).toContain("does-not-exist");
+});

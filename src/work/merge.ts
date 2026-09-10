@@ -21,6 +21,8 @@ export interface MergeReport {
   merged: { task: string; branch: string }[];
   /** The one that stopped the queue, if any. */
   conflict?: { task: string; branch: string; files: string[] };
+  /** A non-conflict git failure that stopped the queue. */
+  error?: { task: string; branch: string; message: string };
   /** Never attempted, because the queue stopped first. */
   pending: string[];
 }
@@ -44,12 +46,35 @@ export async function mergeAll(
     }
 
     const files = await conflictedFiles(repo, git);
-    // Left half-merged, the repository is a puzzle. Put it back as it was.
-    await git(["merge", "--abort"], repo);
+    const mergeHead = await git(["rev-parse", "-q", "--verify", "MERGE_HEAD"], repo);
+    if (mergeHead.code === 0) {
+      // A failed merge can leave the repository half-merged even when the
+      // failure was not a content conflict (for example, a commit hook).
+      const aborted = await git(["merge", "--abort"], repo);
+      if (aborted.code !== 0) {
+        return {
+          merged,
+          error: {
+            task: candidate.task,
+            branch: candidate.branch,
+            message: `merge failed and could not be aborted: ${detail(aborted)}`,
+          },
+          pending: candidates.slice(index + 1).map((rest) => rest.task),
+        };
+      }
+    }
+
+    if (files.length > 0) {
+      return {
+        merged,
+        conflict: { task: candidate.task, branch: candidate.branch, files },
+        pending: candidates.slice(index + 1).map((rest) => rest.task),
+      };
+    }
 
     return {
       merged,
-      conflict: { task: candidate.task, branch: candidate.branch, files },
+      error: { task: candidate.task, branch: candidate.branch, message: detail(attempt) },
       pending: candidates.slice(index + 1).map((rest) => rest.task),
     };
   }
@@ -64,4 +89,8 @@ async function conflictedFiles(repo: string, git: GitRunner): Promise<string[]> 
     .split("\n")
     .map((line) => line.trim())
     .filter((line) => line !== "");
+}
+
+function detail(result: { stdout: string; stderr: string }): string {
+  return (result.stderr || result.stdout).trim().split("\n")[0] || "unknown git error";
 }

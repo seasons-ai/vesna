@@ -97,7 +97,18 @@ export async function schedule<R>(request: ScheduleRequest<R>): Promise<Schedule
     }
 
     if (request.signal?.aborted) {
-      for (const task of ready()) skipped.push({ id: task.id, reason: "interrupted" });
+      // Stop admitting work, but do not return while builders are still writing.
+      for (const task of request.tasks) {
+        if (
+          !started.has(task.id) &&
+          !done.has(task.id) &&
+          !failed.has(task.id) &&
+          !skipped.some((entry) => entry.id === task.id)
+        ) {
+          skipped.push({ id: task.id, reason: "interrupted" });
+        }
+      }
+      await Promise.allSettled(running.values());
       break;
     }
 

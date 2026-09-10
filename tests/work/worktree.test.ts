@@ -149,3 +149,14 @@ test("and it keeps ignoring itself once there is real work inside", async () => 
   const status = await runGit(["status", "--porcelain"], repo);
   expect(status.stdout).not.toContain(".vesna");
 });
+
+test("removal refuses an arbitrary directory even when discard was requested", async () => {
+  const repo = await repository();
+  const outside = await mkdtemp(join(tmpdir(), "vesna-not-a-worktree-"));
+  await writeFile(join(outside, "important.txt"), "keep me\n");
+
+  await expect(
+    removeWorktree(repo, { path: outside, branch: "vesna/spec/T1" }, { discardChanges: true }),
+  ).rejects.toThrow(/not inside/);
+  expect(await readFile(join(outside, "important.txt"), "utf8")).toBe("keep me\n");
+});

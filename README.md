@@ -418,8 +418,13 @@ file afterwards: writes outside the project, credential paths, `sudo`,
 into a shell. No rule switches those off — an explicit `deny` is the only thing
 that overrides the list, because refusing is stricter than asking.
 
-Reading is never asked about. The line is the effect a node declares, so a pure
-node proceeds and one that changes something or reaches outside does not.
+Reading is never asked about. A node declares its worst case — `shell` can do
+anything, so it counts as a write — but a command's real effect is visible in
+the command, and `ls`, `git status`, `cat` and the rest go through without a
+question. The list is conservative: a redirection, a pipe into something
+unrecognised, a substitution, a chained second command, or a name nobody knows
+all ask. A false "safe" is silent and permanent; an extra question is merely
+annoying.
 
 ## Conversations are kept
 

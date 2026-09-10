@@ -156,3 +156,28 @@ test("a command given under another name is still a command", () => {
   // task_verify calls its command `check`; a rule has to be possible for it.
   expect(facetOf(act("task_verify", { check: "bun test" }), cwd)).toBe("bun test");
 });
+
+test("looking around with shell is not worth a question", () => {
+  for (const command of ["ls -la", "git status", "cat README.md", "grep -rn TODO src"]) {
+    const action = { ...act("shell", { command }), effect: "write" as const };
+    expect(decide(action, policy(), cwd)).toBe("allow");
+  }
+});
+
+test("but changing something with shell still is", () => {
+  for (const command of ["rm build/x", "git commit -m x", "npm install", "ls > out.txt"]) {
+    const action = { ...act("shell", { command }), effect: "write" as const };
+    expect(decide(action, policy(), cwd)).toBe("ask");
+  }
+});
+
+test("an explicit deny still stops a command that only reads", () => {
+  const action = { ...act("shell", { command: "cat secrets/a.txt" }), effect: "write" as const };
+  const p = policy({ deny: { shell: ["cat secrets/*"] } });
+  expect(decide(action, p, cwd)).toBe("deny");
+});
+
+test("the always-ask list is not softened by a command looking harmless", () => {
+  const action = { ...act("shell", { command: "sudo ls /root" }), effect: "write" as const };
+  expect(decide(action, policy({ mode: "auto" }), cwd)).toBe("ask");
+});

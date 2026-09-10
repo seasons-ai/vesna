@@ -88,11 +88,24 @@ export async function runTask(request: BuildRequest): Promise<BuildResult> {
     error = (failure as Error).message;
   }
 
-  const committed = await commit(tree, request.task, git);
+  let committed: string | null = null;
+  try {
+    committed = await commit(tree, request.task, git);
+  } catch (failure) {
+    const message = (failure as Error).message;
+    error = error === undefined ? message : `${error}; ${message}`;
+  }
 
   return {
     task: request.task,
-    status: error !== undefined ? "failed" : refusals.length > 0 && committed === null ? "refused" : committed === null ? "no-changes" : "committed",
+    status:
+      error !== undefined
+        ? "failed"
+        : refusals.length > 0
+          ? "refused"
+          : committed === null
+            ? "no-changes"
+            : "committed",
     branch: tree.branch,
     worktree: tree.path,
     ...(committed ? { commit: committed } : {}),
@@ -105,16 +118,20 @@ export async function runTask(request: BuildRequest): Promise<BuildResult> {
 
 /** Commits whatever the builder produced. Null when it produced nothing. */
 async function commit(tree: Worktree, task: string, git: GitRunner): Promise<string | null> {
-  await git(["add", "-A"], tree.path);
+  const added = await git(["add", "-A"], tree.path);
+  if (added.code !== 0) throw new Error(`git add failed: ${gitDetail(added)}`);
+
   const staged = await git(["diff", "--cached", "--quiet"], tree.path);
-  // Exit 0 from --quiet means no difference at all.
+  // --quiet has exactly two ordinary outcomes: 0 is clean, 1 is different.
   if (staged.code === 0) return null;
+  if (staged.code !== 1) throw new Error(`git diff failed: ${gitDetail(staged)}`);
 
   const made = await git(["commit", "-qm", `${task}: built by vesna`], tree.path);
-  if (made.code !== 0) return null;
+  if (made.code !== 0) throw new Error(`git commit failed: ${gitDetail(made)}`);
 
   const sha = await git(["rev-parse", "HEAD"], tree.path);
-  return sha.code === 0 ? sha.stdout.trim() : null;
+  if (sha.code !== 0) throw new Error(`could not read commit: ${gitDetail(sha)}`);
+  return sha.stdout.trim();
 }
 
 /** Discards a build's checkout. The branch survives when there is a commit on it. */
@@ -135,4 +152,8 @@ export async function discardBuild(
 function describe(input: Record<string, unknown>): string {
   const path = input.path ?? input.command;
   return typeof path === "string" ? path : "";
+}
+
+function gitDetail(result: { stdout: string; stderr: string }): string {
+  return (result.stderr || result.stdout).trim().split("\n")[0] || "unknown git error";
 }

@@ -170,3 +170,43 @@ test("what it spent comes back with it", async () => {
   const result = await runTask(request(repo, writes("new.txt", "made\n")));
   expect(typeof result.costUsd).toBe("number");
 });
+
+test("partial work stays refused even when the permitted part was committed", async () => {
+  const repo = await repository();
+  let turn = 0;
+  const provider: Provider = {
+    id: "fake",
+    async complete() {
+      turn += 1;
+      return {
+        content:
+          turn === 1
+            ? [
+                { type: "tool_call" as const, id: "c1", name: "write", input: { path: "ok.txt", text: "ok\n" } },
+                { type: "tool_call" as const, id: "c2", name: "write", input: { path: "blocked/no.txt", text: "no\n" } },
+              ]
+            : [{ type: "text" as const, text: "done" }],
+        stopReason: "end_turn",
+        model: "m",
+        usage: { inputTokens: 1, outputTokens: 1, cacheReadTokens: 0, cacheWriteTokens: 0 },
+      };
+    },
+  };
+  const policy: Policy = { mode: "ask", allow: { write: ["ok.txt"] }, deny: {} };
+
+  const result = await runTask(request(repo, provider, policy));
+  expect(result.status).toBe("refused");
+  expect(result.commit).toMatch(/^[0-9a-f]{40}$/);
+});
+
+test("a git commit failure makes the build fail rather than look unchanged", async () => {
+  const repo = await repository();
+  const git = async (args: string[], cwd: string) => {
+    if (args[0] === "commit") return { code: 1, stdout: "", stderr: "hook refused commit" };
+    return runGit(args, cwd);
+  };
+
+  const result = await runTask({ ...request(repo, writes("new.txt", "made\n")), git });
+  expect(result.status).toBe("failed");
+  expect(result.error).toContain("hook refused commit");
+});

@@ -1,5 +1,5 @@
-import { mkdir, rm, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { mkdir, realpath, rm, writeFile } from "node:fs/promises";
+import { isAbsolute, join, relative, resolve } from "node:path";
 
 /**
  * A private copy of the repository for one task.
@@ -121,16 +121,53 @@ export async function removeWorktree(
   options: { discardChanges?: boolean } = {},
   git: GitRunner = runGit,
 ): Promise<void> {
-  if (options.discardChanges !== true && (await hasUncommitted(tree.path, git))) {
+  // A path that does not exist cannot be resolved, and that is an answer
+  // rather than a failure: nothing lives inside a directory that is not there.
+  const settle = async (candidate: string) => {
+    try {
+      return await realpath(resolve(candidate));
+    } catch {
+      return resolve(candidate);
+    }
+  };
+
+  const root = await settle(worktreesRoot(repo));
+  const path = await settle(tree.path);
+  const inside = relative(root, path);
+  if (inside === "" || inside.startsWith("..") || isAbsolute(inside)) {
+    throw new WorktreeError(`${tree.path} is not inside Vesna's worktrees directory`);
+  }
+
+  const registeredPaths = await Promise.all(
+    (await listWorktrees(repo, git)).map(async (candidate) => ({
+      path: await realpath(resolve(candidate.path)),
+      branch: candidate.branch,
+    })),
+  );
+  const registered = registeredPaths.some(
+    (candidate) => candidate.path === path && candidate.branch === tree.branch,
+  );
+  if (!registered) {
+    throw new WorktreeError(`${tree.path} is not a registered Vesna worktree`);
+  }
+
+  if (options.discardChanges !== true && (await hasUncommitted(path, git))) {
     throw new WorktreeError(
       `${tree.path} has uncommitted changes — commit them, or remove it with discardChanges`,
     );
   }
 
-  await git(["worktree", "remove", "--force", tree.path], repo);
-  // git leaves the directory behind if it never fully registered the worktree.
-  await rm(tree.path, { recursive: true, force: true });
-  await git(["branch", "-D", tree.branch], repo);
+  const removed = await git(["worktree", "remove", "--force", path], repo);
+  if (removed.code !== 0) {
+    throw new WorktreeError(`could not remove worktree: ${firstLine(removed.stderr)}`);
+  }
+  // A successful git removal may leave an empty administrative directory behind.
+  await rm(path, { recursive: true, force: true });
+
+  const deleted = await git(["branch", "-D", tree.branch], repo);
+  if (deleted.code !== 0) {
+    throw new WorktreeError(`worktree removed, but could not delete branch: ${firstLine(deleted.stderr)}`);
+  }
 }
 
 function firstLine(text: string): string {

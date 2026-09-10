@@ -172,3 +172,27 @@ test("every result comes back, keyed by its task", async () => {
   expect(report.results.get("A")).toBe(true);
   expect(report.results.get("B")).toBe(false);
 });
+
+test("an interrupt waits for work already running before returning", async () => {
+  const controller = new AbortController();
+  let secondFinished = false;
+  const report = await schedule({
+    tasks: [task("A"), task("B")],
+    concurrency: 2,
+    signal: controller.signal,
+    succeeded: () => true,
+    async run(t) {
+      if (t.id === "A") {
+        await new Promise((resolve) => setTimeout(resolve, 5));
+        controller.abort();
+      } else {
+        await new Promise((resolve) => setTimeout(resolve, 30));
+        secondFinished = true;
+      }
+      return t.id;
+    },
+  });
+
+  expect(secondFinished).toBe(true);
+  expect([...report.results.keys()].sort()).toEqual(["A", "B"]);
+});
