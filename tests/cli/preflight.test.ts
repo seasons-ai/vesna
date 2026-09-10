@@ -166,3 +166,66 @@ test("a profile named but absent is called out by name, not lumped in with 'none
   });
   expect(said).toContain("work");
 });
+
+// The credential guard must read the preset's own key variable, not a
+// hardcoded OPENAI_API_KEY — every openai-dialect preset names its own
+// (groq, openrouter, custom, ...), and the guard has to agree with `usable`
+// on all of them or a correctly configured user is refused a chat.
+
+test("a groq preset is usable from GROQ_API_KEY alone, with no OPENAI_API_KEY set", async () => {
+  const c = await inspectCredential(
+    config({ preset: findPreset("groq")!, provider: "openai", auth: "key" }),
+    { GROQ_API_KEY: "gsk-live" },
+    await home(),
+  );
+  expect(usable(c)).toBe(true);
+});
+
+test("a groq preset with neither variable set is not usable, and names GROQ_API_KEY", async () => {
+  const conf = config({ preset: findPreset("groq")!, provider: "openai", auth: "key" });
+  const c = await inspectCredential(conf, {}, await home());
+  expect(usable(c)).toBe(false);
+  expect(problem(c)).toContain("GROQ_API_KEY");
+  expect(problem(c)).not.toContain("OPENAI_API_KEY");
+  expect(remedy(conf, c).join(" ")).toContain("GROQ_API_KEY");
+  expect(remedy(conf, c).join(" ")).not.toContain("OPENAI_API_KEY");
+});
+
+test("an ollama preset needs no variable at all, even with nothing set", async () => {
+  const c = await inspectCredential(
+    config({ preset: findPreset("ollama")!, provider: "openai", auth: "key" }),
+    {},
+    await home(),
+  );
+  expect(usable(c)).toBe(true);
+});
+
+test("anthropic behaviour is unchanged by the preset-aware guard", async () => {
+  const usableCred = await inspectCredential(
+    config({ preset: findPreset("anthropic")!, provider: "anthropic", auth: "key" }),
+    { ANTHROPIC_API_KEY: "sk-ant" },
+    await home(),
+  );
+  expect(usable(usableCred)).toBe(true);
+
+  const missingCred = await inspectCredential(
+    config({ preset: findPreset("anthropic")!, provider: "anthropic", auth: "key" }),
+    {},
+    await home(),
+  );
+  expect(usable(missingCred)).toBe(false);
+});
+
+test("codex behaviour is unchanged by the preset-aware guard", async () => {
+  const dir = await home({
+    ".codex/auth.json": JSON.stringify({
+      tokens: { access_token: jwt({ exp: Math.floor(Date.now() / 1000) + 3600 }) },
+    }),
+  });
+  const c = await inspectCredential(
+    config({ preset: findPreset("codex")!, provider: "openai", auth: "codex" }),
+    {},
+    dir,
+  );
+  expect(usable(c)).toBe(true);
+});

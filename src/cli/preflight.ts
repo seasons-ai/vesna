@@ -25,6 +25,14 @@ export type Credential =
       state: "valid" | "missing";
       reason: "key" | "local";
       endpoint: string;
+      /**
+       * Name of the variable this preset actually reads (e.g. `GROQ_API_KEY`).
+       * Absent means either a preset that names none at all (a local server,
+       * or "custom"), or — for older call sites that build a `Credential` by
+       * hand — no opinion, in which case `problem`/`remedy` fall back to the
+       * historical `OPENAI_API_KEY` wording.
+       */
+      env?: string;
     }
   | { mode: "anthropic"; source: CredentialSource; dir: string; profiles: string[] };
 
@@ -57,13 +65,31 @@ export async function inspectCredential(
 
   if (config.provider === "openai") {
     const endpoint = config.baseUrl ?? "https://api.openai.com/v1";
-    const key = env.OPENAI_API_KEY;
-    if (key !== undefined && key !== "") {
-      return { mode: "openai-key", state: "valid", reason: "key", endpoint };
+    // `VesnaConfig.provider` collapses groq, openrouter, custom and openai
+    // into one dialect value, so the actual variable to check has to come
+    // from the resolved preset — not a name hardcoded for the openai preset.
+    const envName = config.preset.env;
+
+    if (envName === undefined) {
+      // This preset names no variable at all: a local server (ollama,
+      // lmstudio, vllm) or "custom" needs no credential of any kind.
+      return { mode: "openai-key", state: "valid", reason: "local", endpoint };
     }
-    // A model served from this machine needs no credential of any kind.
+
+    const key = env[envName];
+    if (key !== undefined && key !== "") {
+      return { mode: "openai-key", state: "valid", reason: "key", endpoint, env: envName };
+    }
+    // A model served from this machine needs no credential of any kind, even
+    // if the preset in play happens to name one.
     const local = config.baseUrl !== undefined && /localhost|127\.0\.0\.1/.test(config.baseUrl);
-    return { mode: "openai-key", state: local ? "valid" : "missing", reason: local ? "local" : "key", endpoint };
+    return {
+      mode: "openai-key",
+      state: local ? "valid" : "missing",
+      reason: local ? "local" : "key",
+      endpoint,
+      env: envName,
+    };
   }
 
   const dir = configDir(env, process.platform, home);
@@ -110,7 +136,7 @@ export function remedy(config: VesnaConfig, credential: Credential): string[] {
       lines.push("  vesna auth login");
       break;
     case "openai-key":
-      lines.push("  export OPENAI_API_KEY=...   # or point baseUrl at a local host");
+      lines.push(`  export ${credential.env ?? "OPENAI_API_KEY"}=...   # or point baseUrl at a local host`);
       break;
     case "anthropic":
       lines.push(
@@ -132,7 +158,7 @@ export function problem(credential: Credential): string {
     case "subscription":
       return "not signed in";
     case "openai-key":
-      return "OPENAI_API_KEY is not set";
+      return `${credential.env ?? "OPENAI_API_KEY"} is not set`;
     case "anthropic":
       return credential.source.kind === "missing_profile"
         ? `ANTHROPIC_PROFILE names "${credential.source.profile}", which does not exist`

@@ -72,16 +72,10 @@ export async function runOnboarding(options: OnboardOptions): Promise<boolean> {
   // one of the three sources.
   //
   // The other presets stay on the plain `preset.env` check below rather than
-  // routing through the same module: `inspectCredential`'s openai-dialect
-  // branch only ever reads `OPENAI_API_KEY`, because `VesnaConfig.provider`
-  // collapses every openai-compatible vendor (openai, groq, openrouter, a
-  // custom host) into one `"openai"` value — it has no way to see that this
-  // preset's key lives in `GROQ_API_KEY`. Routing groq or openrouter through
-  // it here would make onboarding refuse a working groq setup whenever
-  // `OPENAI_API_KEY` happens to be unset, which is the exact bug this task
-  // already fixed once in `buildProviderFor`. That gap in preflight.ts is
-  // pre-existing and reaches beyond onboarding (`vesna chat`/`do` share it
-  // too), so it is not fixed here.
+  // routing through the same module: it is equivalent now that
+  // `inspectCredential`'s openai-dialect branch reads `preset.env` too (see
+  // src/cli/preflight.ts), and duplicating a call already made above for the
+  // anthropic case buys nothing here.
   if (preset.dialect === "anthropic") {
     const preflightConfig: VesnaConfig = {
       configured: config.configured,

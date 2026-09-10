@@ -113,7 +113,7 @@ export async function authCommand(
         console.log(
           credential.reason === "local"
             ? `credential: ${theme.paint("ok", "none needed")} ${theme.paint("muted", "(local endpoint)")}`
-            : `credential: ${theme.paint("ok", "OPENAI_API_KEY")}`,
+            : `credential: ${theme.paint("ok", credential.env ?? "OPENAI_API_KEY")}`,
         );
       } else {
         console.log(`credential: ${theme.paint("warn", "none")}`);
