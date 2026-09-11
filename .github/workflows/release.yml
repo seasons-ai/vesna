@@ -1,0 +1,71 @@
+name: release
+
+# A tag is a release. `npm version <patch|minor|major>` makes the commit and
+# the tag; pushing the tag runs this. Nothing here needs a one-time code, so
+# a release cannot fail on a 30-second window the way a manual publish did
+# three times in a row.
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write   # the GitHub Release
+  id-token: write   # npm provenance
+
+jobs:
+  verify:
+    uses: ./.github/workflows/ci.yml
+
+  publish:
+    needs: verify
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          registry-url: https://registry.npmjs.org
+
+      - name: The tag names the version package.json ships
+        run: |
+          tag="${GITHUB_REF#refs/tags/v}"
+          pkg="$(node -p "require('./package.json').version")"
+          if [ "$tag" != "$pkg" ]; then
+            echo "tag v$tag but package.json says $pkg" >&2
+            exit 1
+          fi
+
+      - name: Refuse to publish a version the registry already has
+        run: |
+          pkg="$(node -p "require('./package.json').version")"
+          if npm view "@seasons-ai/vesna@$pkg" version >/dev/null 2>&1; then
+            echo "@seasons-ai/vesna@$pkg is already published" >&2
+            exit 1
+          fi
+
+      - name: Publish
+        run: npm publish --provenance --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      - name: Install what was just published, and run it
+        run: |
+          pkg="$(node -p "require('./package.json').version")"
+          cd "$(mktemp -d)"
+          npm init -y >/dev/null
+          # The registry replicates reads behind writes; give it a minute.
+          for i in 1 2 3 4 5 6; do
+            npm install --silent --prefer-online "@seasons-ai/vesna@$pkg" && break
+            sleep 20
+          done
+          ./node_modules/.bin/vesna --version | grep -qx "$pkg"
+
+      - name: GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true

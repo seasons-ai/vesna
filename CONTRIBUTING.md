@@ -62,3 +62,22 @@ shorten or decline a line; the avatar and link stay either way.
 ## Security
 
 Do not open a public issue for a vulnerability. See [SECURITY.md](SECURITY.md).
+
+## Releasing (maintainers)
+
+A tag is a release. Nothing is published by hand.
+
+```bash
+npm version patch        # or minor, major — makes the commit and the tag
+git push --follow-tags   # the tag starts .github/workflows/release.yml
+```
+
+The workflow runs the full CI, checks the tag against `package.json`, refuses
+a version the registry already has, publishes with provenance, installs the
+published package into an empty directory and runs it, and creates the GitHub
+Release with generated notes. It needs one secret, `NPM_TOKEN`: a granular
+access token for `@seasons-ai/vesna` with publish rights and *bypass 2FA*
+enabled, set in the repository's Actions secrets.
+
+The README's status line names the minor version; a minor or major bump
+changes it, and a test fails until it does.

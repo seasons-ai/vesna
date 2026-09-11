@@ -3,8 +3,8 @@ name: ci
 on:
   push:
     branches: [main]
-    tags: ["v*"]
   pull_request:
+  workflow_call:
 
 # A second push to the same branch makes the first run pointless.
 concurrency:
@@ -64,16 +64,6 @@ jobs:
           # The floor named in package.json's engines, so the tarball is
           # proven against the oldest Bun it claims to run on.
           bun-version: 1.2.0
-
-      - name: Tag and package.json agree
-        if: startsWith(github.ref, 'refs/tags/v')
-        run: |
-          tag="${GITHUB_REF#refs/tags/v}"
-          pkg="$(node -p "require('./package.json').version")"
-          if [ "$tag" != "$pkg" ]; then
-            echo "tag v$tag but package.json says $pkg" >&2
-            exit 1
-          fi
 
       - name: Pack
         run: |
