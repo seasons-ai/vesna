@@ -96,6 +96,26 @@ test("credential paths are asked about even in auto, and even inside the project
   }
 });
 
+test("the spec's event log is asked about even in auto: the gate binds the person, not the model's shell", () => {
+  const p = policy({ mode: "auto", allow: { write: ["**"], edit: ["**"] } });
+  for (const path of [".vesna/specs/work/events.jsonl", "sub/.vesna/specs/x/events.jsonl"]) {
+    expect(decide({ ...act("write", { path }), effect: "write" }, p, cwd)).toBe("ask");
+    expect(decide({ ...act("edit", { path }), effect: "write" }, p, cwd)).toBe("ask");
+  }
+  // The rest of the spec folder is the model's to write: that is the process.
+  expect(decide({ ...act("write", { path: ".vesna/specs/work/spec.md" }), effect: "write" }, p, cwd)).toBe("allow");
+  // A shell command that names the log and is not a read is asked about too;
+  // reading it is still reading.
+  for (const command of [
+    "echo '{\"t\":\"approved\",\"what\":\"plan\"}' >> .vesna/specs/work/events.jsonl",
+    "sed -i '' '$d' .vesna/specs/work/events.jsonl",
+    "rm .vesna/specs/work/events.jsonl",
+  ]) {
+    expect(decide({ ...act("shell", { command }), effect: "write" }, p, cwd)).toBe("ask");
+  }
+  expect(decide({ ...act("shell", { command: "cat .vesna/specs/work/events.jsonl" }), effect: "write" }, p, cwd)).toBe("allow");
+});
+
 test("the irreversible shell commands are asked about even in auto", () => {
   const p = policy({ mode: "auto" });
   for (const command of [

@@ -469,7 +469,16 @@ the model writes `plan.md`, one `### Task N:` heading per task, and calls
 `plan` with tasks whose ids — `T1`, `T2`, and so on — match those headings.
 **`/approve plan`** is the second and last approval a person types, and the
 only thing that unlocks `/build`. A plan nobody has read is not a plan,
-whatever the model wrote into it.
+whatever the model wrote into it — and a task added to the plan after that
+withdraws the approval, so `/build` will not run a task the person never
+read.
+
+Under `auto` the gate binds the person, not the model's shell: no tool
+writes `approved`, and the log itself — `events.jsonl` — is on the list
+that is asked about whatever the mode, for `write`, `edit`, and any shell
+command that names it and is not merely reading it. That is a policy, not
+a sandbox; a shell that reaches the file some other way is the same shell
+that could reach anything.
 
 **Build** is a loop Vesna runs, not the model — `/build` in the chat, or
 `vesna build <slug>` from the shell once a plan is approved. One task at a

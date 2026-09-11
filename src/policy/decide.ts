@@ -58,7 +58,15 @@ const ALWAYS_ASK_PATHS = [
   ".ssh/**",
   "**/.aws/**",
   "**/id_rsa*",
+  // The spec's log. `approved` is written by a person's keystroke and
+  // nothing else; a model that could append it under `auto` would be
+  // approving its own plan.
+  "**/.vesna/specs/**/events.jsonl",
+  ".vesna/specs/**/events.jsonl",
 ];
+
+/** A shell command that names the spec's log and is not merely reading it. */
+const EVENT_LOG = /\.vesna\/specs\/[^\s'"]*events\.jsonl/;
 
 const ALWAYS_ASK_COMMANDS = [
   /(^|\s|&&|\|)\s*sudo\s/,
@@ -127,6 +135,7 @@ function alwaysAsk(action: Action, facet: string | undefined, cwd: string): bool
   if (action.node === "shell" || action.node === "script") {
     const command = typeof action.input.command === "string" ? action.input.command : "";
     if (ALWAYS_ASK_COMMANDS.some((pattern) => pattern.test(command))) return true;
+    if (EVENT_LOG.test(command) && !isReadOnlyCommand(command)) return true;
   }
 
   if (facet === undefined) return false;
