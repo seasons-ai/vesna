@@ -7,6 +7,12 @@
 fit — ships as the same light/dark pair: `assets/mark.svg` for dark
 backgrounds, `assets/mark-light.svg` for light ones.*
 
+[![stars](https://img.shields.io/github/stars/seasons-ai/vesna?style=flat&color=e8a4b8)](https://github.com/seasons-ai/vesna/stargazers)
+[![npm](https://img.shields.io/npm/v/@seasons-ai/vesna?style=flat&color=9fc5e8)](https://www.npmjs.com/package/@seasons-ai/vesna)
+[![downloads](https://img.shields.io/npm/dm/@seasons-ai/vesna?style=flat&color=9fc5e8)](https://www.npmjs.com/package/@seasons-ai/vesna)
+[![ci](https://img.shields.io/github/actions/workflow/status/seasons-ai/vesna/ci.yml?style=flat&branch=main)](https://github.com/seasons-ai/vesna/actions/workflows/ci.yml)
+[![licence](https://img.shields.io/badge/licence-MIT-lightgrey?style=flat)](LICENSE)
+
 A coding agent with spec-driven development built in.
 
 Ask it for a piece of work and it does not start typing. It records a plan,
