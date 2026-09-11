@@ -2,6 +2,7 @@ node_modules/
 dist/
 .vesna/traces/
 .vesna/worktrees/
+.vesna/specs/*/build.lock
 *.log
 .DS_Store
 

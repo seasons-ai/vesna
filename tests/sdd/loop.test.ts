@@ -629,3 +629,35 @@ test("a whole-branch review with no verdict gets one retry, then stops the build
   const twice = fakes({ reviews: [clean, silent, silent] });
   expect(await runBuild(base(r2, s2, twice))).toEqual({ status: "stopped", reason: "branch review: the reviewer produced no verdict twice" });
 });
+
+// Two builds of one spec at once would race on the same branches, worktrees
+// and log. The second must refuse and name the first.
+test("a second build of the same spec refuses while the first holds the lock", async () => {
+  const { root, specs } = setup(oneApproved);
+  let release!: () => void;
+  const gate = new Promise<void>((r) => { release = r; });
+  const slow = fakes({ build: (t) => built(t, 1) });
+  const held = { ...slow.seams, build: async (r: any) => { await gate; return built(r.task, 1); } };
+  const first = runBuild({ ...base(root, specs, slow), ...held });
+
+  // Give the first build a tick to take the lock, then try a second.
+  await new Promise((r) => setTimeout(r, 20));
+  const second = await runBuild(base(root, specs, fakes()));
+  expect(second.status).toBe("could-not-start");
+  expect((second as any).reason).toMatch(/already running.*pid \d+/);
+
+  release();
+  expect(await first).toEqual({ status: "done" });
+  // The lock is gone once the first build ends, so a third can start.
+  const third = await runBuild(base(root, specs, fakes()));
+  expect(third.status).toBe("could-not-start");
+  expect((third as any).reason).toBe("nothing to build — every task is merged");
+});
+
+test("a stale lock from a dead process does not block a build", async () => {
+  const { root, specs } = setup(oneApproved);
+  const { writeFileSync } = await import("node:fs");
+  writeFileSync(join(specs, "work", "build.lock"), JSON.stringify({ pid: 999999999, startedAt: "2000-01-01T00:00:00Z" }));
+  const out = await runBuild(base(root, specs, fakes()));
+  expect(out).toEqual({ status: "done" });
+});

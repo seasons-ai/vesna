@@ -1,3 +1,4 @@
+import { existsSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { Policy } from "../policy/decide";
 import type { Provider } from "../providers/types";
@@ -66,6 +67,44 @@ export function renderFindings(findings: Finding[]): string {
 }
 
 const blocking = (f: Finding) => f.severity !== "minor";
+
+/**
+ * One build per spec at a time. Two would race on the same branches, the
+ * same worktrees and the same log, and the loser would not know it lost.
+ * The lock names the process holding it, so a refusal can say who; a lock
+ * whose process is gone is a crash's leftover, not a build, and is taken over.
+ */
+function takeLock(path: string): { ok: true } | { ok: false; pid: number } {
+  if (existsSync(path)) {
+    let pid = NaN;
+    try {
+      pid = Number(JSON.parse(readFileSync(path, "utf8")).pid);
+    } catch {
+      // Unreadable is as good as stale.
+    }
+    if (Number.isInteger(pid) && alive(pid)) return { ok: false, pid };
+  }
+  writeFileSync(path, JSON.stringify({ pid: process.pid, startedAt: new Date().toISOString() }));
+  return { ok: true };
+}
+
+function alive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    // EPERM means it exists and is not ours — still alive.
+    return (error as NodeJS.ErrnoException).code === "EPERM";
+  }
+}
+
+function releaseLock(path: string): void {
+  try {
+    unlinkSync(path);
+  } catch {
+    // Already gone is the state we wanted.
+  }
+}
 
 function isAbort(error: Error, signal: AbortSignal | undefined): boolean {
   return error.name === "AbortError" || signal?.aborted === true;
@@ -161,6 +200,12 @@ export async function runBuild(request: BuildLoopRequest): Promise<BuildOutcome>
   }
   for (const id of planIds) {
     if (!logIds.has(id)) return { status: "could-not-start", reason: `${id} is in plan.md but not in the log` };
+  }
+
+  const lockPath = join(paths.dir, "build.lock");
+  const lock = takeLock(lockPath);
+  if (!lock.ok) {
+    return { status: "could-not-start", reason: `a build of "${slug}" is already running (pid ${lock.pid})` };
   }
 
   const briefs = writeBriefs(specsRoot, slug, planTasks);
@@ -416,5 +461,7 @@ export async function runBuild(request: BuildLoopRequest): Promise<BuildOutcome>
       return { status: "stopped", reason: "interrupted" };
     }
     throw error;
+  } finally {
+    releaseLock(lockPath);
   }
 }
