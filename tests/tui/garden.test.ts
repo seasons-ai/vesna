@@ -134,6 +134,18 @@ test("a task under review shows the review's outcome beside it", () => {
   expect(out).toContain("review 1: 1 open");
 });
 
+test("a review that produced no verdict says so, not \"not met\"", () => {
+  const out = text([
+    { t: "approved", what: "plan" },
+    { t: "build.started" },
+    { t: "task.added", id: "T1", title: "First" },
+    { t: "task.started", id: "T1", agent: "vesna build" },
+    { t: "review.failed", task: "T1", round: 1, reason: "no verdict" },
+  ]);
+  expect(out).toContain("review 1: no verdict");
+  expect(out).not.toContain("not met");
+});
+
 test("parked findings are listed under the task, not hidden", () => {
   const out = text([
     { t: "approved", what: "plan" },

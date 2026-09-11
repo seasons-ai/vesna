@@ -149,11 +149,13 @@ export function gardenPane(tree: SpecTree, options: PaneOptions): Pane {
         const review = tree.reviews[task.id];
         if (review !== undefined) {
           const label =
-            review.spec === "not_met"
-              ? `review ${review.round}: not met`
-              : `review ${review.round}: ${review.open.length} open`;
+            review.spec === "no_verdict"
+              ? `review ${review.round}: no verdict`
+              : review.spec === "not_met"
+                ? `review ${review.round}: not met`
+                : `review ${review.round}: ${review.open.length} open`;
           lines.push({
-            text: `    ${theme.paint(review.open.length > 0 || review.spec === "not_met" ? "warn" : "ice", mark("◆"))} ${theme.paint("muted", truncate(label, width - 6))}`,
+            text: `    ${theme.paint(review.open.length > 0 || review.spec !== "met" ? "warn" : "ice", mark("◆"))} ${theme.paint("muted", truncate(label, width - 6))}`,
           });
         }
         for (const parked of tree.parked.filter((p) => p.task === task.id)) {

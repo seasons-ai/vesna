@@ -88,7 +88,8 @@ export interface SpecTree {
   building: boolean;
   /** Build events that arrived before the plan was approved: ignored, and counted. */
   ignored: number;
-  reviews: Record<string, { round: number; spec: "met" | "not_met"; open: Finding[] }>;
+  /** The last review per task. `no_verdict`: the reviewer never called review_verdict. */
+  reviews: Record<string, { round: number; spec: "met" | "not_met" | "no_verdict"; open: Finding[] }>;
   parked: { task: string; finding: Finding }[];
   rulings: { text: string; why: string }[];
 }
@@ -245,9 +246,10 @@ export function project(events: SpecEvent[]): SpecTree | null {
         break;
 
       case "review.failed":
-        // Recorded on the task so the panel can say "review failed" rather
-        // than leaving it looking like it is still running.
-        reviews[event.task] = { round: event.round, spec: "not_met", open: [] };
+        // Recorded on the task so the panel can say "no verdict" rather
+        // than leaving it looking like it is still running — and not as
+        // "not met", which is a verdict the reviewer never gave.
+        reviews[event.task] = { round: event.round, spec: "no_verdict", open: [] };
         break;
 
       case "parked":

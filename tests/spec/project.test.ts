@@ -273,6 +273,14 @@ test("a not-met spec is open even with no findings", () => {
   expect(t.reviews.T1!.spec).toBe("not_met");
 });
 
+test("a review that never called review_verdict is recorded as no verdict, not as not met", () => {
+  const t = tree([
+    { t: "task.added", id: "T1", title: "one" },
+    { t: "review.failed", task: "T1", round: 1, reason: "provider down" },
+  ]);
+  expect(t.reviews.T1!).toEqual({ round: 1, spec: "no_verdict", open: [] });
+});
+
 test("parked findings and rulings are kept in order", () => {
   const f = { severity: "minor" as const, file: "x", text: "later" };
   const t = tree([

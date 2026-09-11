@@ -1953,6 +1953,47 @@ test("/spec open refuses while a build is running, so its events are not redirec
   await quit(app);
 });
 
+test("a stopped build's reason is printed once, not once per surface", async () => {
+  const base = await deps(reply("x"));
+  const sink = createSink(specsRoot(base.root));
+  const specs = specsRoot(base.root);
+  oneTaskSpec(specs, "gate");
+  const seams = buildFakes();
+  const build = async (r: { task: string }): Promise<BuildResult> => ({
+    ...(await seams.build(r)),
+    status: "refused",
+    refusals: ["write .env"],
+  });
+  const app = await start(reply("x"), { rows: 40, cols: 120 }, { ...base, sink, buildSeams: { ...seams, build } });
+  app.input.type("/spec open gate\r");
+  await until(() => app.screen().includes("spec gate"), "the spec opening");
+  app.input.type("/build\r");
+  await until(() => /stopped: T1: the worker was not allowed to: write \.env/.test(app.screen()), "the stop");
+  // Give the promise's own handler time to print, if it were going to.
+  await new Promise((resolve) => setTimeout(resolve, 30));
+  // "T1  failed: …" is the task's own event and stays; the build's reason
+  // ("T1: the worker …") must appear once, as "stopped: …", not again bare.
+  const mentions = app.screen().split("\n").filter((row) => /T1: the worker was not allowed to: write \.env/.test(row));
+  expect(mentions).toHaveLength(1);
+  expect(mentions[0]).toMatch(/stopped: T1: the worker/);
+  await quit(app);
+});
+
+test("a build that could not start says why, since no event carries it", async () => {
+  const base = await deps(reply("x"));
+  const sink = createSink(specsRoot(base.root));
+  const specs = specsRoot(base.root);
+  createSpec(specs, "gate");
+  appendEvent(specs, "gate", { t: "task.added", id: "T1", title: "First" });
+  appendEvent(specs, "gate", { t: "approved", what: "plan" });
+  const app = await start(reply("x"), { rows: 40, cols: 120 }, { ...base, sink, buildSeams: buildFakes() });
+  app.input.type("/spec open gate\r");
+  await until(() => app.screen().includes("spec gate"), "the spec opening");
+  app.input.type("/build\r");
+  await until(() => /there is no plan\.md to build/.test(app.screen()), "the reason");
+  await quit(app);
+});
+
 test("a build that rejects instead of resolving shows up in the transcript, and the process survives it", async () => {
   const base = await deps(reply("x"));
   const sink = createSink(specsRoot(base.root));

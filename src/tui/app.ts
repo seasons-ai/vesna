@@ -745,7 +745,10 @@ export async function runApp(deps: AppDeps, io: AppIo): Promise<number> {
           })
             .then((outcome) => {
               building = false;
-              if (outcome.status !== "done") transcript.notice(outcome.reason, "warn");
+              // A stop already reached the transcript as its `build.stopped`
+              // event above; only a build that never started has no event
+              // to carry its reason.
+              if (outcome.status === "could-not-start") transcript.notice(outcome.reason, "warn");
               refreshSpec();
               draw();
             })
