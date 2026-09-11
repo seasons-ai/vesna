@@ -21,6 +21,7 @@ export type Shape = "spike" | "bounded" | "architectural";
 const HEAVINESS: Record<Shape, number> = { spike: 0, bounded: 1, architectural: 2 };
 
 export type Approvable = "spec" | "plan";
+export type RecoveryAction = "resume" | "retry" | "abort";
 export type Severity = "critical" | "important" | "minor";
 
 export interface Finding {
@@ -47,6 +48,13 @@ export type SpecEvent =
   | { t: "approved"; what: Approvable }
   | { t: "build.started" }
   | { t: "build.stopped"; reason: string }
+  /**
+   * A person's answer to a build a killed process left behind. Written by
+   * the command, never by a tool. Resume keeps the in-flight task where it
+   * is; retry and abort send it back to todo, and abort is followed by a
+   * `build.stopped "abandoned"`.
+   */
+  | { t: "build.recovered"; action: RecoveryAction; task?: string }
   | { t: "build.done" }
   | { t: "review.done"; task: string; round: number; spec: "met" | "not_met"; findings: Finding[] }
   /** The reviewer never called review_verdict. That is its failure, not a pass. */
@@ -242,6 +250,18 @@ export function project(events: SpecEvent[]): SpecTree | null {
         building = false;
         lastStop = event.reason;
         break;
+
+      case "build.recovered": {
+        if (event.action === "resume") break;
+        // retry names its task; abort means whichever task is running.
+        const id = event.task ?? [...tasks.values()].find((t) => t.state === "running")?.id;
+        if (id === undefined) break;
+        const task = tasks.get(id);
+        if (task === undefined) break;
+        const { agent: _agent, ...rest } = task;
+        tasks.set(id, { ...rest, state: "todo" });
+        break;
+      }
 
       case "build.done":
         building = false;

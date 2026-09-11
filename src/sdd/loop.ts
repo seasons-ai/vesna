@@ -1,4 +1,4 @@
-import { existsSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
+import { existsSync, unlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { Policy } from "../policy/decide";
 import type { Provider } from "../providers/types";
@@ -10,6 +10,7 @@ import { mergeAll } from "../work/merge";
 import { CycleError, schedule } from "../work/schedule";
 import { runGit, type GitRunner } from "../work/worktree";
 import { splitPlan, writeBriefs } from "./brief";
+import { pidAlive, readLockPid } from "./recover";
 import { reviewTask, type ReviewOutcome } from "./review";
 
 /**
@@ -75,17 +76,9 @@ const blocking = (f: Finding) => f.severity !== "minor";
  * whose process is gone is a crash's leftover, not a build, and is taken over.
  */
 function takeLock(path: string): { ok: true } | { ok: false; pid: number } {
-  if (existsSync(path)) {
-    let pid = NaN;
-    try {
-      pid = Number(JSON.parse(readFileSync(path, "utf8")).pid);
-    } catch {
-      // Unreadable is as good as stale.
-    }
-    // pid 0 is "this process group" to kill(2) and would read as alive forever.
-    if (Number.isInteger(pid) && pid > 0 && alive(pid)) return { ok: false, pid };
-    releaseLock(path);
-  }
+  const pid = readLockPid(path);
+  if (pid !== null && pidAlive(pid)) return { ok: false, pid };
+  if (pid !== null || existsSync(path)) releaseLock(path);
   try {
     // wx: create, never overwrite — so two takers racing past the check
     // above cannot both believe they hold it.
@@ -94,16 +87,6 @@ function takeLock(path: string): { ok: true } | { ok: false; pid: number } {
     return { ok: false, pid: NaN };
   }
   return { ok: true };
-}
-
-function alive(pid: number): boolean {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch (error) {
-    // EPERM means it exists and is not ours — still alive.
-    return (error as NodeJS.ErrnoException).code === "EPERM";
-  }
 }
 
 function releaseLock(path: string): void {

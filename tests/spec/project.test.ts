@@ -387,3 +387,43 @@ test("the tree remembers why the last build stopped, until the next one starts",
   ]);
   expect(restarted.lastStop).toBeUndefined();
 });
+
+test("a resume recovery leaves the in-flight task running", () => {
+  const t = tree([
+    { t: "task.added", id: "T1", title: "a" },
+    { t: "approved", what: "spec" }, { t: "approved", what: "plan" },
+    { t: "build.started" },
+    { t: "task.started", id: "T1", agent: "vesna build" },
+    { t: "build.recovered", action: "resume", task: "T1" },
+  ]);
+  expect(t.tasks[0]!.state).toBe("running");
+});
+
+test("a retry recovery returns the named task to todo", () => {
+  const t = tree([
+    { t: "task.added", id: "T1", title: "a" },
+    { t: "approved", what: "spec" }, { t: "approved", what: "plan" },
+    { t: "build.started" },
+    { t: "task.started", id: "T1", agent: "vesna build" },
+    { t: "build.recovered", action: "retry", task: "T1" },
+  ]);
+  expect(t.tasks[0]!.state).toBe("todo");
+  expect(t.tasks[0]!.agent).toBeUndefined();
+});
+
+test("an abort recovery returns the in-flight task to todo; the stop that follows ends the build", () => {
+  const t = tree([
+    { t: "task.added", id: "T1", title: "a" },
+    { t: "task.added", id: "T2", title: "b" },
+    { t: "approved", what: "spec" }, { t: "approved", what: "plan" },
+    { t: "build.started" },
+    { t: "task.started", id: "T1", agent: "vesna build" },
+    { t: "task.done", id: "T1", commit: "abc" },
+    { t: "task.started", id: "T2", agent: "vesna build" },
+    { t: "build.recovered", action: "abort" },
+    { t: "build.stopped", reason: "abandoned" },
+  ]);
+  expect(t.tasks.map((x) => x.state)).toEqual(["done", "todo"]);
+  expect(t.building).toBe(false);
+  expect(t.lastStop).toBe("abandoned");
+});
