@@ -179,8 +179,16 @@ export async function removeWorktree(
  * the merge commit carries the branch's whole history and can be reverted
  * as a unit, and the ref itself is a leftover. A branch that is already
  * gone is the state that was wanted.
+ *
+ * Prunes first: a worktree whose directory went missing without going
+ * through `removeWorktree` (an operator's `rm -rf`, say) leaves git's own
+ * bookkeeping still pointing at it, and git then refuses to delete the
+ * branch as "used by worktree". Pruning drops that stale record — it never
+ * touches a working tree that still exists — so this is safe to run every
+ * time, not only when a directory is actually known to be gone.
  */
 export async function deleteBranch(repo: string, branch: string, git: GitRunner = runGit): Promise<void> {
+  await git(["worktree", "prune"], repo);
   const result = await git(["branch", "-D", branch], repo);
   if (result.code !== 0 && !/not found/i.test(result.stderr)) {
     throw new WorktreeError(`could not delete branch ${branch}: ${result.stderr.trim().split("\n")[0]}`);

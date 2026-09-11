@@ -1,11 +1,11 @@
 import { test, expect } from "bun:test";
-import { existsSync, mkdtempSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { runBuild, renderFindings } from "../../src/sdd/loop";
 import { appendEvent, createSpec, readEvents, readSpecFile, specPaths, writeSpecFile } from "../../src/spec/store";
 import { project, type Finding, type SpecEvent } from "../../src/spec/project";
-import type { BuildResult } from "../../src/work/builder";
+import { runTask, type BuildResult } from "../../src/work/builder";
 import type { ReviewOutcome } from "../../src/sdd/review";
 import type { MergeReport } from "../../src/work/merge";
 import { createRegistry } from "../../src/registry/registry";
@@ -731,4 +731,42 @@ test("after a task merges, its worktree and branch are gone; after the build, no
   expect((await runGit(["worktree", "list"], repo)).stdout.split("\n").filter((l) => l.includes("work-T1"))).toEqual([]);
   // The work itself is on main, via the merge commit.
   expect(readFileSync(join(repo, "b.txt"), "utf8")).toBe("one\n");
+});
+
+// If an operator (or anything else) removes a task's worktree directory
+// without going through `removeWorktree` — a plain `rm -rf` — git still
+// registers the worktree until it is pruned, and a bare `git branch -D`
+// then refuses with "used by worktree". The `existsSync` guard in `attempt`
+// sends this case to `deleteBranch` instead of `removeWorktree`, and
+// `deleteBranch` must still get the branch gone rather than quietly leaving
+// it, with no error and no log line, because the directory happened not to
+// be there.
+test("a branch survives even when its worktree directory was removed by hand first", async () => {
+  const repo = await repository();
+  const specs = join(repo, ".vesna", "specs");
+  mkdirSync(specs, { recursive: true });
+  createSpec(specs, "work");
+  for (const e of [
+    { t: "task.added", id: "T1", title: "First" },
+    { t: "approved", what: "spec" }, { t: "approved", what: "plan" },
+  ] as SpecEvent[]) appendEvent(specs, "work", e);
+  writeSpecFile(specPaths(specs, "work").plan, "# Plan\n\n### Task 1: First\nWrite b.txt.\n");
+
+  const out = await runBuild({
+    root: repo, specsRoot: specs, slug: "work",
+    provider: writes("b.txt", "one\n"), registry: registry(),
+    policy: { mode: "auto", allow: {}, deny: {} },
+    review: async () => clean,
+    // A real build, through the real `runTask` — but its worktree is
+    // deleted by hand before the loop ever gets to clean up after it,
+    // reproducing an operator's `rm -rf` rather than Vesna's own removal.
+    build: async (r) => {
+      const result = await runTask(r);
+      rmSync(result.worktree, { recursive: true, force: true });
+      return result;
+    },
+  });
+  expect(out).toEqual({ status: "done" });
+
+  expect((await runGit(["branch", "--list", "vesna/work/T1"], repo)).stdout.trim()).toBe("");
 });

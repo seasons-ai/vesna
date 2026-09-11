@@ -8,7 +8,7 @@ import { appendEvent, readEvents, readSpecFile, specPaths, writeSpecFile } from 
 import { resumeTask, runTask, type BuildResult } from "../work/builder";
 import { mergeAll } from "../work/merge";
 import { CycleError, schedule } from "../work/schedule";
-import { removeWorktree, runGit, type GitRunner } from "../work/worktree";
+import { deleteBranch, removeWorktree, runGit, type GitRunner } from "../work/worktree";
 import { splitPlan, writeBriefs } from "./brief";
 import { pidAlive, readLockPid } from "./recover";
 import { reviewTask, type ReviewOutcome } from "./review";
@@ -371,9 +371,16 @@ export async function runBuild(request: BuildLoopRequest): Promise<BuildOutcome>
       // deletes the branch itself once the checkout is clean, so one call
       // does both. Guarded on the worktree existing: a seam-based test's
       // fake `build`/`resume` invent a worktree path that is never actually
-      // created, and removing it would be trying to clean up nothing.
+      // created, and `removeWorktree` resolves it with real `fs.realpath`
+      // regardless of the injected `git` seam — calling it on an invented
+      // path throws. But a real worktree can also go missing on disk (an
+      // operator's `rm -rf`) while git still registers the branch; that
+      // case must not walk away leaving the branch behind, so it falls to
+      // `deleteBranch`, which touches only refs and never the path.
       if (existsSync(result.worktree)) {
         await removeWorktree(request.root, { path: result.worktree, branch: result.branch }, { discardChanges: true }, git);
+      } else {
+        await deleteBranch(request.root, result.branch, git);
       }
 
       return result;
