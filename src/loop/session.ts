@@ -10,8 +10,11 @@ import {
 } from "../providers/types";
 import { toolSpecs } from "../registry/registry";
 import type { Registry } from "../registry/types";
-import { systemPrompt } from "./prompt";
+import { systemPrompt, type PromptContext } from "./prompt";
 import { fingerprint, type LiveTrace, type TraceStep } from "./trace";
+
+/** The phase context a session is told about, fixed or read fresh each turn. */
+export type PhaseOption = PromptContext["phase"] | (() => PromptContext["phase"]);
 
 export interface SessionOptions {
   cwd: string;
@@ -32,6 +35,14 @@ export interface SessionOptions {
   prices?: Record<string, ModelPrice>;
   /** The project's own instructions, from .vesna/AGENTS.md. */
   notes?: string;
+  /**
+   * Which phase the open spec is in. A plain value is fixed for the session's
+   * life; a function is called at the start of every turn, so a stage that
+   * moved between turns — the person approving a spec, say — is picked up on
+   * the very next message instead of staying frozen at whatever it was when
+   * the session was built.
+   */
+  phase?: PhaseOption;
   /** Prior turns, when a stored conversation is being resumed. */
   history?: AgentMessage[];
   onStep?: (step: TraceStep) => void;
@@ -82,14 +93,24 @@ export function createSession(
     (tool) => options.permit === undefined || options.permit(tool.name),
   );
 
-  // Built once: identical across turns, which is what makes it cacheable.
-  const system = systemPrompt({
-    cwd: options.cwd,
-    platform: process.platform,
-    now: new Date(),
-    tools,
-    notes: options.notes,
-  });
+  // Most of this is identical across turns, which is what makes it cacheable —
+  // but the phase is not: it can move between one message and the next (a
+  // person approving a spec while the session sits open), so it is read fresh
+  // for every turn rather than fixed at construction.
+  function currentPhase(): PromptContext["phase"] {
+    return typeof options.phase === "function" ? options.phase() : options.phase;
+  }
+
+  function currentSystem(): string {
+    return systemPrompt({
+      cwd: options.cwd,
+      platform: process.platform,
+      now: new Date(),
+      tools,
+      notes: options.notes,
+      phase: currentPhase(),
+    });
+  }
 
   // Seeded rather than replayed: the model receives the conversation it had.
   const messages: AgentMessage[] = [...(options.history ?? [])];
@@ -107,6 +128,10 @@ export function createSession(
 
     if (firstPrompt === "") firstPrompt = text;
     messages.push({ role: "user", content: [{ type: "text", text }] });
+
+    // Read once per `send`, not once per internal tool-loop iteration: the
+    // phase does not move mid-turn, only between one user message and the next.
+    const system = currentSystem();
 
     const turnSteps: TraceStep[] = [];
     let turnText = "";

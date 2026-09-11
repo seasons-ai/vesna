@@ -120,3 +120,35 @@ test("steps from every turn end up in one trace", async () => {
   await session.send("second");
   expect((await session.toTrace()).steps.map((s) => s.id)).toEqual(["t1", "t2"]);
 });
+
+test("a phase that changes between turns is picked up on the next one, not frozen at creation", async () => {
+  // This is the snapshot mistake fixed before: a session built once must not
+  // keep repeating the phase it saw at construction on every later turn.
+  const systems: (string | undefined)[] = [];
+  const provider: Provider = {
+    id: "scripted",
+    async complete(request) {
+      systems.push(request.system);
+      return {
+        content: [{ type: "text", text: "ok" }],
+        stopReason: "end_turn",
+        usage,
+        model: request.model,
+      };
+    },
+  };
+
+  let stage: "design" | "spec" = "design";
+  const session = createSession(provider, registryWithEcho(), {
+    cwd: ".",
+    phase: () => ({ stage, specPath: "/r/spec.md", planPath: "/r/plan.md" }),
+  });
+
+  await session.send("first turn");
+  expect(systems[0]).toContain("## Phase: design");
+
+  stage = "spec";
+  await session.send("second turn");
+  expect(systems[1]).toContain("## Phase: spec");
+  expect(systems[1]).not.toContain("## Phase: design");
+});

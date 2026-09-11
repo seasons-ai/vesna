@@ -1,6 +1,7 @@
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { ToolSpec } from "../providers/types";
+import type { Stage } from "../spec/project";
 
 /**
  * Who Vesna tells the model it is.
@@ -21,10 +22,12 @@ export interface PromptContext {
   tools: ToolSpec[];
   /** Contents of .vesna/AGENTS.md, when the project has one. */
   notes?: string;
+  /** Which phase of the process the open spec is in, when one is open. */
+  phase?: { stage: Stage; specPath: string; planPath: string };
 }
 
 export function systemPrompt(context: PromptContext): string {
-  const { cwd, platform, now, tools, notes } = context;
+  const { cwd, platform, now, tools, notes, phase } = context;
 
   const sections: string[] = [
     [
@@ -51,6 +54,8 @@ export function systemPrompt(context: PromptContext): string {
 
   const planning = planningSection(tools);
   if (planning !== null) sections.push(planning);
+
+  if (phase !== undefined) sections.push(phaseSection(phase));
 
   if (notes !== undefined && notes !== "") {
     sections.push(["# Project instructions", "", notes].join("\n"));
@@ -94,6 +99,40 @@ function planningSection(tools: ToolSpec[]): string | null {
   }
 
   return lines.join("\n");
+}
+
+/**
+ * What the model should be doing right now, given where the work stands.
+ *
+ * The conversational phases are prompts the model follows; the mechanical
+ * ones are a loop Vesna runs. The prompt says which is which so the model
+ * does not try to build in a phase where building is the loop's job.
+ */
+export function phaseSection(phase: NonNullable<PromptContext["phase"]>): string {
+  switch (phase.stage) {
+    case "design":
+      return [
+        "## Phase: design",
+        "Before anything else, call `classify` to say what shape this work is — spike, bounded, or architectural — and why. When in doubt choose the heavier shape. Then understand the request: ask one question at a time, propose two or three approaches with a recommendation, and do not write code. A spike ends in an answer. A bounded change is designed here in the conversation and then built. An architectural change gets a written design next.",
+      ].join("\n");
+    case "spec":
+      return [
+        "## Phase: spec",
+        `Write the design to \`${phase.specPath}\` with the write tool: the problem, the decisions with their reasons, what is out of scope, and how it will be tested. Then stop and ask the person to read it. They approve it with \`/approve spec\`; you cannot.`,
+      ].join("\n");
+    case "plan":
+      return [
+        "## Phase: plan",
+        `Write the plan to \`${phase.planPath}\`: one section per task, headed exactly \`### Task 1: <title>\`, \`### Task 2: <title>\` and so on. Each task is the smallest unit with its own test cycle, and its section contains everything a worker with no other context needs — files, the exact test code, the exact implementation, the commit message. Then call \`plan\` with the same tasks, ids \`T1\`, \`T2\` ... matching the headings, and their dependencies. Then stop. The person approves with \`/approve plan\`; you cannot, and \`/build\` will not run an unapproved plan.`,
+      ].join("\n");
+    case "build":
+      return [
+        "## Phase: build",
+        "The plan is being built by `/build`: one worker per task in its own checkout, a review after each, fix rounds, then a merge. You are not the worker. Answer questions about the work, and if the person asks you to change the plan, say that the running build has to stop first.",
+      ].join("\n");
+    case "done":
+      return "## Phase: done\nThe plan was built and reviewed. Report what was parked and what the final review found if asked.";
+  }
 }
 
 function toolSection(tools: ToolSpec[]): string {

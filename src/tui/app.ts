@@ -32,8 +32,8 @@ import { resolveGlyphs, type Glyphs } from "./glyphs";
 import { decodeKeys, type Key } from "./keys";
 import { layout, panelWidths, type Frame, type ViewState } from "./layout";
 import { chatsPane, gardenPane } from "./panes";
-import { createSpec, listSpecs, readSpec, specsRoot } from "../spec/store";
-import type { SpecTree } from "../spec/project";
+import { createSpec, listSpecs, readSpec, specPaths, specsRoot } from "../spec/store";
+import type { SpecTree, Stage } from "../spec/project";
 import type { SpecSink } from "../spec/sink";
 import { wrapAnsi } from "./wrap";
 import { spinnerFrame } from "./render";
@@ -114,7 +114,7 @@ export async function runApp(deps: AppDeps, io: AppIo): Promise<number> {
   const transcript = createTranscript(theme, glyphs);
 
   let editor = createEditor();
-  let session = newSession(deps, approve, deps.resumed);
+  let session = newSession(deps, approve, deps.resumed, () => spec);
   let scroll = 0;
   let busy = false;
   let tick = 0;
@@ -454,7 +454,7 @@ export async function runApp(deps: AppDeps, io: AppIo): Promise<number> {
       } else if (event.t === "messages") messages.push(...event.added);
     }
 
-    session = newSession(deps, approve, messages);
+    session = newSession(deps, approve, messages, () => spec);
     scroll = 0;
     showChats = false;
     transcript.notice(`resumed · ${stored.summary.title}`, "ok");
@@ -750,7 +750,7 @@ export async function runApp(deps: AppDeps, io: AppIo): Promise<number> {
           copy,
           theme,
           applyTheme,
-          (messages) => newSession(deps, approve, messages),
+          (messages) => newSession(deps, approve, messages, () => spec),
         );
         // The stored conversation records which model answered it, and that
         // was the startup one for the whole file after a mid-session switch.
@@ -1088,6 +1088,8 @@ function newSession(
     effect?: "pure" | "write" | "external";
   }) => Promise<"allow" | "deny">,
   resumed?: AgentMessage[],
+  /** Reads the currently open spec. Called fresh on every turn, not just now. */
+  getSpec?: () => SpecTree | null,
 ): Session {
   // After a mid-session /model or /provider switch, the handle is what is
   // actually current — deps.config.model is only a snapshot of how the
@@ -1103,7 +1105,24 @@ function newSession(
     permit: (type) => permits(deps.config, type),
     approve,
     ...(resumed ? { history: resumed } : {}),
+    // A function, not a value: the stage moves between turns as the person
+    // approves a spec or a plan, and a session built once must not keep
+    // telling the model about the phase it was in at startup.
+    phase: () => {
+      const tree = getSpec?.() ?? null;
+      const slug = deps.sink?.slug;
+      if (tree === null || slug === undefined || slug === null) return undefined;
+      const paths = specPaths(specsRoot(deps.root), slug);
+      return { stage: activeStage(tree), specPath: paths.spec, planPath: paths.plan };
+    },
   });
+}
+
+/** The furthest stage that is active, or the first that is not done. */
+function activeStage(tree: SpecTree): Stage {
+  const active = [...tree.stages].reverse().find((s) => s.state === "active");
+  if (active) return active.stage;
+  return tree.stages.find((s) => s.state !== "done")?.stage ?? "done";
 }
 
 function header(deps: AppDeps, theme: Theme, glyphs: Glyphs): string {

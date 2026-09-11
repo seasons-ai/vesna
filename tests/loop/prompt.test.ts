@@ -2,7 +2,7 @@ import { test, expect } from "bun:test";
 import { mkdtemp, mkdir, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { readProjectNotes, systemPrompt } from "../../src/loop/prompt";
+import { phaseSection, readProjectNotes, systemPrompt } from "../../src/loop/prompt";
 import type { ToolSpec } from "../../src/providers/types";
 
 const tool = (name: string, description: string): ToolSpec => ({
@@ -115,4 +115,36 @@ test("it is told to prove a task rather than declare it finished", () => {
     context({ tools: [tool("plan", "p"), tool("task_verify", "prove a task")] }),
   );
   expect(text).toMatch(/task_verify/);
+});
+
+const phase = (stage: any) => ({ stage, specPath: "/r/.vesna/specs/x/spec.md", planPath: "/r/.vesna/specs/x/plan.md" });
+
+test("in design, the prompt asks for classification first and forbids code", () => {
+  const text = phaseSection(phase("design"));
+  expect(text).toContain("classify");
+  expect(text).toMatch(/do not write code|no code/i);
+});
+
+test("in spec, the prompt names the file to write and the command that approves it", () => {
+  const text = phaseSection(phase("spec"));
+  expect(text).toContain("/r/.vesna/specs/x/spec.md");
+  expect(text).toContain("/approve spec");
+});
+
+test("in plan, the prompt names plan.md, the heading shape, and the ids the tasks must use", () => {
+  const text = phaseSection(phase("plan"));
+  expect(text).toContain("/r/.vesna/specs/x/plan.md");
+  expect(text).toContain("### Task 1:");
+  expect(text).toContain("T1");
+  expect(text).toContain("/approve plan");
+});
+
+test("in build, the prompt says the loop is running and the model is not the worker", () => {
+  const text = phaseSection(phase("build"));
+  expect(text).toMatch(/\/build|running/);
+});
+
+test("with no phase the system prompt has no phase section", () => {
+  const text = systemPrompt(context({ tools: [] }));
+  expect(text).not.toContain("/approve");
 });
