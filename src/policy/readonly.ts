@@ -82,31 +82,42 @@ const GIT_READS = new Set([
 
 /** Flags that turn a reader into a writer. */
 const WRITING_FLAGS = new Map<string, string[]>([
-  ["find", ["-delete", "-exec", "-execdir", "-ok", "-okdir", "-fprint", "-fls"]],
+  ["find", ["-delete", "-exec", "-execdir", "-ok", "-okdir", "-fprint", "-fprint0", "-fprintf", "-fls"]],
   ["git", ["-d", "-D", "--delete", "--prune", "--force"]],
   ["sort", ["-o", "--output"]],
   ["shasum", ["-w"]],
 ]);
 
-/** Subcommands of an otherwise-reading command that write. */
+/** git subcommands, read among the ones GIT_READS allows, that still write. */
 const WRITING_SUBCOMMANDS = new Map<string, string[]>([
   ["git", ["push", "pull", "commit", "add", "rm", "reset", "checkout", "merge", "rebase"]],
-  ["stash", ["push", "pop", "apply", "drop", "clear", "save"]],
 ]);
 
 /**
- * Anything that can send output somewhere, run something else, or expand into
- * another command. A read-only command with a redirection is a write.
+ * `git stash` alone behaves like `git stash push`: it moves working-tree
+ * changes into the stash, which is a write. Unlike the rest of GIT_READS,
+ * "stash" is not safe by default, so it gets an allow-list of its own instead
+ * of a deny-list — anything not named here, including no subcommand at all,
+ * is treated as the write it defaults to being.
  */
-const DANGEROUS = /[><`$(){}\\]|\|\||&/;
+const STASH_READS = new Set(["list", "show"]);
+
+/**
+ * Anything that can send output somewhere, run something else, expand into
+ * another command, or chain into a second command. A read-only command with
+ * a redirection, a `;`, or an embedded newline is a write once a real shell
+ * gets hold of it.
+ */
+const DANGEROUS = /[><`$(){}\\;\n\r]|\|\||&/;
 
 export function isReadOnlyCommand(command: string): boolean {
   const text = command.trim();
   if (text === "") return false;
   if (DANGEROUS.test(text)) return false;
 
-  // A pipeline is safe only if every stage is, and `;` and `&&` are gone with
-  // the check above, so the only separator left to split on is the pipe.
+  // A pipeline is safe only if every stage is, and `;`, `&&` and newlines are
+  // gone with the check above, so the only separator left to split on is the
+  // pipe.
   const stages = text.split("|");
   if (stages.some((stage) => stage.trim() === "")) return false;
 
@@ -128,14 +139,40 @@ function stageReads(stage: string): boolean {
     const subcommand = rest.find((word) => !word.startsWith("-"));
     if (subcommand === undefined || !GIT_READS.has(subcommand)) return false;
     const after = rest.slice(rest.indexOf(subcommand) + 1).find((word) => !word.startsWith("-"));
-    if (WRITING_SUBCOMMANDS.get(subcommand)?.includes(after ?? "")) return false;
+    if (subcommand === "stash") {
+      if (after === undefined || !STASH_READS.has(after)) return false;
+    } else if (WRITING_SUBCOMMANDS.get(subcommand)?.includes(after ?? "")) {
+      return false;
+    }
   }
 
   const banned = WRITING_FLAGS.get(head) ?? [];
-  if (rest.some((word) => banned.includes(word))) return false;
+  if (rest.some((word) => banned.some((flag) => matchesFlag(word, flag)))) return false;
 
-  // In-place editing turns any reader into a writer, whatever it is called.
-  if (rest.some((word) => word === "-i" || word.startsWith("--in-place"))) return false;
+  // In-place editing turns sed from a reader into a writer, whatever form the
+  // flag takes: a bare -i, a backup suffix glued on (-i.bak or -i''), -i
+  // buried in a combined short-flag cluster (-ni), or the long spelling.
+  if (head === "sed" && rest.some(isSedInPlaceFlag)) return false;
 
   return true;
+}
+
+/**
+ * Whether `word` is the given writing flag — matched exactly, as a long
+ * option with a glued `=value` (`--output=out.txt`), or as a short option
+ * with a glued value (`-oout.txt`). An exact match alone misses both forms.
+ */
+function matchesFlag(word: string, flag: string): boolean {
+  if (word === flag) return true;
+  if (flag.startsWith("--")) return word.startsWith(`${flag}=`);
+  return word.startsWith(flag);
+}
+
+function isSedInPlaceFlag(word: string): boolean {
+  if (word.startsWith("--in-place")) return true;
+  if (!word.startsWith("-") || word.startsWith("--")) return false;
+  // The short-flag cluster is the run of letters right after the dash; a
+  // suffix like the ".bak" in -i.bak, or the '' in -i'', ends it.
+  const cluster = word.slice(1).match(/^[A-Za-z]*/)?.[0] ?? "";
+  return cluster.includes("i");
 }

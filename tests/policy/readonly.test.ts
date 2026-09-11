@@ -13,6 +13,7 @@ test("looking at the project is not worth a question", () => {
     "head -20 src/index.ts",
     "wc -l src/*.ts",
     "grep -rn TODO src",
+    "grep -i pattern file",
     "rg --files",
     "find . -name '*.ts'",
     "du -sh .",
@@ -45,6 +46,7 @@ test("changing git is not reading, however it is spelled", () => {
     "git push",
     "git add -A",
     "git checkout main",
+    "git checkout -- .",
     "git reset --hard",
     "git rebase main",
     "git stash push",
@@ -111,6 +113,48 @@ test("sed prints, unless it is asked to edit in place", () => {
   reads("cat a.txt | sed s/one/two/");
   asks("sed -i s/one/two/ file.txt");
   asks("sed --in-place=.bak s/a/b/ file.txt");
+});
+
+test("sed's in-place flag hides in forms an exact match misses", () => {
+  for (const command of [
+    "sed -i.bak s/before/AFTER/ a.txt",
+    "sed -i'' s/before/AFTER/ a.txt",
+    "sed -ni s/before/AFTER/ a.txt",
+    "sed --in-place=.bak s/before/AFTER/ a.txt",
+  ]) asks(command);
+});
+
+test("chaining with a bare semicolon or a newline hides the second command too", () => {
+  asks("ls ; rm x");
+  asks("ls\ntouch out.txt");
+});
+
+test("git stash defaults to a write, so only naming a read subcommand reads", () => {
+  asks("git stash");
+  asks("git stash push");
+  asks("git stash pop");
+  asks("git stash apply");
+  asks("git stash drop");
+  asks("git stash clear");
+  asks("git stash save");
+  asks("git stash branch wip");
+  reads("git stash list");
+  reads("git stash show");
+});
+
+test("a flag's value can be glued on, not just given as its own word", () => {
+  asks("sort --output=out.txt in.txt");
+  asks("sort -oout.txt in.txt");
+});
+
+test("find's other ways to write to a file are caught too", () => {
+  asks("find . -fprint0 out.txt");
+  asks("find . -fprintf out.txt %p");
+});
+
+test("tee is not on the reading list, piped or not", () => {
+  asks("tee out.txt");
+  asks("cat a.txt | tee out.txt");
 });
 
 test("awk is left out: its program can do anything, and braces give it away", () => {
