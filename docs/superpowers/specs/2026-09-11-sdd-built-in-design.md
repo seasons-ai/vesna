@@ -68,9 +68,11 @@ and waiting for approval. `plan` means the spec is approved and a plan is
 written or being written. `build` means the plan is approved and tasks are
 running. `done` means every task merged and the final review passed.
 
-The existing `plan → spec → build` ordering was a guess made before the process
-was run for real; the real order puts the spec before the plan. `STAGES` and
-its tests change accordingly.
+The existing eight stages — `intent, research, spec, plan, build, review,
+verify, crystal` — were a guess made before the process was run for real.
+`intent` and `research` are the design conversation; `review` and `verify`
+happen inside the build loop, per task, not as stages after it; `crystal` is
+gone with the feature. `STAGES` and its tests change accordingly.
 
 ### 3. The spec folder is the workspace
 
