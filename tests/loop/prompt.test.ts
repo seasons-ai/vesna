@@ -167,3 +167,13 @@ test("with no phase the system prompt has no phase section", () => {
   const text = systemPrompt(context({ tools: [] }));
   expect(text).not.toContain("/approve");
 });
+
+test("after the whole-branch review stops a build, the plan prompt does not send the person to a /build that will refuse", () => {
+  const text = phaseSection({
+    stage: "plan", specPath: "/s", planPath: "/p", planApproved: true,
+    lastStop: "branch review: a critical finding — a.ts:9 leaks a key",
+  });
+  expect(text).toContain("leaks a key");
+  expect(text).toContain("will refuse");
+  expect(text).not.toContain("`/build` runs it");
+});

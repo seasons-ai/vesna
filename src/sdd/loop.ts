@@ -82,9 +82,17 @@ function takeLock(path: string): { ok: true } | { ok: false; pid: number } {
     } catch {
       // Unreadable is as good as stale.
     }
-    if (Number.isInteger(pid) && alive(pid)) return { ok: false, pid };
+    // pid 0 is "this process group" to kill(2) and would read as alive forever.
+    if (Number.isInteger(pid) && pid > 0 && alive(pid)) return { ok: false, pid };
+    releaseLock(path);
   }
-  writeFileSync(path, JSON.stringify({ pid: process.pid, startedAt: new Date().toISOString() }));
+  try {
+    // wx: create, never overwrite — so two takers racing past the check
+    // above cannot both believe they hold it.
+    writeFileSync(path, JSON.stringify({ pid: process.pid, startedAt: new Date().toISOString() }), { flag: "wx" });
+  } catch {
+    return { ok: false, pid: NaN };
+  }
   return { ok: true };
 }
 
@@ -208,9 +216,11 @@ export async function runBuild(request: BuildLoopRequest): Promise<BuildOutcome>
     return { status: "could-not-start", reason: `a build of "${slug}" is already running (pid ${lock.pid})` };
   }
 
-  const briefs = writeBriefs(specsRoot, slug, planTasks);
-
   try {
+    // Inside the try so a failure here — a briefs path that is a file, say —
+    // still releases the lock in `finally` rather than leaving this
+    // process's own pid holding the spec.
+    const briefs = writeBriefs(specsRoot, slug, planTasks);
     emit({ t: "build.started" });
 
     // Neither diff range assumes anything about the repository: the base

@@ -26,7 +26,7 @@ export interface PromptContext {
    * Which phase of the process the open spec is in, when one is open, and
    * the shape the log already records for it, when it records one.
    */
-  phase?: { stage: Stage; specPath: string; planPath: string; shape?: Shape; planApproved?: boolean };
+  phase?: { stage: Stage; specPath: string; planPath: string; shape?: Shape; planApproved?: boolean; lastStop?: string };
 }
 
 export function systemPrompt(context: PromptContext): string {
@@ -50,8 +50,8 @@ export function systemPrompt(context: PromptContext): string {
       "- Answer in the language the user writes to you in.",
     ].join("\n"),
     [
-      "A run that works can be frozen into a deterministic flow and replayed without a model,",
-      "so prefer explicit inputs and repeatable steps over one-off improvisation.",
+      "A task is finished when a check the system ran says so, not when you say so:",
+      "prefer work that leaves evidence — a test, a command with an exit status — over work that leaves a claim.",
     ].join("\n"),
   ];
 
@@ -133,6 +133,15 @@ export function phaseSection(phase: NonNullable<PromptContext["phase"]>): string
       // An approved plan is still the plan phase until /build runs it, but
       // the instruction changes: nothing to write, and a change withdraws
       // the approval — the log clears it on the next `task.added`.
+      // A build the whole-branch review stopped has merged every task, so
+      // /build would refuse "every task is merged". Sending the person there
+      // is a dead end; say what stopped it and the one route that re-reviews.
+      if (phase.planApproved === true && phase.lastStop?.startsWith("branch review:")) {
+        return [
+          "## Phase: plan",
+          `The last build stopped at the whole-branch review: ${phase.lastStop}. Every task is merged, so \`/build\` will refuse. Help the person fix it in the tree; then a new task recorded with \`plan\` (which withdraws the approval) and \`/approve plan\` runs \`/build\` again, and its final review covers the branch from that point. Do not claim the branch is done.`,
+        ].join("\n");
+      }
       if (phase.planApproved === true) {
         return [
           "## Phase: plan",

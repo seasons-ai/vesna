@@ -1177,6 +1177,7 @@ function newSession(
         planPath: paths.plan,
         ...(tree.shape !== undefined ? { shape: tree.shape } : {}),
         planApproved: tree.approved.plan,
+        ...(tree.lastStop !== undefined ? { lastStop: tree.lastStop } : {}),
       };
     },
   });

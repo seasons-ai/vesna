@@ -92,6 +92,8 @@ export interface SpecTree {
   reviews: Record<string, { round: number; spec: "met" | "not_met" | "no_verdict"; open: Finding[] }>;
   parked: { task: string; finding: Finding }[];
   rulings: { text: string; why: string }[];
+  /** Why the last build stopped, until the next one starts. */
+  lastStop?: string;
 }
 
 export function project(events: SpecEvent[]): SpecTree | null {
@@ -109,6 +111,7 @@ export function project(events: SpecEvent[]): SpecTree | null {
   const reviews: SpecTree["reviews"] = {};
   const parked: SpecTree["parked"] = [];
   const rulings: SpecTree["rulings"] = [];
+  let lastStop: string | undefined;
 
   for (const event of events) {
     switch (event.t) {
@@ -230,16 +233,19 @@ export function project(events: SpecEvent[]): SpecTree | null {
           break;
         }
         building = true;
+        lastStop = undefined;
         stageState.set("plan", "done");
         stageState.set("build", "active");
         break;
 
       case "build.stopped":
         building = false;
+        lastStop = event.reason;
         break;
 
       case "build.done":
         building = false;
+        lastStop = undefined;
         stageState.set("build", "done");
         stageState.set("done", "done");
         break;
@@ -285,6 +291,7 @@ export function project(events: SpecEvent[]): SpecTree | null {
     reviews,
     parked,
     rulings,
+    ...(lastStop !== undefined ? { lastStop } : {}),
   };
 }
 

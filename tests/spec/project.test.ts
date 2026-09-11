@@ -369,3 +369,21 @@ test("starting a task inside a /build does not re-open a finished plan stage", (
   expect(t.stages.find((s) => s.stage === "plan")!.state).toBe("done");
   expect(t.stages.find((s) => s.stage === "build")!.state).toBe("active");
 });
+
+test("the tree remembers why the last build stopped, until the next one starts", () => {
+  const stopped = tree([
+    { t: "task.added", id: "T1", title: "a" },
+    { t: "approved", what: "spec" }, { t: "approved", what: "plan" },
+    { t: "build.started" },
+    { t: "build.stopped", reason: "branch review: the brief is not met — missing X" },
+  ]);
+  expect(stopped.lastStop).toBe("branch review: the brief is not met — missing X");
+  const restarted = tree([
+    { t: "task.added", id: "T1", title: "a" },
+    { t: "approved", what: "spec" }, { t: "approved", what: "plan" },
+    { t: "build.started" },
+    { t: "build.stopped", reason: "x" },
+    { t: "build.started" },
+  ]);
+  expect(restarted.lastStop).toBeUndefined();
+});

@@ -38,7 +38,9 @@ the packed tarball and runs it, not just the checkout.
 **`0.4` — recoverable builds.** Done when: a process killed mid-build leaves a
 spec that the next `vesna build` can resume, retry one task, or abort — from a
 system event, not by editing `events.jsonl`; `/build cancel` from the chat ends
-a build with `build.stopped`; a task's worktree and branch are cleaned up on
+a build with `build.stopped`; a build the whole-branch review stopped can be
+re-reviewed after a fix without recording a new task (today the only route is
+a new task, and its final review covers the branch only from that point); a task's worktree and branch are cleaned up on
 success and on abort; each build carries an id in its events.
 
 **Verification in the plan.** Done when: a task in `plan.md` can declare its
