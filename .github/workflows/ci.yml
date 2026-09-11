@@ -3,6 +3,7 @@ name: ci
 on:
   push:
     branches: [main]
+    tags: ["v*"]
   pull_request:
 
 # A second push to the same branch makes the first run pointless.
@@ -44,6 +45,51 @@ jobs:
           # No config and no credentials: it must refuse clearly, not crash.
           cd "$(mktemp -d)"
           if bun "$GITHUB_WORKSPACE/bin/vesna" do "hi"; then
+            echo "expected a non-zero exit without credentials" >&2
+            exit 1
+          fi
+
+  package:
+    # What a user installs is the tarball, not the checkout. This job
+    # builds it, installs it into an empty directory, and runs the binary
+    # from there — the same check that is done by hand after each publish,
+    # so it stops depending on someone remembering to.
+    runs-on: ubuntu-latest
+    needs: check
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          # The floor named in package.json's engines, so the tarball is
+          # proven against the oldest Bun it claims to run on.
+          bun-version: 1.2.0
+
+      - name: Tag and package.json agree
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          tag="${GITHUB_REF#refs/tags/v}"
+          pkg="$(node -p "require('./package.json').version")"
+          if [ "$tag" != "$pkg" ]; then
+            echo "tag v$tag but package.json says $pkg" >&2
+            exit 1
+          fi
+
+      - name: Pack
+        run: |
+          npm pack
+          ls -l seasons-ai-vesna-*.tgz
+
+      - name: Install the tarball somewhere empty and run it
+        run: |
+          tgz="$(ls "$GITHUB_WORKSPACE"/seasons-ai-vesna-*.tgz)"
+          cd "$(mktemp -d)"
+          npm init -y >/dev/null
+          npm install --silent "$tgz"
+          ./node_modules/.bin/vesna --version
+          ./node_modules/.bin/vesna --help | grep -q "vesna build"
+          # No config and no credentials: refuse clearly, from the installed copy.
+          if ./node_modules/.bin/vesna do "hi"; then
             echo "expected a non-zero exit without credentials" >&2
             exit 1
           fi
