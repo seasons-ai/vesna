@@ -576,3 +576,56 @@ test("a spec whose every task is merged has nothing to build, and no review is p
   expect(readSpecFile(join(specPaths(specs, "work").reviews, "branch.md"))).toBe("the first review\n");
   expect(readEvents(specs, "work").filter((e) => e.t === "build.started")).toHaveLength(1);
 });
+
+// The whole-branch review is a gate, not a note. "done" over a review that
+// said the branch does not meet its brief is the panel lying at the end of
+// the process it exists to make honest.
+const oneApproved: SpecEvent[] = [
+  { t: "task.added", id: "T1", title: "First" },
+  { t: "approved", what: "spec" }, { t: "approved", what: "plan" },
+];
+
+test("a whole-branch review that says not met stops the build instead of finishing it", async () => {
+  const { root, specs } = setup(oneApproved);
+  const notMet: ReviewOutcome = { kind: "verdict", verdict: { spec: "not_met", findings: [], summary: "missing X" }, costUsd: 0 };
+  const f = fakes({ reviews: [clean, notMet] });
+  const out = await runBuild(base(root, specs, f));
+  expect(out).toEqual({ status: "stopped", reason: "branch review: the brief is not met — missing X" });
+  const events = readEvents(specs, "work");
+  expect(events.some((e) => e.t === "build.done")).toBe(false);
+  expect(events.some((e) => e.t === "build.stopped")).toBe(true);
+});
+
+test("a critical finding in the whole-branch review stops the build", async () => {
+  const { root, specs } = setup(oneApproved);
+  const crit: Finding = { severity: "critical", file: "a.ts", line: 9, text: "leaks a key" };
+  const bad: ReviewOutcome = { kind: "verdict", verdict: { spec: "met", findings: [crit], summary: "" }, costUsd: 0 };
+  const f = fakes({ reviews: [clean, bad] });
+  const out = await runBuild(base(root, specs, f));
+  expect(out).toEqual({ status: "stopped", reason: "branch review: a critical finding — a.ts:9 leaks a key" });
+});
+
+test("important and minor findings in the whole-branch review are parked on the branch, and the build is done", async () => {
+  const { root, specs } = setup(oneApproved);
+  const imp: Finding = { severity: "important", file: "b.ts", text: "should be split" };
+  const min: Finding = { severity: "minor", file: "c.ts", text: "nit" };
+  const soft: ReviewOutcome = { kind: "verdict", verdict: { spec: "met", findings: [imp, min], summary: "" }, costUsd: 0 };
+  const f = fakes({ reviews: [clean, soft] });
+  const out = await runBuild(base(root, specs, f));
+  expect(out).toEqual({ status: "done" });
+  const events = readEvents(specs, "work");
+  expect(events.filter((e) => e.t === "parked" && (e as any).task === "branch").map((e: any) => e.finding)).toEqual([imp, min]);
+  expect(events.some((e) => e.t === "build.done")).toBe(true);
+});
+
+test("a whole-branch review with no verdict gets one retry, then stops the build", async () => {
+  const { root, specs } = setup(oneApproved);
+  const silent: ReviewOutcome = { kind: "no-verdict", text: "fine", costUsd: 0 };
+  const once = fakes({ reviews: [clean, silent, clean] });
+  expect(await runBuild(base(root, specs, once))).toEqual({ status: "done" });
+  expect(once.log.filter((l) => l === "review").length).toBe(3);
+
+  const { root: r2, specs: s2 } = setup(oneApproved);
+  const twice = fakes({ reviews: [clean, silent, silent] });
+  expect(await runBuild(base(r2, s2, twice))).toEqual({ status: "stopped", reason: "branch review: the reviewer produced no verdict twice" });
+});

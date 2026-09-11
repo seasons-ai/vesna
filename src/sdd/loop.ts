@@ -352,28 +352,48 @@ export async function runBuild(request: BuildLoopRequest): Promise<BuildOutcome>
     }
 
     // One more pair of eyes over the whole branch, with the parked findings
-    // beside it. Nothing is fixed here; the person decides.
+    // beside it. This one is a gate, not a note: "done" over a review that
+    // said the branch does not meet its brief would be the panel lying at
+    // the end of the process it exists to make honest. Not met or a
+    // critical stops the build for a person; important and minor are parked
+    // on the branch where the person will read them; no verdict gets one
+    // retry, as a task review does.
     const whole = await runLoopGit(git, ["diff", `${startSha}...HEAD`], request.root);
     const parked = project(readEvents(specsRoot, slug))?.parked ?? [];
-    const { outcome: final, failReason: finalFailReason } = await safeReview(
-      review,
-      {
-        cwd: request.root,
-        provider: request.provider,
-        brief: `The whole branch for spec "${slug}". Parked findings from the task reviews:\n${renderFindings(parked.map((p) => p.finding)) || "(none)"}`,
-        report: "(whole-branch review)",
-        diff: whole.stdout,
-        ...(request.model ? { model: request.model } : {}),
-        ...(request.signal ? { signal: request.signal } : {}),
-      },
-      request.signal,
-    );
-    if (final.kind === "verdict") {
-      emit({ t: "review.done", task: "branch", round: 0, spec: final.verdict.spec, findings: final.verdict.findings });
-      writeSpecFile(join(paths.reviews, "branch.md"), `${final.verdict.summary}\n\n${renderFindings(final.verdict.findings)}\n`);
-    } else {
-      emit({ t: "review.failed", task: "branch", round: 0, reason: finalFailReason ?? "no verdict" });
+    const branchRequest = {
+      cwd: request.root,
+      provider: request.provider,
+      brief: `The whole branch for spec "${slug}". Parked findings from the task reviews:\n${renderFindings(parked.map((p) => p.finding)) || "(none)"}`,
+      report: "(whole-branch review)",
+      diff: whole.stdout,
+      ...(request.model ? { model: request.model } : {}),
+      ...(request.signal ? { signal: request.signal } : {}),
+    };
+    let final: Extract<ReviewOutcome, { kind: "verdict" }> | undefined;
+    for (let attempt = 0; attempt < 2 && final === undefined; attempt += 1) {
+      const { outcome, failReason } = await safeReview(review, branchRequest, request.signal);
+      if (outcome.kind === "verdict") {
+        final = outcome;
+        break;
+      }
+      emit({ t: "review.failed", task: "branch", round: attempt, reason: failReason ?? "no verdict" });
+      writeSpecFile(join(paths.reviews, `branch-attempt${attempt}.md`), `(no verdict)\n\n${outcome.text}\n`);
     }
+    if (final === undefined) throw new Stop("branch review: the reviewer produced no verdict twice");
+
+    const { verdict } = final;
+    emit({ t: "review.done", task: "branch", round: 0, spec: verdict.spec, findings: verdict.findings });
+    writeSpecFile(join(paths.reviews, "branch.md"), `spec: ${verdict.spec}\n\n${verdict.summary}\n\n${renderFindings(verdict.findings)}\n`);
+
+    if (verdict.spec === "not_met") {
+      throw new Stop(`branch review: the brief is not met${verdict.summary ? ` — ${verdict.summary}` : ""}`);
+    }
+    const critical = verdict.findings.find((f: Finding) => f.severity === "critical");
+    if (critical !== undefined) {
+      const where = `${critical.file}${critical.line !== undefined ? `:${critical.line}` : ""}`;
+      throw new Stop(`branch review: a critical finding — ${where} ${critical.text}`);
+    }
+    for (const finding of verdict.findings) emit({ t: "parked", task: "branch", finding });
 
     emit({ t: "build.done" });
     return { status: "done" };
