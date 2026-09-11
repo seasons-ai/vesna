@@ -30,6 +30,10 @@ export interface BuildLoopRequest {
   provider: Provider;
   registry: Registry;
   policy: Policy;
+  /** Which node types the project lets a worker have; see BuildRequest. */
+  permit?: (type: string) => boolean;
+  /** The project's own instructions, handed to every worker. */
+  notes?: string;
   model?: string;
   /** Fix rounds per task. Five is the cap; past it, rounds do not converge. */
   maxRounds?: number;
@@ -176,6 +180,8 @@ export async function runBuild(request: BuildLoopRequest): Promise<BuildOutcome>
         provider: request.provider,
         registry: request.registry,
         policy: request.policy,
+        ...(request.permit ? { permit: request.permit } : {}),
+        ...(request.notes !== undefined ? { notes: request.notes } : {}),
         ...(request.model ? { model: request.model } : {}),
         ...(request.maxUsd !== undefined ? { maxUsd: request.maxUsd } : {}),
         ...(request.signal ? { signal: request.signal } : {}),

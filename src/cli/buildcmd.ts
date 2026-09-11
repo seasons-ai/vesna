@@ -52,7 +52,15 @@ export function describeEvent(event: SpecEvent): string | null {
 export async function buildCommand(
   slug: string | undefined,
   root: string,
-  deps: { provider: Provider; registry: Registry; policy: Policy; theme: Theme; model?: string },
+  deps: {
+    provider: Provider;
+    registry: Registry;
+    policy: Policy;
+    theme: Theme;
+    permit?: (type: string) => boolean;
+    notes?: string;
+    model?: string;
+  },
 ): Promise<number> {
   if (slug === undefined || slug === "") {
     console.error("vesna: build needs a spec — vesna build <slug>");
@@ -65,6 +73,8 @@ export async function buildCommand(
     provider: deps.provider,
     registry: deps.registry,
     policy: deps.policy,
+    ...(deps.permit ? { permit: deps.permit } : {}),
+    ...(deps.notes !== undefined ? { notes: deps.notes } : {}),
     ...(deps.model ? { model: deps.model } : {}),
     onEvent: (event) => {
       const line = describeEvent(event);

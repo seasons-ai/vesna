@@ -7,7 +7,7 @@ import { runGit } from "../../src/work/worktree";
 import { createRegistry } from "../../src/registry/registry";
 import { writeNode } from "../../src/nodes/write";
 import { readNode } from "../../src/nodes/read";
-import type { CompletionResult, Provider } from "../../src/providers/types";
+import type { CompletionRequest, CompletionResult, Provider } from "../../src/providers/types";
 import type { Policy } from "../../src/policy/decide";
 
 async function repository(): Promise<string> {
@@ -246,4 +246,84 @@ test("a resume that changes nothing says so rather than committing air", async (
     provider: writes("b.txt", "one\n"), registry: registry(), policy: { mode: "auto", allow: {}, deny: {} },
   });
   expect(second.status).toBe("no-changes");
+});
+
+/** Calls one tool by name on the first turn, and records every request it sees. */
+function calls(name: string, input: Record<string, unknown>): Provider & { requests: CompletionRequest[] } {
+  let turn = 0;
+  const requests: CompletionRequest[] = [];
+  return {
+    id: "fake",
+    requests,
+    async complete(request: CompletionRequest): Promise<CompletionResult> {
+      requests.push(request);
+      turn += 1;
+      return {
+        content:
+          turn === 1
+            ? [{ type: "tool_call" as const, id: "c1", name, input }]
+            : [{ type: "text" as const, text: "done" }],
+        stopReason: "end_turn",
+        model: "m",
+        usage: { inputTokens: 1, outputTokens: 1, cacheReadTokens: 0, cacheWriteTokens: 0 },
+      };
+    },
+  };
+}
+
+/** The tool results the model was handed on its second turn. */
+function toolResults(provider: { requests: CompletionRequest[] }): string[] {
+  const second = provider.requests[1];
+  if (second === undefined) return [];
+  return second.messages
+    .flatMap((message) => message.content)
+    .filter((block): block is Extract<typeof block, { type: "tool_result" }> => block.type === "tool_result")
+    .map((block) => (typeof block.content === "string" ? block.content : JSON.stringify(block.content)));
+}
+
+test("a worker is not offered the process's own tools, and cannot call them", async () => {
+  const repo = await repository();
+  const specs = await mkdtemp(join(tmpdir(), "vesna-build-specs-"));
+  const { createSink } = await import("../../src/spec/sink");
+  const { createPlanNodes } = await import("../../src/nodes/plan");
+  const { createClassifyNode } = await import("../../src/sdd/classify");
+  const sink = createSink(specs);
+  const chatRegistry = registry();
+  for (const node of createPlanNodes(sink)) chatRegistry.register(node);
+  chatRegistry.register(createClassifyNode(sink));
+
+  for (const [index, name] of ["plan", "task_start", "task_verify", "classify"].entries()) {
+    const provider = calls(name, { title: "stray", stage: "design", shape: "feature", why: "x", id: "T1", check: "true" });
+    await runTask({ ...request(repo, provider), task: `T${index + 1}`, registry: chatRegistry });
+    const offered = (provider.requests[0]?.tools ?? []).map((tool) => tool.name);
+    expect({ name, offered: offered.includes(name) }).toEqual({ name, offered: false });
+    expect(toolResults(provider).join("\n")).toMatch(/permission denied for|unknown tool/);
+  }
+  // Nothing reached the spec log: no stray spec directory, no event.
+  const { readdirSync } = await import("node:fs");
+  expect(readdirSync(specs)).toEqual([]);
+});
+
+test("a project that removed a node from permissions.nodes never offers it to a worker", async () => {
+  const repo = await repository();
+  const { shellNode } = await import("../../src/nodes/shell");
+  const withShell = registry();
+  withShell.register(shellNode);
+  const provider = calls("shell", { command: "touch made.txt" });
+  const result = await runTask({
+    ...request(repo, provider),
+    registry: withShell,
+    permit: (type) => ["read", "write"].includes(type),
+  });
+  const offered = (provider.requests[0]?.tools ?? []).map((tool) => tool.name);
+  expect(offered).not.toContain("shell");
+  expect(toolResults(provider).join("\n")).toContain("permission denied for shell");
+  await expect(readFile(join(result.worktree, "made.txt"), "utf8")).rejects.toThrow();
+});
+
+test("the project's notes reach the worker's system prompt", async () => {
+  const repo = await repository();
+  const provider = calls("read", { path: "a.txt" });
+  await runTask({ ...request(repo, provider), notes: "Always write tests first." });
+  expect(provider.requests[0]?.system).toContain("Always write tests first.");
 });

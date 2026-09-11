@@ -689,6 +689,8 @@ export async function runApp(deps: AppDeps, io: AppIo): Promise<number> {
             provider: deps.provider,
             registry: deps.registry,
             policy,
+            permit: (type) => permits(deps.config, type),
+            ...(deps.notes !== undefined ? { notes: deps.notes } : {}),
             ...deps.buildSeams,
             onEvent: (event) => {
               // "building" from `build.started` would just repeat the line

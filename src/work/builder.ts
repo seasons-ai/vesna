@@ -22,6 +22,14 @@ export interface BuildRequest {
   provider: Provider;
   registry: Registry;
   policy: Policy;
+  /**
+   * Which node types the project lets a session have at all — the same
+   * `permits(config, type)` the chat applies. The process's own nodes are
+   * refused on top of it, whatever this says.
+   */
+  permit?: (type: string) => boolean;
+  /** The project's own instructions, from .vesna/AGENTS.md. */
+  notes?: string;
   model?: string;
   maxTurns?: number;
   /** Refused once this much has been spent, so a loop cannot run away. */
@@ -29,6 +37,16 @@ export interface BuildRequest {
   signal?: AbortSignal;
   git?: GitRunner;
 }
+
+/**
+ * The tools the process itself is driven by. They are bound to the root's
+ * spec log — `plan` opens a spec, `task_start` and `task_verify` move a task,
+ * `classify` records a shape — and a worker reaching for one would write the
+ * process's own record from inside a task: a stray spec on the shell route,
+ * a task reset to todo or marked done before any review on the chat route.
+ * A worker builds; it does not run the process.
+ */
+export const PROCESS_NODES: ReadonlySet<string> = new Set(["plan", "task_start", "task_verify", "classify"]);
 
 export interface BuildResult {
   task: string;
@@ -94,6 +112,8 @@ async function work(
     ...(request.model ? { model: request.model } : {}),
     maxTurns: request.maxTurns ?? 16,
     ...(request.signal ? { signal: request.signal } : {}),
+    ...(request.notes !== undefined ? { notes: request.notes } : {}),
+    permit: (type) => !PROCESS_NODES.has(type) && (request.permit === undefined || request.permit(type)),
     async approve(action) {
       if (request.maxUsd !== undefined && session.costUsd >= request.maxUsd) {
         refusals.push(`budget of $${request.maxUsd.toFixed(2)} reached`);

@@ -457,3 +457,29 @@ test("findings render one per line with severity, place and text", () => {
     { severity: "minor", file: "b.ts", text: "nit" },
   ])).toBe("- [important] a.ts:2 — wrong\n- [minor] b.ts — nit");
 });
+
+test("the loop hands every worker the project's permit and notes, on the first build and on a fix round", async () => {
+  const { root, specs } = setup(approvedWithTasks);
+  const bad: Finding = { severity: "important", file: "a.ts", text: "wrong" };
+  const seen: { call: string; permit: unknown; notes: unknown }[] = [];
+  const f = fakes({
+    reviews: [
+      { kind: "verdict", verdict: { spec: "met", findings: [bad], summary: "one" }, costUsd: 0 },
+      clean, clean, clean,
+    ],
+  });
+  const permit = (type: string) => type !== "shell";
+  const record = (call: string, inner: (r: any) => Promise<BuildResult>) => async (r: any) => {
+    seen.push({ call, permit: r.permit, notes: r.notes });
+    return inner(r);
+  };
+  await runBuild(base(root, specs, f, {
+    build: record("build", f.seams.build),
+    resume: record("resume", f.seams.resume),
+    permit,
+    notes: "House rules.",
+  }));
+  expect(seen.length).toBe(3);
+  for (const request of seen) expect(request).toEqual({ call: request.call, permit, notes: "House rules." });
+  expect(seen.map((s) => s.call)).toEqual(["build", "resume", "build"]);
+});
