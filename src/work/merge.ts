@@ -8,8 +8,10 @@ import { runGit, type GitRunner } from "./worktree";
  * leaves a state nobody can reason about — and the person who has to sort it
  * out is the one who was not watching.
  *
- * The branches are not deleted. A merge that went in can be reverted; a branch
- * that was deleted to tidy up cannot be examined.
+ * The branches are deleted by the caller once a merge went in: the merge is
+ * --no-ff, so the merge commit carries the branch's history and can be
+ * reverted as a unit. A branch whose merge stopped on a conflict is kept —
+ * it is the only record of what that task did.
  */
 
 export interface MergeCandidate {

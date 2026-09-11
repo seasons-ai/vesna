@@ -8,7 +8,7 @@ import { appendEvent, readEvents, readSpecFile, specPaths, writeSpecFile } from 
 import { resumeTask, runTask, type BuildResult } from "../work/builder";
 import { mergeAll } from "../work/merge";
 import { CycleError, schedule } from "../work/schedule";
-import { runGit, type GitRunner } from "../work/worktree";
+import { removeWorktree, runGit, type GitRunner } from "../work/worktree";
 import { splitPlan, writeBriefs } from "./brief";
 import { pidAlive, readLockPid } from "./recover";
 import { reviewTask, type ReviewOutcome } from "./review";
@@ -364,6 +364,18 @@ export async function runBuild(request: BuildLoopRequest): Promise<BuildOutcome>
       if (merged.error) throw new Stop(`${task.id}: ${merged.error.message}`);
 
       emit({ t: "task.done", id: task.id, ...(result.commit ? { commit: result.commit } : {}) });
+
+      // Merged is merged: the --no-ff commit on the base branch carries the
+      // task's history, and its worktree and branch are leftovers. A stopped
+      // task keeps both, because a person may want to look. `removeWorktree`
+      // deletes the branch itself once the checkout is clean, so one call
+      // does both. Guarded on the worktree existing: a seam-based test's
+      // fake `build`/`resume` invent a worktree path that is never actually
+      // created, and removing it would be trying to clean up nothing.
+      if (existsSync(result.worktree)) {
+        await removeWorktree(request.root, { path: result.worktree, branch: result.branch }, { discardChanges: true }, git);
+      }
+
       return result;
     };
 

@@ -1,5 +1,5 @@
 import { test, expect } from "bun:test";
-import { mkdtempSync, mkdirSync } from "node:fs";
+import { existsSync, mkdtempSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { runBuild, renderFindings } from "../../src/sdd/loop";
@@ -9,6 +9,52 @@ import type { BuildResult } from "../../src/work/builder";
 import type { ReviewOutcome } from "../../src/sdd/review";
 import type { MergeReport } from "../../src/work/merge";
 import { createRegistry } from "../../src/registry/registry";
+import { writeNode } from "../../src/nodes/write";
+import { readNode } from "../../src/nodes/read";
+import { runGit } from "../../src/work/worktree";
+import type { CompletionResult, Provider } from "../../src/providers/types";
+
+// Copied from tests/work/builder.test.ts: a real repository and a provider
+// that writes one file, for the one test below that runs on real git rather
+// than the seams.
+async function repository(): Promise<string> {
+  const dir = mkdtempSync(join(tmpdir(), "vesna-loop-real-"));
+  await runGit(["init", "-q", "-b", "main"], dir);
+  await runGit(["config", "user.email", "t@example.com"], dir);
+  await runGit(["config", "user.name", "Test"], dir);
+  writeFileSync(join(dir, "a.txt"), "one\n");
+  await runGit(["add", "-A"], dir);
+  await runGit(["commit", "-qm", "first"], dir);
+  return dir;
+}
+
+function registry() {
+  const r = createRegistry();
+  r.register(writeNode);
+  r.register(readNode);
+  return r;
+}
+
+/** Writes one file, then answers. */
+function writes(path: string, text: string): Provider {
+  let turn = 0;
+  return {
+    id: "fake",
+    async complete(): Promise<CompletionResult> {
+      turn += 1;
+      const content =
+        turn === 1
+          ? [{ type: "tool_call" as const, id: "c1", name: "write", input: { path, text } }]
+          : [{ type: "text" as const, text: "done" }];
+      return {
+        content,
+        stopReason: "end_turn",
+        model: "m",
+        usage: { inputTokens: 1, outputTokens: 1, cacheReadTokens: 0, cacheWriteTokens: 0 },
+      };
+    },
+  };
+}
 
 // Used only where a test deliberately wants the plan to disagree with the
 // log (extra or missing task ids). Every other test's plan is generated to
@@ -656,8 +702,33 @@ test("a second build of the same spec refuses while the first holds the lock", a
 
 test("a stale lock from a dead process does not block a build", async () => {
   const { root, specs } = setup(oneApproved);
-  const { writeFileSync } = await import("node:fs");
   writeFileSync(join(specs, "work", "build.lock"), JSON.stringify({ pid: 999999999, startedAt: "2000-01-01T00:00:00Z" }));
   const out = await runBuild(base(root, specs, fakes()));
   expect(out).toEqual({ status: "done" });
+});
+
+test("after a task merges, its worktree and branch are gone; after the build, nothing is left", async () => {
+  const repo = await repository();                       // a git repo with one commit on main
+  const specs = join(repo, ".vesna", "specs");
+  mkdirSync(specs, { recursive: true });
+  createSpec(specs, "work");
+  for (const e of [
+    { t: "task.added", id: "T1", title: "First" },
+    { t: "approved", what: "spec" }, { t: "approved", what: "plan" },
+  ] as SpecEvent[]) appendEvent(specs, "work", e);
+  writeSpecFile(specPaths(specs, "work").plan, "# Plan\n\n### Task 1: First\nWrite b.txt.\n");
+
+  const out = await runBuild({
+    root: repo, specsRoot: specs, slug: "work",
+    provider: writes("b.txt", "one\n"), registry: registry(),
+    policy: { mode: "auto", allow: {}, deny: {} },
+    review: async () => clean,
+  });
+  expect(out).toEqual({ status: "done" });
+
+  expect(existsSync(join(repo, ".vesna", "worktrees", "work-T1"))).toBe(false);
+  expect((await runGit(["branch", "--list", "vesna/work/T1"], repo)).stdout.trim()).toBe("");
+  expect((await runGit(["worktree", "list"], repo)).stdout.split("\n").filter((l) => l.includes("work-T1"))).toEqual([]);
+  // The work itself is on main, via the merge commit.
+  expect(readFileSync(join(repo, "b.txt"), "utf8")).toBe("one\n");
 });

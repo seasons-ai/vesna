@@ -174,6 +174,19 @@ export async function removeWorktree(
   }
 }
 
+/**
+ * Deletes a branch. Used after its merge went in: the merge is --no-ff, so
+ * the merge commit carries the branch's whole history and can be reverted
+ * as a unit, and the ref itself is a leftover. A branch that is already
+ * gone is the state that was wanted.
+ */
+export async function deleteBranch(repo: string, branch: string, git: GitRunner = runGit): Promise<void> {
+  const result = await git(["branch", "-D", branch], repo);
+  if (result.code !== 0 && !/not found/i.test(result.stderr)) {
+    throw new WorktreeError(`could not delete branch ${branch}: ${result.stderr.trim().split("\n")[0]}`);
+  }
+}
+
 function firstLine(text: string): string {
   return text.trim().split("\n")[0] ?? "unknown error";
 }

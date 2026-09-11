@@ -5,6 +5,7 @@ import { join } from "node:path";
 import {
   branchName,
   createWorktree,
+  deleteBranch,
   hasUncommitted,
   listWorktrees,
   removeWorktree,
@@ -167,4 +168,13 @@ test("removal refuses an arbitrary directory even when discard was requested", a
     removeWorktree(repo, { path: outside, branch: "vesna/spec/T1" }, { discardChanges: true }),
   ).rejects.toThrow(/not inside/);
   expect(await readFile(join(outside, "important.txt"), "utf8")).toBe("keep me\n");
+});
+
+test("a merged task's branch can be deleted, and deleting a branch that is gone is not a failure", async () => {
+  const repo = await repository();
+  await runGit(["branch", "vesna/s/T9"], repo);
+  expect((await runGit(["branch", "--list", "vesna/s/T9"], repo)).stdout.trim()).not.toBe("");
+  await deleteBranch(repo, "vesna/s/T9");
+  expect((await runGit(["branch", "--list", "vesna/s/T9"], repo)).stdout.trim()).toBe("");
+  await deleteBranch(repo, "vesna/s/T9"); // gone already: no throw
 });
