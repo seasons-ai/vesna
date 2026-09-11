@@ -1,0 +1,22 @@
+name: Partnership
+description: An integration, a provider, or working together on the project.
+labels: [partnership]
+body:
+  - type: input
+    id: who
+    attributes:
+      label: Who you are
+      description: Person or organisation, and a link.
+    validations:
+      required: true
+  - type: textarea
+    id: what
+    attributes:
+      label: What you have in mind
+    validations:
+      required: true
+  - type: textarea
+    id: why
+    attributes:
+      label: Why Vesna
+      description: What about this project fits what you are doing.

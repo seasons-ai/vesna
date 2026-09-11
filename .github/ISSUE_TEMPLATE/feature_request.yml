@@ -1,0 +1,23 @@
+name: Feature request
+description: A problem Vesna should solve, and a shape it might take.
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: The problem
+      description: What you are trying to do, and where it stops you today.
+    validations:
+      required: true
+  - type: textarea
+    id: shape
+    attributes:
+      label: A possible shape
+      description: A command, a config key, a change in behaviour. A sketch is fine.
+  - type: textarea
+    id: evidence
+    attributes:
+      label: How would we know it works?
+      description: Vesna does not ship claims it cannot check. What would the test or the output be?
+    validations:
+      required: true

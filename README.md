@@ -727,6 +727,16 @@ adapters touch the network, and nothing in the suite does.
 
 ---
 
+## Contributors
+
+<a href="https://github.com/Lookoff-AIMLAPI"><img src="https://avatars.githubusercontent.com/u/227839683?v=4" width="40" height="40" alt="Lookoff-AIMLAPI" style="border-radius:50%"></a> — started it, and keeps the reviewer honest.
+
+Merged a contribution? Add yourself here — avatar, link, and one sentence if
+you like. See [CONTRIBUTING.md](CONTRIBUTING.md#contributors) for the three
+limits on the sentence.
+
+---
+
 ## Licence
 
 [MIT](LICENSE).
