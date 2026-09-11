@@ -41,7 +41,7 @@ export interface ReviewRequest {
 
 const SEVERITIES: readonly Severity[] = ["critical", "important", "minor"];
 
-export function createVerdictNode(holder: { verdict?: Verdict }): NodeDef<Verdict, Verdict> {
+export function createVerdictNode(holder: { verdict?: Verdict }): NodeDef<unknown, Verdict> {
   return {
     type: "review_verdict",
     description:
@@ -68,10 +68,79 @@ export function createVerdictNode(holder: { verdict?: Verdict }): NodeDef<Verdic
       required: ["spec", "findings", "summary"],
     },
     effect: "pure",
+    // The schema is a hint to the model, not an enforcement mechanism: nothing
+    // in the session loop validates a tool call's arguments against it. So a
+    // malformed call is parsed here, on the one path a verdict can reach the
+    // holder through — throwing leaves the holder untouched, which is what
+    // makes a bad call no verdict instead of a trusted one.
     async run(input) {
-      holder.verdict = input;
-      return input;
+      const verdict = parseVerdict(input);
+      holder.verdict = verdict;
+      return verdict;
     },
+  };
+}
+
+function parseVerdict(input: unknown): Verdict {
+  if (typeof input !== "object" || input === null) {
+    throw new Error("review_verdict: expected an object");
+  }
+  const record = input as Record<string, unknown>;
+
+  if (record.spec !== "met" && record.spec !== "not_met") {
+    throw new Error(
+      `review_verdict: "spec" must be "met" or "not_met", got ${JSON.stringify(record.spec)}`,
+    );
+  }
+
+  if (!Array.isArray(record.findings)) {
+    throw new Error(
+      `review_verdict: "findings" must be an array, got ${JSON.stringify(record.findings)}`,
+    );
+  }
+  const findings = record.findings.map((item, index) => parseFinding(item, index));
+
+  if (typeof record.summary !== "string") {
+    throw new Error(
+      `review_verdict: "summary" must be a string, got ${JSON.stringify(record.summary)}`,
+    );
+  }
+
+  return { spec: record.spec, findings, summary: record.summary };
+}
+
+function parseFinding(item: unknown, index: number): Finding {
+  if (typeof item !== "object" || item === null) {
+    throw new Error(`review_verdict: findings[${index}] must be an object`);
+  }
+  const record = item as Record<string, unknown>;
+
+  if (typeof record.severity !== "string" || !SEVERITIES.includes(record.severity as Severity)) {
+    throw new Error(
+      `review_verdict: findings[${index}].severity must be one of ${SEVERITIES.join(", ")}, got ${JSON.stringify(record.severity)}`,
+    );
+  }
+  if (typeof record.file !== "string") {
+    throw new Error(
+      `review_verdict: findings[${index}].file must be a string, got ${JSON.stringify(record.file)}`,
+    );
+  }
+  if (typeof record.text !== "string") {
+    throw new Error(
+      `review_verdict: findings[${index}].text must be a string, got ${JSON.stringify(record.text)}`,
+    );
+  }
+  if (record.line !== undefined && !Number.isInteger(record.line)) {
+    throw new Error(
+      `review_verdict: findings[${index}].line must be an integer, got ${JSON.stringify(record.line)}`,
+    );
+  }
+
+  return {
+    severity: record.severity as Severity,
+    file: record.file,
+    text: record.text,
+    ...(record.line !== undefined ? { line: record.line as number } : {}),
   };
 }
 

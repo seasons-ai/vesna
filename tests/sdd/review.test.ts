@@ -97,3 +97,74 @@ test("a re-review is told which findings it is checking", () => {
   expect(text).toContain("the one to check");
   expect(text).toMatch(/ADDRESSED|addressed/);
 });
+
+test("a reviewer cannot use sed's in-place edit to write, end to end", async () => {
+  const cwd = mkdtempSync(join(tmpdir(), "vesna-review-"));
+  writeFileSync(join(cwd, "a.txt"), "before");
+  const provider = answers([
+    { type: "tool_call", id: "c1", name: "shell", input: { command: "sed -i.bak 's/before/AFTER/' a.txt" } },
+  ]);
+  await reviewTask({ cwd, provider, brief: "b", report: "r", diff: "d" });
+  const { readFileSync } = await import("node:fs");
+  expect(readFileSync(join(cwd, "a.txt"), "utf8")).toBe("before");
+});
+
+test("a malformed verdict is rejected, not stored: bad spec", async () => {
+  const holder: { verdict?: Verdict } = {};
+  const node = createVerdictNode(holder);
+  await expect(node.run({ spec: "yes", findings: [], summary: "x" }, ctx)).rejects.toThrow(/spec/);
+  expect(holder.verdict).toBeUndefined();
+});
+
+test("a malformed verdict is rejected, not stored: findings not an array", async () => {
+  const holder: { verdict?: Verdict } = {};
+  const node = createVerdictNode(holder);
+  await expect(node.run({ spec: "met", findings: "none", summary: "x" }, ctx)).rejects.toThrow(/findings/);
+  expect(holder.verdict).toBeUndefined();
+});
+
+test("a malformed verdict is rejected, not stored: bad finding severity", async () => {
+  const holder: { verdict?: Verdict } = {};
+  const node = createVerdictNode(holder);
+  await expect(
+    node.run({ spec: "met", findings: [{ severity: "urgent", file: "a.ts", text: "x" }], summary: "x" }, ctx),
+  ).rejects.toThrow(/severity/);
+  expect(holder.verdict).toBeUndefined();
+});
+
+test("a malformed verdict is rejected, not stored: finding file not a string", async () => {
+  const holder: { verdict?: Verdict } = {};
+  const node = createVerdictNode(holder);
+  await expect(
+    node.run({ spec: "met", findings: [{ severity: "minor", file: 3, text: "x" }], summary: "x" }, ctx),
+  ).rejects.toThrow(/file/);
+  expect(holder.verdict).toBeUndefined();
+});
+
+test("a malformed verdict is rejected, not stored: finding text not a string", async () => {
+  const holder: { verdict?: Verdict } = {};
+  const node = createVerdictNode(holder);
+  await expect(
+    node.run({ spec: "met", findings: [{ severity: "minor", file: "a.ts", text: 3 }], summary: "x" }, ctx),
+  ).rejects.toThrow(/text/);
+  expect(holder.verdict).toBeUndefined();
+});
+
+test("a malformed verdict is rejected, not stored: finding line not an integer", async () => {
+  const holder: { verdict?: Verdict } = {};
+  const node = createVerdictNode(holder);
+  await expect(
+    node.run(
+      { spec: "met", findings: [{ severity: "minor", file: "a.ts", text: "x", line: 1.5 }], summary: "x" },
+      ctx,
+    ),
+  ).rejects.toThrow(/line/);
+  expect(holder.verdict).toBeUndefined();
+});
+
+test("a malformed verdict is rejected, not stored: bad summary", async () => {
+  const holder: { verdict?: Verdict } = {};
+  const node = createVerdictNode(holder);
+  await expect(node.run({ spec: "met", findings: [], summary: 42 }, ctx)).rejects.toThrow(/summary/);
+  expect(holder.verdict).toBeUndefined();
+});
