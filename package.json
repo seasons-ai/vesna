@@ -1,6 +1,6 @@
 {
   "name": "@seasons-ai/vesna",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "A coding agent with spec-driven development built in.",
   "license": "Apache-2.0",
   "publishConfig": {
