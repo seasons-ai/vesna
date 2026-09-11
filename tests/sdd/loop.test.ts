@@ -233,6 +233,8 @@ test("an abort while reviewing propagates instead of being swallowed as a failed
   const events = readEvents(specs, "work");
   expect(events.some((e) => e.t === "review.failed")).toBe(false);
   expect(events.some((e) => e.t === "build.stopped")).toBe(false);
+  // Nobody's signal was aborted, so the task was not "interrupted".
+  expect(events.filter((e) => e.t === "task.failed")).toEqual([{ t: "task.failed", id: "T1", reason: "aborted" }]);
 });
 
 test("a worker that refused stops the build with what it could not do", async () => {

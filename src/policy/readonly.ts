@@ -299,12 +299,15 @@ function sedReads(rest: string[]): boolean {
       const equals = word.indexOf("=");
       const name = equals === -1 ? word : word.slice(0, equals);
       const glued = equals === -1 ? undefined : word.slice(equals + 1);
-      if (name === "--in-place" || name === "--file") return false;
-      if (name === "--expression") {
+      // GNU sed takes any unambiguous prefix of a long option, so `--in` is
+      // `--in-place` and `--exp` is `--expression`.
+      const is = (flag: string) => name === flag || abbreviates(name, flag);
+      if (is("--in-place") || is("--file")) return false;
+      if (is("--expression")) {
         const script = glued ?? rest[(i += 1)];
         if (script === undefined) return false;
         scripts.push(script);
-      } else if (name === "--line-length" && glued === undefined) {
+      } else if (is("--line-length") && glued === undefined) {
         i += 1;
       }
       continue;
@@ -346,12 +349,46 @@ const SED_READING_SCRIPT = new RegExp(
 );
 
 /**
- * Whether `word` is the given writing flag — matched exactly, as a long
- * option with a glued `=value` (`--output=out.txt`), or as a short option
- * with a glued value (`-oout.txt`). An exact match alone misses both forms.
+ * Whether `word` is the given writing flag, in any of the spellings the
+ * tool's parser accepts. A long option matches exactly, with a glued
+ * `=value` (`--output=out.txt`), or as any proper prefix of its name — git's
+ * parse-options and getopt_long both take an unambiguous abbreviation, so
+ * `--open=rm` is `--open-files-in-pager=rm` and `--out=x` is `--output=x`.
+ * Which abbreviations are unambiguous depends on the tool's full option
+ * table, which is not known here, so every prefix of a banned option is
+ * refused: a prefix that is also a prefix of a harmless option costs a
+ * question, while the other way round costs a file.
+ *
+ * A short option matches exactly, with a glued value (`-oout.txt`), or as
+ * one letter of a cluster (`-nOrm` carries `-O`, whose value is `rm`). A
+ * letter of a glued value counts as well — `-Orm` and `-O'rm'` are the same
+ * word — which is the side to err on.
  */
 function matchesFlag(word: string, flag: string): boolean {
   if (word === flag) return true;
-  if (flag.startsWith("--")) return word.startsWith(`${flag}=`);
-  return word.startsWith(flag);
+  if (flag.startsWith("--")) {
+    const equals = word.indexOf("=");
+    const name = equals === -1 ? word : word.slice(0, equals);
+    return name === flag || abbreviates(name, flag);
+  }
+  if (word.startsWith("--")) return false;
+  if (word.startsWith(flag)) return true;
+  return flag.length === 2 && isCluster(word) && word.includes(flag[1]!, 1);
+}
+
+/**
+ * Whether `name` is a proper prefix of the long option `flag`, with at least
+ * one character after the dashes so that `--` on its own never matches.
+ */
+function abbreviates(name: string, flag: string): boolean {
+  return name.length > 2 && name.length < flag.length && flag.startsWith(name);
+}
+
+/**
+ * A word that a short-option parser reads letter by letter: `-` followed by
+ * a letter and at least one more character. A lone `-` is stdin and `-5` is
+ * a count, so neither is a cluster.
+ */
+function isCluster(word: string): boolean {
+  return word.length >= 3 && word[0] === "-" && /[A-Za-z]/.test(word[1]!);
 }

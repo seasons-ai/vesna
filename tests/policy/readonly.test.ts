@@ -170,7 +170,7 @@ test("awk is left out: its program can do anything, and braces give it away", ()
 // ---------------------------------------------------------------------------
 
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdtempSync, readdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -494,4 +494,136 @@ test("tools that can be pointed at an output file or a pager are refused in that
   reads("date -u");
   reads("hostname");
   reads("hostname -s");
+});
+
+// ---------------------------------------------------------------------------
+// Two parser features every tool here has: a short-flag cluster (`-nOrm`
+// hides `-O`) and an unambiguous prefix of a long option (`--open=rm` is
+// `--open-files-in-pager=rm` to git). Both walked straight past a matcher
+// that looked at the start of the word or the exact name.
+// ---------------------------------------------------------------------------
+
+test("the everyday short-flag clusters still read", () => {
+  for (const command of [
+    "ls -la",
+    "ls -lah",
+    "grep -rn TODO src",
+    "grep -rni todo src",
+    "git log -p",
+    "git diff -w",
+    "tail -n5 f",
+    "head -c100 f",
+    "wc -lw f",
+    "sort -rn f",
+    "find . -name x -type f",
+    "head -5 f",
+    "tail -20 f",
+    "git log --oneline -10",
+    "git tag -n5",
+    "git branch -vv",
+    "git ls-files --deleted",
+    "git log --decorate --oneline",
+    "git log --follow f",
+    "git branch --contains HEAD",
+    "git branch --color",
+    "sort --check f",
+    "yq --indent 4 '.a' f",
+    "rg --pre-glob '*.gz' x",
+    "bat --paging=always f",
+  ]) reads(command);
+});
+
+test("a banned short flag inside a cluster is still the flag", () => {
+  for (const command of [
+    "git grep -nOrm hello",
+    "git grep -Orm hello",
+    "git grep -O'rm' hello",
+    "git grep -nO'rm' hello",
+    "sort -ro x f",
+    "sort -nro x f",
+    "sort -uo x f",
+    "sort -rox f",
+    "file -bC -m f",
+    "git branch -aumain",
+    "git branch -au main",
+    "git branch -at newb main",
+    "git tag -an v9",
+    "git diff -wo out",
+    "tree -Lo out .",
+    "yq -Pi '.a = 1' f",
+    "shasum -aw 256 f",
+    "date -us 2020-01-01",
+  ]) asks(command);
+});
+
+test("a proper prefix of a banned long option is the option", () => {
+  for (const command of [
+    "git grep --open=rm hello",
+    "git grep --open rm hello",
+    "git grep --open-files-in-pa=rm hello",
+    "git grep --o=rm hello",
+    "git log --outp=out",
+    "git branch --del x",
+    "git tag --de v9",
+    "git branch --set-upstream-t=other",
+    "git branch --set-up=other",
+    "git branch --edit-de",
+    "git branch --unset-up",
+    "git branch --tr newb main",
+    "git branch --mo renamed",
+    "git tag --list --ann v9 --mess m",
+    "sort --out=x f",
+    "sort --out x f",
+    "sort --o x f",
+    "sort --compress=gzip f",
+    "file --comp -m f",
+    "yq --inpl '.a = 1' f",
+    "yq --split '.name' f",
+    "rg --pr rm x g",
+    "ag --pag 'touch out' hello",
+    "bat --pag 'touch out' f",
+    "date --se=2020-01-01",
+    "sed --in 's/h/H/' f",
+    "sed --in-pl=.bak 's/h/H/' f",
+    "sed --i 's/h/H/' f",
+    "sed --exp p --exp 'w x' f",
+    "sed --exp='w x' f",
+    "sed --fi script.sed f",
+  ]) asks(command);
+  // An abbreviation of --expression carries a script, and a reading one reads.
+  reads("sed --exp p f");
+  reads("sed --exp=p f");
+  reads("sed --expr 's/a/b/' f");
+});
+
+test("git grep's pager hidden in a cluster does not get to delete the file it matched", () => {
+  const cwd = repo();
+  // Proves the assertion is not vacuous: run once without the gate.
+  const proof = repo();
+  execFileSync("/bin/sh", ["-c", "git grep -nOrm changed"], { cwd: proof, stdio: "ignore" });
+  expect(existsSync(join(proof, "f"))).toBe(false);
+
+  for (const command of ["git grep -nOrm changed", "git grep --open=rm changed", "git grep --open-files-in-pa=rm changed"]) {
+    throughGate(cwd, command);
+    expect({ command, f: existsSync(join(cwd, "f")) }).toEqual({ command, f: true });
+    asks(command);
+  }
+});
+
+test("sort's output file hidden in a cluster or an abbreviation is not written", () => {
+  for (const command of ["sort -ro x f", "sort -nro x f", "sort -uo x f", "sort --out=x f", "sort --o x f"]) {
+    refusedAndLeavesNothing(command);
+  }
+});
+
+test("git branch's abbreviated --set-upstream-to does not rewrite the configuration", () => {
+  const cwd = repo();
+  execFileSync("git", ["branch", "other"], { cwd, stdio: "ignore" });
+  const config = join(cwd, ".git", "config");
+  const before = readFileSync(config, "utf8");
+  for (const command of ["git branch --set-upstream-t=other", "git branch --set-up=other", "git branch -aumain", "git branch -au other"]) {
+    throughGate(cwd, command);
+    expect({ command, config: readFileSync(config, "utf8") }).toEqual({ command, config: before });
+    asks(command);
+  }
 });

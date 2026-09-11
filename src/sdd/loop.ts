@@ -178,7 +178,9 @@ export async function runBuild(request: BuildLoopRequest): Promise<BuildOutcome>
     // Whatever ends a task early — a Stop, an interrupt, a plain error from
     // a worker's own commit — the task in flight is recorded as failed
     // before the build is recorded as stopped. Without that the log keeps
-    // it "running", with an agent name, forever.
+    // it "running", with an agent name, forever. An abort is "interrupted"
+    // only when it is the person's own signal; an AbortError from anywhere
+    // else is an abort nobody asked for, and the log says so.
     const one = async (task: Task): Promise<BuildResult> => {
       try {
         return await attempt(task);
@@ -187,7 +189,7 @@ export async function runBuild(request: BuildLoopRequest): Promise<BuildOutcome>
         const reason = err instanceof Stop
           ? err.reason.replace(new RegExp(`^${task.id}: `), "")
           : isAbort(err, request.signal)
-            ? "interrupted"
+            ? (request.signal?.aborted ? "interrupted" : "aborted")
             : err.message;
         emit({ t: "task.failed", id: task.id, reason });
         throw error;
