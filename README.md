@@ -22,7 +22,7 @@ watch. "I finished T2" in a chat message is never mistaken for the fact of it.
 > Vesna is the Slavic goddess of spring — the thing that comes back on its own,
 > every year, unasked and unsupervised.
 
-**Status: v0.2.** It runs end to end and is well covered by tests, but it is
+**Status: v0.3.** It runs end to end and is well covered by tests, but it is
 early. See [What is not built yet](#what-is-not-built-yet).
 
 ---
