@@ -4,15 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { splitPlan, writeBriefs } from "../../src/sdd/brief";
 
-const REAL_PLAN_PATH = join(
-  import.meta.dir,
-  "..",
-  "..",
-  "docs",
-  "superpowers",
-  "plans",
-  "2026-09-11-sdd-built-in.md",
-);
+const REAL_PLAN_PATH = join(import.meta.dir, "..", "fixtures", "plan-with-fenced-headings.md");
 
 const PLAN = `# Plan
 
@@ -96,7 +88,7 @@ c
   expect(() => splitPlan(plan)).toThrow("plan names Task 1 twice");
 });
 
-test("splitPlan on this repository's own plan finds exactly its twelve tasks", () => {
+test("splitPlan on a real plan whose code examples contain task headings finds exactly its twelve tasks", () => {
   const markdown = readFileSync(REAL_PLAN_PATH, "utf8");
   const tasks = splitPlan(markdown);
   expect(tasks.map((t) => t.id)).toEqual([

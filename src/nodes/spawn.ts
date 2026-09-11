@@ -9,8 +9,68 @@
  * interrupted is indistinguishable from one that succeeded.
  */
 
+import { readdirSync, readFileSync } from "node:fs";
+
 /** How long a child gets to exit on SIGTERM before it is killed outright. */
 const GRACE_MS = 300;
+
+/**
+ * Every process under `pid`, deepest first.
+ *
+ * `/bin/sh -c "cmd"` is dash on Linux, and dash forks `cmd` rather than
+ * exec-ing it; bash on macOS execs a lone command. So a signal to the child
+ * pid reaches the real work on one platform and only the shell on the other,
+ * where the work survives as an orphan holding the pipes — the abort lands
+ * five seconds late and the file it was meant to prevent gets written. The
+ * only signal that reaches everything is one sent to every descendant.
+ *
+ * Linux is read from /proc, which needs no tools; elsewhere `pgrep -P`.
+ */
+function descendantsOf(pid: number): number[] {
+  const children = new Map<number, number[]>();
+  if (process.platform === "linux") {
+    for (const entry of readdirSync("/proc")) {
+      if (!/^\d+$/.test(entry)) continue;
+      try {
+        // Field 4 of /proc/<pid>/stat is the parent pid; the comm field
+        // before it may contain spaces, so split after its closing paren.
+        const stat = readFileSync(`/proc/${entry}/stat`, "utf8");
+        const ppid = Number(stat.slice(stat.lastIndexOf(")") + 2).split(" ")[1]);
+        if (!children.has(ppid)) children.set(ppid, []);
+        children.get(ppid)!.push(Number(entry));
+      } catch {
+        // Gone between readdir and read.
+      }
+    }
+  } else {
+    const walk = (parent: number) => {
+      const out = Bun.spawnSync(["pgrep", "-P", String(parent)]);
+      const kids = out.stdout.toString().trim().split("\n").filter(Boolean).map(Number);
+      if (kids.length > 0) children.set(parent, kids);
+      for (const kid of kids) walk(kid);
+    };
+    walk(pid);
+  }
+  const found: number[] = [];
+  const visit = (parent: number) => {
+    for (const kid of children.get(parent) ?? []) {
+      visit(kid);
+      found.push(kid);
+    }
+  };
+  visit(pid);
+  return found;
+}
+
+function killAll(pids: number[], signal: "SIGTERM" | "SIGKILL"): void {
+  for (const target of pids) {
+    try {
+      process.kill(target, signal);
+    } catch {
+      // Already gone.
+    }
+  }
+}
 
 export class AbortedError extends Error {
   constructor() {
@@ -53,10 +113,24 @@ export async function spawnInterruptible(
 
   const stop = () => {
     aborted = true;
+    // The tree is captured BEFORE the first signal. Once the shell dies its
+    // children are reparented to init and no walk from child.pid finds them.
+    const tree = [...descendantsOf(child.pid), child.pid];
+    // SIGTERM goes to the root only. Sending it down the tree kills a
+    // well-behaved `sleep` under a script that traps TERM, and the script
+    // then runs its next line — the write the abort was meant to prevent —
+    // inside the grace period. The root gets its chance to exit cleanly.
     child.kill("SIGTERM");
     // SIGTERM is a request. A child that traps it needs the one that cannot
-    // be trapped, and the whole point is that nothing outlives the turn.
-    killer = setTimeout(() => child.kill("SIGKILL"), GRACE_MS);
+    // be trapped, and the whole point is that nothing outlives the turn — so
+    // the kill goes to everything captured, deepest first, plus anything
+    // those have spawned since.
+    killer = setTimeout(() => {
+      const now = new Set<number>();
+      for (const pid of tree) for (const kid of descendantsOf(pid)) now.add(kid);
+      for (const pid of tree) now.add(pid);
+      killAll([...now], "SIGKILL");
+    }, GRACE_MS);
   };
 
   options.signal.addEventListener("abort", stop, { once: true });
