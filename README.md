@@ -423,49 +423,132 @@ and piped output carries no escape codes at all.
 
 ---
 
-## The garden
+## The process
 
-Ask for work of several steps and a column opens on the right showing where it
-stands — the stages, the acceptance criteria once
-there are any, the tasks and who is working on them.
+Work goes through five phases, in order: `design → spec → plan → build →
+done`. These are the garden's own stages — the eight-stage guess an earlier
+version shipped conflated review and verify into stages of their own; they
+turned out to live inside the build loop instead, once per task, not once
+after all of them.
 
-You do not have to start it: recording a plan opens a spec named after the
-work, and says so. The commands are there for when you want to steer.
-
-```text
-/spec                       what there is
-/spec new <name>            start one by hand
-/spec open <slug>           switch to it
-ctrl-g                      show or hide the column
-```
-
-The agent fills it in as it works. It may declare the plan and say which task
-it has picked up. It may **not** say a task is finished — "I finished T2" is a
-claim, and a claim is not a fact. To finish something it hands Vesna a command
-that fails when the work is not done, and Vesna runs it and reads the exit
-status:
+Ask for anything and the agent calls `classify` before writing a line: a
+**spike** ends in an answer and keeps no code, a **bounded** change is
+designed in the conversation and built without a spec file, an
+**architectural** change goes through all five phases. It says why, out
+loud, and you can overrule it in your next message — the override is the
+event that counts. When it is unsure it takes the heavier shape: ceremony
+costs time, skipping it costs the review that would have caught the defect.
 
 ```text
-· plan 1ms
-· task_start 0ms
-· write 1ms  hello.txt
-· task_verify 17ms          grep 'HELLO' hello.txt → 0
+/spec                        what there is
+/spec new <name>             start one by hand
+/spec open <slug>            switch to it
+/approve spec                closes design — the plan can be written
+/approve plan                closes plan — /build may run it
+/build                       run the approved plan: build, review, merge
+ctrl-g                       show or hide the column
 ```
 
-Only then does the task turn cold. The evidence is produced by the system
-rather than asserted by the party being checked, which is the difference
-between a progress bar and a guarantee.
+**Design** is the conversation itself, and the agent fills the column in as
+it works. The one thing it may not do is declare a task finished — "I
+finished T2" in a chat message is a claim, and a claim is not a fact. To
+close a task it hands Vesna a command that fails when the work is not done,
+and Vesna runs it and reads the exit status. The evidence is produced by the
+system rather than asserted by the party being checked, which is the
+difference between a progress bar and a guarantee — `task_verify` holds that
+line for a task, and `review_verdict`, below, holds it one level up.
 
-It lives in `.vesna/specs/<slug>/` and is worth committing: a spec describes
-work on this repository, so it belongs beside the code and can be reviewed with
-it. That is the opposite of a conversation, which is personal and lives under
-your home directory.
+Design ends in `spec.md`. **`/approve spec`** is the only thing that closes
+it — no tool call does; an `approved` event exists only because a person
+typed the command, in that conversation, on purpose. That opens **plan**:
+the model writes `plan.md`, one `### Task N:` heading per task, and calls
+`plan` with tasks whose ids — `T1`, `T2`, and so on — match those headings.
+**`/approve plan`** is the second and last approval a person types, and the
+only thing that unlocks `/build`. A plan nobody has read is not a plan,
+whatever the model wrote into it.
 
-The column is built by reducing a log of typed events, not by reading prose. So
-the state survives a crash, the reducer is tested without a terminal, and "I
-finished T2" in a chat message is never mistaken for the fact of it. Warm marks
-mean live or proposed, cold ones mean settled — the same distinction the palette
-makes.
+**Build** is a loop Vesna runs, not the model — `/build` in the chat, or
+`vesna build <slug>` from the shell once a plan is approved. One task at a
+time, in dependency order: cut its brief out of the plan, build it in a
+worktree of its own, review the diff, fix what the review found, merge, then
+the next. This is the shell route, captured verbatim against a two-task plan
+("add `sub` to `math.ts`", then "add `mul`", each verified with a `grep`):
+
+```console
+$ vesna build demo-arithmetic
+  · building
+  · T1  building
+  · T1  review: met, 0 findings
+  · T1  merged e0c6c92
+  · T2  building
+  · T2  review: met, 0 findings
+  · T2  merged 2790604
+  · branch  review: met, 0 findings
+  · done
+$ echo $?
+0
+```
+
+`/build` in the chat prints the identical lines into the transcript and the
+garden both — it calls the same loop through the same event-to-line
+formatting, not a second copy of it.
+
+A review answers through **`review_verdict`**, a tool like `task_verify`:
+spec met or not, findings each with a severity, a file, and what is wrong. A
+review session may read and run read-only commands and nothing else; prose
+that never calls the tool is not a review, it is a failed one, and the loop
+does not advance on it. The thing being checked does not get to phrase its
+own result — `task_verify`'s rule, one level up.
+
+A finding that survives a fix round starts another one, and five rounds is
+the cap. Past it, an Important or Minor finding still open is written down
+as a **parked** event and the task is marked done with the finding attached
+— on the record, not silently dropped. A Critical still open at the cap, or
+a brief still not met after five rounds, stops the whole build instead: that
+is not one more round's worth of work, it is the task not doing what was
+asked. Once every task has merged, one more review reads the whole branch
+with the parked findings beside it; nothing is fixed automatically there — a
+person decides.
+
+A build has nobody to ask. `runTask` treats a question it cannot put to
+anyone as a refusal, not a silent yes — which is exactly what happened while
+writing this section: a first attempt at the run above, in a project left at
+the default `ask` mode, stopped on the very first edit:
+
+```console
+$ vesna build demo-arithmetic
+  · building
+  · T1  building
+  · stopped: T1: the worker was not allowed to: edit math.ts
+vesna: T1: the worker was not allowed to: edit math.ts
+$ echo $?
+1
+```
+
+Set `permissions.mode: auto` in the project's `.vesna/config.yaml` before an
+unattended build — see [Permission](#permission) for what `auto` still
+refuses regardless.
+
+`vesna build <slug>` exits `0` when every task merged, `1` when it stopped
+for a person (a merge conflict, a fix-round cap on a Critical, a plan whose
+tasks cannot be ordered, or the refusal above), `2` when it never started:
+
+```console
+$ vesna build nope
+vesna: no spec called "nope"
+$ echo $?
+2
+```
+
+There is no way yet to interrupt a running build from the chat; stopping it
+means killing the process.
+
+It lives in `.vesna/specs/<slug>/` and is worth committing: `events.jsonl`
+(the log), `spec.md`, `plan.md`, and one brief, one report and one review per
+task, all beside the code they describe. The panel is built by reducing the
+log, not by reading prose, so the state survives a crash, the reducer is
+tested without a terminal, and "I finished T2" in a chat message is never
+mistaken for the fact of it.
 
 ## Permission
 
@@ -600,10 +683,9 @@ Named honestly, because the gap is deliberate rather than an oversight.
   The real control is `permissions.nodes`: remove `script` and `shell` there and
   the model is never offered them. Actual containment needs OS-level isolation
   and is not built.
-- **The process runs one task at a time, in this process.** Work trees, a
-  builder, a scheduler over the task graph and a merge queue all exist in
-  `src/work/` and are tested; nothing starts them yet. `/build` is the next
-  thing.
+- **Builds run one task at a time.** The scheduler knows which tasks are
+  independent, but parallel builds are not switched on — a later change, with
+  its own isolation questions.
 - **The agent is a terminal program.** There is no server mode, so there is no
   editor extension and no other client. That is the step after `/build`.
 - No container sandbox, no memory directory.
