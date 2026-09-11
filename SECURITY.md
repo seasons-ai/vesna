@@ -5,7 +5,7 @@ what may run, and the read-only classifier decides what a reviewer may run —
 and that classifier has needed a fix in every review it has had. Holes in it
 are the most likely class of report.
 
-**Do not open a public issue.** Email `stan@aimlapi.com` with:
+**Do not open a public issue.** Email `lookoffdev@gmail.com` with:
 
 - the command or input that gets past a guard it should not;
 - what it does when it runs;
