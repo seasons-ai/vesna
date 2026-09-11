@@ -4,6 +4,16 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { splitPlan, writeBriefs } from "../../src/sdd/brief";
 
+const REAL_PLAN_PATH = join(
+  import.meta.dir,
+  "..",
+  "..",
+  "docs",
+  "superpowers",
+  "plans",
+  "2026-09-11-sdd-built-in.md",
+);
+
 const PLAN = `# Plan
 
 Intro that belongs to nobody.
@@ -45,4 +55,51 @@ test("briefs are written one per task, headed by the task, and their paths retur
   const t2 = readFileSync(paths.T2!, "utf8");
   expect(t2.startsWith("### Task 2: Emit JSON")).toBe(true);
   expect(t2).toContain("Depends on Task 1.");
+});
+
+test("a heading inside a fenced code block is not a task, it is an example", () => {
+  const plan = `### Task 1: Real task
+
+Some intro.
+
+\`\`\`md
+### Task 9: Not real
+this is just an example inside the fence
+\`\`\`
+
+The rest of the real task's body.
+
+### Task 2: Another real task
+
+Its body.
+`;
+  const tasks = splitPlan(plan);
+  expect(tasks.map((t) => t.id)).toEqual(["T1", "T2"]);
+  expect(tasks[0]!.text).toContain("### Task 9: Not real");
+  expect(tasks[0]!.text).toContain("this is just an example inside the fence");
+  expect(tasks[0]!.text).toContain("The rest of the real task's body.");
+});
+
+test("two tasks claiming the same number is a malformed plan, refused rather than silently merged", () => {
+  const plan = `### Task 1: First
+
+a
+
+### Task 2: Second
+
+b
+
+### Task 1: First again
+
+c
+`;
+  expect(() => splitPlan(plan)).toThrow("plan names Task 1 twice");
+});
+
+test("splitPlan on this repository's own plan finds exactly its twelve tasks", () => {
+  const markdown = readFileSync(REAL_PLAN_PATH, "utf8");
+  const tasks = splitPlan(markdown);
+  expect(tasks.map((t) => t.id)).toEqual([
+    "T1", "T2", "T3", "T4", "T5", "T6", "T7", "T8", "T9", "T10", "T11", "T12",
+  ]);
 });

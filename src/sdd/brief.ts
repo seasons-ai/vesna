@@ -15,11 +15,18 @@ export interface PlanTask {
 }
 
 const HEADING = /^### Task (\d+): (.+)$/;
+// A fenced code block opens with 3+ backticks or tildes (up to 3 leading
+// spaces, per CommonMark) and closes with a matching line of the same
+// character, at least as long. A `### Task N:` line inside one is somebody's
+// example, not the plan's own structure.
+const FENCE = /^ {0,3}(`{3,}|~{3,})/;
 
 export function splitPlan(markdown: string): PlanTask[] {
   const tasks: PlanTask[] = [];
   let current: PlanTask | null = null;
   const body: string[] = [];
+  let fenceChar = "";
+  let fenceLen = 0;
 
   const flush = () => {
     if (current === null) return;
@@ -30,10 +37,28 @@ export function splitPlan(markdown: string): PlanTask[] {
   };
 
   for (const line of markdown.split("\n")) {
-    const match = line.match(HEADING);
+    const fence = line.match(FENCE);
+    if (fence) {
+      const marker = fence[1]!;
+      if (fenceChar === "") {
+        fenceChar = marker[0]!;
+        fenceLen = marker.length;
+      } else if (marker[0] === fenceChar && marker.length >= fenceLen) {
+        fenceChar = "";
+        fenceLen = 0;
+      }
+    }
+
+    const inFence = fenceChar !== "";
+    const match = inFence ? null : line.match(HEADING);
     if (match) {
+      const number = match[1]!;
+      const id = `T${number}`;
+      if ((current !== null && current.id === id) || tasks.some((task) => task.id === id)) {
+        throw new Error(`plan names Task ${number} twice`);
+      }
       flush();
-      current = { id: `T${match[1]}`, title: match[2]!.trim(), text: line };
+      current = { id, title: match[2]!.trim(), text: line };
       continue;
     }
     if (current !== null) body.push(line);
