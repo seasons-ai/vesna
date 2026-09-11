@@ -21,6 +21,8 @@ export function exitFor(outcome: BuildOutcome): 0 | 1 | 2 {
 
 export function describeEvent(event: SpecEvent): string | null {
   switch (event.t) {
+    case "build.started":
+      return "building";
     case "task.started":
       return `${event.id}  building`;
     case "review.done": {

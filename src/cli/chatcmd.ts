@@ -126,6 +126,29 @@ export function buildStart(
   };
 }
 
+/**
+ * A build's promise rejects instead of resolving to a `BuildOutcome` for
+ * anything `runBuild` did not expect and turn into a `Stop` — an ordinary
+ * git failure inside a worker's own commit, say. That has to reach the
+ * transcript in the loop's own words rather than take the process down with
+ * it, so the wording lives here where it can be tested on exact text.
+ */
+export function buildFailed(error: Error): string {
+  return `build failed: ${error.message}`;
+}
+
+/**
+ * Why `/spec open` refuses while a build is running.
+ *
+ * The build writes every event to whichever spec `deps.sink.slug` currently
+ * names. Switching that slug mid-build would not stop the build — it would
+ * just redirect its remaining events into a different spec's log, silently
+ * mixing one piece of work's history into another's.
+ */
+export function specSwitchBlocked(): string {
+  return "a build is running — wait for it to stop before switching specs";
+}
+
 /** One line per catalog entry: id, where its credential comes from, label. */
 export function describeProviders(
   current: string,

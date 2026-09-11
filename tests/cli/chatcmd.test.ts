@@ -1,5 +1,12 @@
 import { test, expect } from "bun:test";
-import { CHAT_COMMANDS, approveOutcome, buildStart, parseChatInput } from "../../src/cli/chatcmd";
+import {
+  CHAT_COMMANDS,
+  approveOutcome,
+  buildFailed,
+  buildStart,
+  parseChatInput,
+  specSwitchBlocked,
+} from "../../src/cli/chatcmd";
 import { project } from "../../src/spec/project";
 
 test("plain text is a message, not a command", () => {
@@ -119,4 +126,12 @@ test("/build while a build is running is refused", () => {
     { t: "build.started" },
   ]);
   expect(buildStart(t)).toEqual({ kind: "refused", message: "a build is already running" });
+});
+
+test("a rejected build says so in the loop's own words, not a generic crash message", () => {
+  expect(buildFailed(new Error("git add failed: boom"))).toBe("build failed: git add failed: boom");
+});
+
+test("switching specs mid-build is refused, so the running build's events are not redirected", () => {
+  expect(specSwitchBlocked()).toBe("a build is running — wait for it to stop before switching specs");
 });

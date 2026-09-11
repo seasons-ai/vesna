@@ -18,7 +18,10 @@ import { readSettings, settingsPath, writeSettings } from "../../src/cli/setting
 import { listSessions, openSession, readSession } from "../../src/store/sessions";
 import { createPlanNodes } from "../../src/nodes/plan";
 import { createSink } from "../../src/spec/sink";
-import { readEvents, specsRoot } from "../../src/spec/store";
+import { appendEvent, createSpec, readEvents, specPaths, specsRoot, writeSpecFile } from "../../src/spec/store";
+import type { BuildResult } from "../../src/work/builder";
+import type { ReviewOutcome } from "../../src/sdd/review";
+import type { MergeReport } from "../../src/work/merge";
 
 /**
  * A terminal that keeps the visible rows, by applying the same move-and-clear
@@ -103,6 +106,52 @@ function done(text: string): CompletionResult {
 
 function reply(text: string): Provider {
   return provider(async () => done(text));
+}
+
+/**
+ * Fakes for `/build`'s call into `runBuild`, modeled on `tests/sdd/loop.test.ts`'s
+ * own fakes: a worker that "builds" a task without touching a real checkout,
+ * a reviewer that hands back a fixed queue of verdicts (clean by default),
+ * a merge that always succeeds, and a git runner that answers the two calls
+ * `runBuild` itself makes (`rev-parse --abbrev-ref` and a bare `rev-parse`)
+ * plus a no-op for every diff in between — `build` and `review` are what is
+ * faked away, so nothing here ever needs a real branch to exist.
+ */
+function buildFakes(overrides: Partial<{ reviews: (ReviewOutcome | Error)[] }> = {}) {
+  const built = (task: string, n: number): BuildResult => ({
+    task,
+    status: "committed",
+    branch: `vesna/work/${task}`,
+    worktree: `/wt/${task}`,
+    commit: `sha-${task}-${n}`,
+    refusals: [],
+    costUsd: 0.01,
+    text: "did it",
+  });
+  const clean: ReviewOutcome = {
+    kind: "verdict",
+    verdict: { spec: "met", findings: [], summary: "ok" },
+    costUsd: 0.01,
+  };
+  const reviews = [...(overrides.reviews ?? [])];
+  return {
+    build: async (r: { task: string }) => built(r.task, 1),
+    resume: async (r: { task: string }) => built(r.task, 2),
+    review: async (): Promise<ReviewOutcome> => {
+      const next = reviews.shift() ?? clean;
+      if (next instanceof Error) throw next;
+      return next;
+    },
+    merge: async (_repo: string, c: { task: string; branch: string }[]): Promise<MergeReport> => ({
+      merged: [{ task: c[0]!.task, branch: c[0]!.branch }],
+      pending: [],
+    }),
+    git: async (args: string[]) => {
+      if (args[0] === "rev-parse" && args[1] === "--abbrev-ref") return { code: 0, stdout: "main", stderr: "" };
+      if (args[0] === "rev-parse") return { code: 0, stdout: "start-sha", stderr: "" };
+      return { code: 0, stdout: "diff", stderr: "" };
+    },
+  };
 }
 
 /**
@@ -1691,6 +1740,132 @@ test("/build on an approved plan starts, and the garden reflects what runBuild r
   // transcript, proving the loop's own wording is what is shown, not a
   // string composed here.
   await until(() => /there is no plan\.md to build/.test(app.screen()), "the outcome");
+  await quit(app);
+});
+
+/** Writes a spec with the tasks and plan.md a real `/build` needs to start. */
+function twoTaskSpec(specs: string, slug: string): void {
+  createSpec(specs, slug);
+  appendEvent(specs, slug, { t: "task.added", id: "T1", title: "First" });
+  appendEvent(specs, slug, { t: "task.added", id: "T2", title: "Second" });
+  appendEvent(specs, slug, { t: "approved", what: "plan" });
+  writeSpecFile(
+    specPaths(specs, slug).plan,
+    "# Plan\n\n### Task 1: First\nDo it.\n\n### Task 2: Second\nDo it.\n",
+  );
+}
+
+/** The same, but with only one task — enough for the mid-build tests below. */
+function oneTaskSpec(specs: string, slug: string): void {
+  createSpec(specs, slug);
+  appendEvent(specs, slug, { t: "task.added", id: "T1", title: "First" });
+  appendEvent(specs, slug, { t: "approved", what: "plan" });
+  writeSpecFile(specPaths(specs, slug).plan, "# Plan\n\n### Task 1: First\nDo it.\n");
+}
+
+test("/build runs a real build against fake seams, task by task, in order", async () => {
+  const base = await deps(reply("x"));
+  const sink = createSink(specsRoot(base.root));
+  const specs = specsRoot(base.root);
+  twoTaskSpec(specs, "gate");
+
+  const app = await start(reply("x"), { rows: 50, cols: 120 }, { ...base, sink, buildSeams: buildFakes() });
+  app.input.type("/spec open gate\r");
+  await until(() => app.screen().includes("spec gate"), "the spec opening");
+  app.input.type("/build\r");
+  await until(() => /T2\s+merged/.test(app.screen()), "the second task merging");
+
+  const screen = app.screen();
+  const at = (needle: string) => screen.indexOf(needle);
+  expect(at("T1  building")).toBeGreaterThanOrEqual(0);
+  expect(at("T1  review: met, 0 findings")).toBeGreaterThan(at("T1  building"));
+  expect(at("T1  merged")).toBeGreaterThan(at("T1  review: met, 0 findings"));
+  expect(at("T2  building")).toBeGreaterThan(at("T1  merged"));
+  expect(at("T2  review: met, 0 findings")).toBeGreaterThan(at("T2  building"));
+  expect(at("T2  merged")).toBeGreaterThan(at("T2  review: met, 0 findings"));
+  // The garden keeps the review mark beside a task after it merges.
+  expect(screen).toContain("review 0: 0 open");
+  await quit(app);
+});
+
+test("/build while one is already running is refused", async () => {
+  const base = await deps(reply("x"));
+  const sink = createSink(specsRoot(base.root));
+  const specs = specsRoot(base.root);
+  oneTaskSpec(specs, "gate");
+
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const seams = buildFakes();
+  const build = async (r: { task: string }) => {
+    await gate;
+    return seams.build(r);
+  };
+
+  const app = await start(reply("x"), { rows: 40, cols: 120 }, { ...base, sink, buildSeams: { ...seams, build } });
+  app.input.type("/spec open gate\r");
+  await until(() => app.screen().includes("spec gate"), "the spec opening");
+  app.input.type("/build\r");
+  await until(() => /T1\s+building/.test(app.screen()), "the task starting");
+  app.input.type("/build\r");
+  await until(() => /a build is already running/.test(app.screen()), "the refusal");
+  release();
+  await until(() => /T1\s+merged/.test(app.screen()), "the build finishing, so the run ends cleanly");
+  await quit(app);
+});
+
+test("/spec open refuses while a build is running, so its events are not redirected", async () => {
+  const base = await deps(reply("x"));
+  const sink = createSink(specsRoot(base.root));
+  const specs = specsRoot(base.root);
+  oneTaskSpec(specs, "gate");
+  createSpec(specs, "other");
+
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const seams = buildFakes();
+  const build = async (r: { task: string }) => {
+    await gate;
+    return seams.build(r);
+  };
+
+  const app = await start(reply("x"), { rows: 40, cols: 120 }, { ...base, sink, buildSeams: { ...seams, build } });
+  app.input.type("/spec open gate\r");
+  await until(() => app.screen().includes("spec gate"), "the spec opening");
+  app.input.type("/build\r");
+  await until(() => /T1\s+building/.test(app.screen()), "the task starting");
+  app.input.type("/spec open other\r");
+  await until(() => /a build is running — wait for it to stop/.test(app.screen()), "the refusal");
+  release();
+  await until(() => /T1\s+merged/.test(app.screen()), "the build finishing, so the run ends cleanly");
+  await quit(app);
+});
+
+test("a build that rejects instead of resolving shows up in the transcript, and the process survives it", async () => {
+  const base = await deps(reply("x"));
+  const sink = createSink(specsRoot(base.root));
+  const specs = specsRoot(base.root);
+  oneTaskSpec(specs, "gate");
+
+  const seams = buildFakes();
+  // An ordinary git failure deep inside a real worker's own commit — see
+  // src/work/builder.ts's `commit()` — throws a plain Error, which `runBuild`
+  // does not catch into a `Stop`. This fakes that exact shape without a real
+  // checkout: `build` rejecting is what makes `runBuild`'s own promise
+  // reject, which is the case the missing `.catch` in app.ts left unhandled.
+  const build = async (): Promise<BuildResult> => {
+    throw new Error("git add failed: boom");
+  };
+
+  const app = await start(reply("x"), { rows: 40, cols: 120 }, { ...base, sink, buildSeams: { ...seams, build } });
+  app.input.type("/spec open gate\r");
+  await until(() => app.screen().includes("spec gate"), "the spec opening");
+  app.input.type("/build\r");
+  await until(() => /build failed: git add failed: boom/.test(app.screen()), "the failure reaching the transcript");
   await quit(app);
 });
 

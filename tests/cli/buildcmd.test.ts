@@ -8,6 +8,7 @@ test("exit codes: done is 0, stopped for a person is 1, could not start is 2", (
 });
 
 test("events print as one line each, and the ones that are noise print nothing", () => {
+  expect(describeEvent({ t: "build.started" })).toBe("building");
   expect(describeEvent({ t: "task.started", id: "T1", agent: "vesna build" })).toBe("T1  building");
   expect(describeEvent({ t: "review.done", task: "T1", round: 0, spec: "met", findings: [] })).toBe(
     "T1  review: met, 0 findings",

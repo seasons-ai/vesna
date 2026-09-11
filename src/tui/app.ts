@@ -2,12 +2,14 @@ import { homedir } from "node:os";
 import {
   CHAT_COMMANDS,
   approveOutcome,
+  buildFailed,
   buildStart,
   describeHeader,
   describeModels,
   describeProviders,
   modelSwitchOutcome,
   parseChatInput,
+  specSwitchBlocked,
   switchBlocked,
   switchFailed,
   switchOutcome,
@@ -39,7 +41,7 @@ import { createScreen, type Terminal } from "./screen";
 import { resolveTheme, themeNames, type Theme } from "./theme";
 import { copyToClipboard, systemCopyIo } from "./clipboard";
 import { decide, facetOf, MODES, type Mode, type Policy } from "../policy/decide";
-import { runBuild } from "../sdd/loop";
+import { runBuild, type BuildLoopRequest } from "../sdd/loop";
 import { rememberAllow, suggestPattern } from "../policy/store";
 import {
   listSessions,
@@ -75,6 +77,16 @@ export interface AppDeps {
   /** Where `/provider` writes the machine-wide default. Defaults to the real environment and home. */
   env?: Record<string, string | undefined>;
   home?: string;
+  /**
+   * Seams for `/build`'s call into `runBuild`, so a test can fake the worker,
+   * the reviewer and the merge step without a real git checkout. `git` is
+   * included alongside them: `runBuild` issues a few git calls of its own
+   * (reading the base branch, diffing a task's branch) even when the worker
+   * and reviewer are faked, and those branches only exist for real when the
+   * worker actually makes them. Production never sets this — the real
+   * functions are `runBuild`'s own defaults.
+   */
+  buildSeams?: Pick<BuildLoopRequest, "build" | "resume" | "review" | "merge" | "git">;
 }
 
 export interface AppIo {
@@ -343,6 +355,13 @@ export async function runApp(deps: AppDeps, io: AppIo): Promise<number> {
     }
 
     if (verb === "open") {
+      // The build writes to whichever spec `deps.sink.slug` currently names.
+      // Switching that mid-build would not stop it — it would just redirect
+      // its remaining events into a different spec's log.
+      if (spec?.building === true) {
+        transcript.notice(specSwitchBlocked(), "warn");
+        return;
+      }
       if (!openSpec(name)) {
         transcript.notice(`no spec called "${name}" — /spec for the list`, "warn");
         return;
@@ -670,17 +689,34 @@ export async function runApp(deps: AppDeps, io: AppIo): Promise<number> {
             provider: deps.provider,
             registry: deps.registry,
             policy,
+            ...deps.buildSeams,
             onEvent: (event) => {
-              const line = describeEvent(event);
-              if (line !== null) transcript.notice(line, event.t === "build.stopped" ? "warn" : "muted");
+              // "building" from `build.started` would just repeat the line
+              // `buildStart` already printed above.
+              if (event.t !== "build.started") {
+                const line = describeEvent(event);
+                if (line !== null) transcript.notice(line, event.t === "build.stopped" ? "warn" : "muted");
+              }
               refreshSpec();
               draw();
             },
-          }).then((outcome) => {
-            if (outcome.status !== "done") transcript.notice(outcome.reason, "warn");
-            refreshSpec();
-            draw();
-          });
+          })
+            .then((outcome) => {
+              if (outcome.status !== "done") transcript.notice(outcome.reason, "warn");
+              refreshSpec();
+              draw();
+            })
+            .catch((error) => {
+              // A build can reject rather than resolve: an ordinary git
+              // failure deep inside a worker's own commit throws a plain
+              // `Error`, which `runBuild` does not catch into a `Stop`. Left
+              // unhandled that takes the whole TUI down mid-conversation —
+              // so it lands in the transcript instead, the same way every
+              // other fire-and-forget write in this file guards itself.
+              transcript.notice(buildFailed(error as Error), "error");
+              refreshSpec();
+              draw();
+            });
           continue;
         }
 
