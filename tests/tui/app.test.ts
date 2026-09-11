@@ -1643,6 +1643,57 @@ test("/approve with no sink refuses honestly instead of claiming an effect it di
   await quit(app);
 });
 
+test("/build with nothing open is refused", async () => {
+  const app = await start(reply("x"), { rows: 24, cols: 100 });
+  app.input.type("/build\r");
+  await until(() => /nothing to build/.test(app.screen()), "the refusal");
+  await quit(app);
+});
+
+test("/build on an unapproved plan is refused, naming the command", async () => {
+  const base = await deps(reply("x"));
+  const sink = createSink(specsRoot(base.root));
+  const app = await start(reply("x"), { rows: 24, cols: 100 }, { ...base, sink });
+  app.input.type("/spec new gate\r");
+  await until(() => app.screen().includes("gate"), "the spec");
+  app.input.type("/build\r");
+  await until(() => /not approved/.test(app.screen()), "the refusal");
+  await quit(app);
+});
+
+/**
+ * With no sink, a plan can never be approved — the only place that writes
+ * the "approved" event is /approve above, and it refuses outright without a
+ * sink to write into. So /build never reaches the sink it would need to
+ * launch a build, even once a spec is open.
+ */
+test("/build without a sink never reaches for one, even with a spec open", async () => {
+  const app = await start(reply("x"), { rows: 24, cols: 100 });
+  app.input.type("/spec new gate\r");
+  await until(() => app.screen().includes("gate"), "the spec");
+  app.input.type("/build\r");
+  await until(() => /not approved/.test(app.screen()), "the refusal");
+  await quit(app);
+});
+
+test("/build on an approved plan starts, and the garden reflects what runBuild reports", async () => {
+  const base = await deps(reply("x"));
+  const sink = createSink(specsRoot(base.root));
+  const app = await start(reply("x"), { rows: 24, cols: 100 }, { ...base, sink });
+  app.input.type("/spec new gate\r");
+  await until(() => app.screen().includes("gate"), "the spec");
+  app.input.type("/approve plan\r");
+  await until(() => app.screen().includes("approved: plan"), "the approval");
+  app.input.type("/build\r");
+  await until(() => /building 0 tasks/.test(app.screen()), "the start message");
+  // No plan.md was ever written for this spec, so runBuild resolves right
+  // away with a could-not-start outcome — its reason has to reach the
+  // transcript, proving the loop's own wording is what is shown, not a
+  // string composed here.
+  await until(() => /there is no plan\.md to build/.test(app.screen()), "the outcome");
+  await quit(app);
+});
+
 test("both columns can be open at once, on their own sides", async () => {
   const store = await mkdtemp(join(tmpdir(), "vesna-both-"));
   const base = await deps(reply("x"));

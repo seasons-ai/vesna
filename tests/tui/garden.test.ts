@@ -116,6 +116,35 @@ test("nothing is wider than the column", () => {
   for (const line of long.split("\n")) expect(visibleWidth(line)).toBeLessThanOrEqual(24);
 });
 
+test("a task under review shows the review's outcome beside it", () => {
+  const out = text([
+    { t: "approved", what: "plan" },
+    { t: "build.started" },
+    { t: "task.added", id: "T1", title: "First" },
+    { t: "task.started", id: "T1", agent: "vesna build" },
+    {
+      t: "review.done",
+      task: "T1",
+      round: 1,
+      spec: "met",
+      findings: [{ severity: "important", file: "a", text: "b" }],
+    },
+  ]);
+  expect(out).toContain("First");
+  expect(out).toContain("review 1: 1 open");
+});
+
+test("parked findings are listed under the task, not hidden", () => {
+  const out = text([
+    { t: "approved", what: "plan" },
+    { t: "build.started" },
+    { t: "task.added", id: "T1", title: "First" },
+    { t: "parked", task: "T1", finding: { severity: "minor", file: "a.ts", text: "nit" } },
+    { t: "task.done", id: "T1" },
+  ]);
+  expect(out).toContain("parked: a.ts — nit");
+});
+
 test("in ASCII mode not one mark is outside ascii", () => {
   const out = text(
     [

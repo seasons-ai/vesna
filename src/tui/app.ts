@@ -2,6 +2,7 @@ import { homedir } from "node:os";
 import {
   CHAT_COMMANDS,
   approveOutcome,
+  buildStart,
   describeHeader,
   describeModels,
   describeProviders,
@@ -11,6 +12,7 @@ import {
   switchFailed,
   switchOutcome,
 } from "../cli/chatcmd";
+import { describeEvent } from "../cli/buildcmd";
 import { EXIT } from "../cli/exit";
 import { readSettings, settingsPath, writeSettings } from "../cli/settings";
 import { asPreset, inspectCredential, problem, remedy, usable } from "../cli/preflight";
@@ -37,6 +39,7 @@ import { createScreen, type Terminal } from "./screen";
 import { resolveTheme, themeNames, type Theme } from "./theme";
 import { copyToClipboard, systemCopyIo } from "./clipboard";
 import { decide, facetOf, MODES, type Mode, type Policy } from "../policy/decide";
+import { runBuild } from "../sdd/loop";
 import { rememberAllow, suggestPattern } from "../policy/store";
 import {
   listSessions,
@@ -634,6 +637,50 @@ export async function runApp(deps: AppDeps, io: AppIo): Promise<number> {
           }
           transcript.endTurn();
           draw();
+          continue;
+        }
+
+        if (input.name === "build") {
+          const start = buildStart(spec);
+          if (start.kind === "refused") {
+            transcript.notice(start.message, "warn");
+            transcript.endTurn();
+            draw();
+            continue;
+          }
+          // `buildStart` only returns "start" once the plan is approved, and
+          // a plan can only be approved above through /approve, which itself
+          // requires a sink — so `deps.sink` is never undefined here. Guarded
+          // anyway, the same way /approve guards its own sink-dependent write,
+          // rather than trusting that invariant with a bare assertion.
+          if (deps.sink === undefined) {
+            transcript.endTurn();
+            draw();
+            continue;
+          }
+          transcript.notice(start.message, "ok");
+          transcript.endTurn();
+          draw();
+          // Runs alongside the conversation. Each event redraws the garden and
+          // adds a line, so the person watches it happen rather than waiting.
+          void runBuild({
+            root: deps.root,
+            specsRoot: specsRoot(deps.root),
+            slug: deps.sink.slug!,
+            provider: deps.provider,
+            registry: deps.registry,
+            policy,
+            onEvent: (event) => {
+              const line = describeEvent(event);
+              if (line !== null) transcript.notice(line, event.t === "build.stopped" ? "warn" : "muted");
+              refreshSpec();
+              draw();
+            },
+          }).then((outcome) => {
+            if (outcome.status !== "done") transcript.notice(outcome.reason, "warn");
+            refreshSpec();
+            draw();
+          });
           continue;
         }
 

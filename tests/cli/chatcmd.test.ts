@@ -1,5 +1,5 @@
 import { test, expect } from "bun:test";
-import { CHAT_COMMANDS, approveOutcome, parseChatInput } from "../../src/cli/chatcmd";
+import { CHAT_COMMANDS, approveOutcome, buildStart, parseChatInput } from "../../src/cli/chatcmd";
 import { project } from "../../src/spec/project";
 
 test("plain text is a message, not a command", () => {
@@ -86,4 +86,37 @@ test("approving with nowhere to write it says so, not \"approved\" in a differen
     kind: "refused",
     message: "cannot approve — nothing is recording this conversation",
   });
+});
+
+test("/build is a command", () => {
+  expect(CHAT_COMMANDS.map((c) => c.name)).toContain("build");
+});
+
+test("/build with no spec is refused", () => {
+  expect(buildStart(null)).toEqual({ kind: "refused", message: "nothing to build — no spec is open" });
+});
+
+test("/build on an unapproved plan is refused, naming the command", () => {
+  const t = project([{ t: "created", id: "x", title: "X" }, { t: "task.added", id: "T1", title: "a" }]);
+  expect(buildStart(t)).toEqual({ kind: "refused", message: "the plan is not approved — /approve plan" });
+});
+
+test("/build on an approved plan starts, and says how many tasks", () => {
+  const t = project([
+    { t: "created", id: "x", title: "X" },
+    { t: "task.added", id: "T1", title: "a" },
+    { t: "task.added", id: "T2", title: "b" },
+    { t: "approved", what: "plan" },
+  ]);
+  expect(buildStart(t)).toEqual({ kind: "start", message: "building 2 tasks — events appear below and in the garden" });
+});
+
+test("/build while a build is running is refused", () => {
+  const t = project([
+    { t: "created", id: "x", title: "X" },
+    { t: "task.added", id: "T1", title: "a" },
+    { t: "approved", what: "plan" },
+    { t: "build.started" },
+  ]);
+  expect(buildStart(t)).toEqual({ kind: "refused", message: "a build is already running" });
 });

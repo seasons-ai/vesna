@@ -11,6 +11,7 @@ export const CHAT_COMMANDS: ChatCommand[] = [
   { name: "mode", help: "plan, ask or auto (shift-tab cycles)" },
   { name: "spec", help: "list specs, /spec new <name>, /spec open <slug>" },
   { name: "approve", help: "approve the spec or the plan: /approve spec, /approve plan" },
+  { name: "build", help: "run the approved plan: build, review, merge, one task at a time" },
   { name: "chats", help: "show or hide the conversations column (ctrl-b)" },
   { name: "history", help: "conversations from this folder: /history [all]" },
   { name: "resume", help: "reopen one: /resume 2" },
@@ -103,6 +104,26 @@ export function approveOutcome(
     return { kind: "approved", what, message: "approved: plan — /build will run it" };
   }
   return { kind: "refused", message: 'approve what? "spec" or "plan"' };
+}
+
+/**
+ * Whether `/build` may start, and what to say either way.
+ *
+ * A build cannot start on an unapproved plan or while one is already
+ * running — both are checked here rather than left to `runBuild` to
+ * discover, so the chat can refuse before spending a turn on it.
+ */
+export function buildStart(
+  tree: SpecTree | null,
+): { kind: "start"; message: string } | { kind: "refused"; message: string } {
+  if (tree === null) return { kind: "refused", message: "nothing to build — no spec is open" };
+  if (tree.building) return { kind: "refused", message: "a build is already running" };
+  if (!tree.approved.plan) return { kind: "refused", message: "the plan is not approved — /approve plan" };
+  const n = tree.tasks.length;
+  return {
+    kind: "start",
+    message: `building ${n} task${n === 1 ? "" : "s"} — events appear below and in the garden`,
+  };
 }
 
 /** One line per catalog entry: id, where its credential comes from, label. */

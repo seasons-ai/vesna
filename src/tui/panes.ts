@@ -146,6 +146,22 @@ export function gardenPane(tree: SpecTree, options: PaneOptions): Pane {
             text: `    ${theme.paint("petal", mark("❀"))} ${theme.paint("muted", truncate(task.agent, width - 6))}`,
           });
         }
+        const review = tree.reviews[task.id];
+        if (review !== undefined) {
+          const label =
+            review.spec === "not_met"
+              ? `review ${review.round}: not met`
+              : `review ${review.round}: ${review.open.length} open`;
+          lines.push({
+            text: `    ${theme.paint(review.open.length > 0 || review.spec === "not_met" ? "warn" : "ice", mark("◆"))} ${theme.paint("muted", truncate(label, width - 6))}`,
+          });
+        }
+        for (const parked of tree.parked.filter((p) => p.task === task.id)) {
+          const where = `${parked.finding.file}${parked.finding.line !== undefined ? `:${parked.finding.line}` : ""}`;
+          lines.push({
+            text: `    ${theme.paint("faint", mark("○"))} ${theme.paint("muted", truncate(`parked: ${where} — ${parked.finding.text}`, width - 6))}`,
+          });
+        }
       }
       continue;
     }
