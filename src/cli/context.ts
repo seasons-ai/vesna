@@ -14,6 +14,7 @@ import { loadPolicy } from "../policy/store";
 import { createSink } from "../spec/sink";
 import { specsRoot } from "../spec/store";
 import { createPlanNodes } from "../nodes/plan";
+import { createClassifyNode } from "../sdd/classify";
 import { colorDepth, resolveTheme } from "../tui/theme";
 import { loadConfig } from "./config";
 import { CODEX_BASE_URL, needsAddress, type Preset } from "../providers/catalog";
@@ -172,6 +173,7 @@ export async function buildContext(root: string) {
   // Registered once, bound to whichever spec is open at the time.
   const sink = createSink(specsRoot(root));
   for (const node of createPlanNodes(sink)) registry.register(node);
+  registry.register(createClassifyNode(sink));
   const theme = resolveTheme(config.theme, {
     depth: colorDepth(process.env, Boolean(process.stdout.isTTY)),
   });
