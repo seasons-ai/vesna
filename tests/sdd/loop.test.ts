@@ -492,6 +492,35 @@ test("a task added after approval means the plan is not approved, so nothing is 
   expect(f.log).toEqual([]);
 });
 
+test("a fix round the worker was not allowed to do stops the build, and is not mistaken for a fix", async () => {
+  const { root, specs } = setup([
+    { t: "task.added", id: "T1", title: "First" },
+    { t: "approved", what: "spec" }, { t: "approved", what: "plan" },
+  ]);
+  const bad: Finding = { severity: "important", file: "a.ts", text: "wrong" };
+  const f = fakes({
+    reviews: [{ kind: "verdict", verdict: { spec: "met", findings: [bad], summary: "one" }, costUsd: 0 }],
+  });
+  const resume = async (r: any): Promise<BuildResult> => {
+    f.log.push(`resume ${r.task}`);
+    return { ...built(r.task, 2), status: "refused", refusals: ["shell rm -rf build", "write .env"] };
+  };
+  const out = await runBuild(base(root, specs, f, { resume }));
+  expect(out).toEqual({
+    status: "stopped",
+    reason: "T1: fix round 1: the worker was not allowed to: shell rm -rf build; write .env",
+  });
+  // No second review of a "fix" that never happened, and no merge.
+  expect(f.log).toEqual(["build T1", "review", "resume T1"]);
+  const events = readEvents(specs, "work");
+  expect(events).toContainEqual({
+    t: "task.failed", id: "T1", reason: "fix round 1: the worker was not allowed to: shell rm -rf build; write .env",
+  });
+  expect(events.some((e) => e.t === "task.done")).toBe(false);
+  // What the worker said before it was stopped is still in the report.
+  expect(readSpecFile(join(specPaths(specs, "work").reports, "T1.md"))).toContain("## Fix round 1 (refused)");
+});
+
 test("a stopped build marks the task in flight failed, before it says stopped", async () => {
   const { root, specs } = setup(approvedWithTasks);
   const f = fakes({

@@ -294,6 +294,17 @@ export async function runBuild(request: BuildLoopRequest): Promise<BuildOutcome>
           renderFindings(open),
         ].join("\n");
         const resumed = await resume({ ...common, worktree: { path: result.worktree, branch: result.branch }, message });
+        // A refusal is neither a fix nor "no changes": the worker was
+        // stopped short, and whatever it did before that is partial. The
+        // first round stops on it; a fix round must too, or the partial
+        // work is reviewed and merged as if it were the fix.
+        if (resumed.status === "refused") {
+          report += `\n## Fix round ${round} (refused)\n\n${resumed.text}\n`;
+          writeSpecFile(join(paths.reports, `${task.id}.md`), report);
+          throw new Stop(
+            `${task.id}: fix round ${round}: the worker was not allowed to: ${resumed.refusals.join("; ")}`,
+          );
+        }
         if (resumed.status === "no-changes") {
           // The worker looked and made no change — a valid answer to "fix
           // this", distinct from having fixed it. `result` (and the commit
