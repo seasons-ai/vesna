@@ -61,6 +61,33 @@ export async function runTask(request: BuildRequest): Promise<BuildResult> {
     };
   }
 
+  return await work(request, tree, request.objective, `${request.task}: built by vesna`);
+}
+
+export interface ResumeRequest extends Omit<BuildRequest, "spec" | "objective"> {
+  worktree: { path: string; branch: string };
+  /** The findings, already rendered as the message the worker reads. */
+  message: string;
+}
+
+/**
+ * A fix round. The same checkout, a fresh session, the findings as its
+ * objective. The worker's memory across rounds is its report file, not its
+ * context: a context that has argued itself into a corner is not the thing to
+ * hand the corner back to.
+ */
+export async function resumeTask(request: ResumeRequest): Promise<BuildResult> {
+  const tree: Worktree = { path: request.worktree.path, branch: request.worktree.branch };
+  return await work(request, tree, request.message, `${request.task}: fix`);
+}
+
+async function work(
+  request: Omit<BuildRequest, "spec" | "objective">,
+  tree: Worktree,
+  objective: string,
+  commitMessage: string,
+): Promise<BuildResult> {
+  const git = request.git ?? runGit;
   const refusals: string[] = [];
   const session = createSession(request.provider, request.registry, {
     cwd: tree.path,
@@ -83,14 +110,14 @@ export async function runTask(request: BuildRequest): Promise<BuildResult> {
   let text = "";
   let error: string | undefined;
   try {
-    text = (await session.send(request.objective)).text;
+    text = (await session.send(objective)).text;
   } catch (failure) {
     error = (failure as Error).message;
   }
 
   let committed: string | null = null;
   try {
-    committed = await commit(tree, request.task, git);
+    committed = await commit(tree, commitMessage, git);
   } catch (failure) {
     const message = (failure as Error).message;
     error = error === undefined ? message : `${error}; ${message}`;
@@ -117,7 +144,7 @@ export async function runTask(request: BuildRequest): Promise<BuildResult> {
 }
 
 /** Commits whatever the builder produced. Null when it produced nothing. */
-async function commit(tree: Worktree, task: string, git: GitRunner): Promise<string | null> {
+async function commit(tree: Worktree, message: string, git: GitRunner): Promise<string | null> {
   const added = await git(["add", "-A"], tree.path);
   if (added.code !== 0) throw new Error(`git add failed: ${gitDetail(added)}`);
 
@@ -126,7 +153,7 @@ async function commit(tree: Worktree, task: string, git: GitRunner): Promise<str
   if (staged.code === 0) return null;
   if (staged.code !== 1) throw new Error(`git diff failed: ${gitDetail(staged)}`);
 
-  const made = await git(["commit", "-qm", `${task}: built by vesna`], tree.path);
+  const made = await git(["commit", "-qm", message], tree.path);
   if (made.code !== 0) throw new Error(`git commit failed: ${gitDetail(made)}`);
 
   const sha = await git(["rev-parse", "HEAD"], tree.path);

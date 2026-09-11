@@ -2,7 +2,7 @@ import { test, expect } from "bun:test";
 import { mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { runTask } from "../../src/work/builder";
+import { resumeTask, runTask } from "../../src/work/builder";
 import { runGit } from "../../src/work/worktree";
 import { createRegistry } from "../../src/registry/registry";
 import { writeNode } from "../../src/nodes/write";
@@ -209,4 +209,41 @@ test("a git commit failure makes the build fail rather than look unchanged", asy
   const result = await runTask({ ...request(repo, writes("new.txt", "made\n")), git });
   expect(result.status).toBe("failed");
   expect(result.error).toContain("hook refused commit");
+});
+
+test("resuming a task works in the same checkout and adds a second commit", async () => {
+  const repo = await repository();
+  const first = await runTask({
+    repo, spec: "s", task: "T1", objective: "write b.txt",
+    provider: writes("b.txt", "one\n"), registry: registry(), policy: { mode: "auto", allow: {}, deny: {} },
+  });
+  expect(first.status).toBe("committed");
+
+  const second = await resumeTask({
+    repo, task: "T1", worktree: { path: first.worktree, branch: first.branch },
+    message: "the file should say two",
+    provider: writes("b.txt", "two\n"), registry: registry(), policy: { mode: "auto", allow: {}, deny: {} },
+  });
+  expect(second.status).toBe("committed");
+  expect(second.worktree).toBe(first.worktree);
+  expect(second.branch).toBe(first.branch);
+  expect(second.commit).not.toBe(first.commit);
+  expect(await readFile(join(first.worktree, "b.txt"), "utf8")).toBe("two\n");
+
+  const log = await runGit(["log", "--oneline", first.branch], repo);
+  expect(log.stdout.trim().split("\n").length).toBe(3); // first, T1 build, T1 fix
+});
+
+test("a resume that changes nothing says so rather than committing air", async () => {
+  const repo = await repository();
+  const first = await runTask({
+    repo, spec: "s", task: "T1", objective: "write b.txt",
+    provider: writes("b.txt", "one\n"), registry: registry(), policy: { mode: "auto", allow: {}, deny: {} },
+  });
+  const second = await resumeTask({
+    repo, task: "T1", worktree: { path: first.worktree, branch: first.branch },
+    message: "leave it",
+    provider: writes("b.txt", "one\n"), registry: registry(), policy: { mode: "auto", allow: {}, deny: {} },
+  });
+  expect(second.status).toBe("no-changes");
 });
