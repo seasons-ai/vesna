@@ -15,6 +15,7 @@ import { EXIT } from "./exit";
 import { isHelp, isVersion, VERSION } from "./entry";
 import { parseFlags } from "./flags";
 import { authCommand } from "./authcmd";
+import { buildCommand } from "./buildcmd";
 import { needsOnboarding, runOnboarding } from "./onboard";
 import type { Preset } from "../providers/catalog";
 
@@ -26,6 +27,7 @@ const USAGE = [
   "  vesna init                              pin the current settings to this repository",
   "  vesna auth                              show which model credentials will be used",
   "  vesna auth login                        sign in (browser, headless, or API key)",
+  "  vesna build <slug>                      run an approved plan: build, review, merge",
 ].join("\n");
 
 /**
@@ -37,11 +39,11 @@ const USAGE = [
  * silently drops `"version"` even though the tests below assert it. A named
  * union keeps every value real, `"version"` included.
  */
-export type Command = "init" | "chat" | "do" | "auth";
+export type Command = "init" | "chat" | "do" | "auth" | "build";
 
 export type Route = Command | "onboard" | "usage" | "version" | "error";
 
-const COMMANDS = new Set<string>(["init", "chat", "do", "auth"]);
+const COMMANDS = new Set<string>(["init", "chat", "do", "auth", "build"]);
 
 /**
  * What the arguments ask for.
@@ -84,6 +86,7 @@ export function needsProvider(route: Route): boolean {
     case "do":
     case "auth":
     case "init":
+    case "build":
       return true;
     case "onboard":
     case "usage":
@@ -212,7 +215,7 @@ export async function main(argv: string[]): Promise<number> {
 
   // Nothing below can reach a model without a credential, and learning that
   // from an SDK error names a provider the user never chose.
-  if (enteringChat || command === "do") {
+  if (enteringChat || command === "do" || command === "build") {
     const credential = await inspectCredential(earlyConfig, process.env, homedir());
     if (!usable(credential)) {
       console.error(`vesna: ${problem(credential)}`);
@@ -250,6 +253,10 @@ export async function main(argv: string[]): Promise<number> {
     if (trace.finalText) console.log(`\n${trace.finalText}`);
     console.log(`\n${trace.steps.length} steps · ${seconds}s · $${trace.costUsd.toFixed(4)}`);
     return EXIT.ok;
+  }
+
+  if (command === "build") {
+    return await buildCommand(target, root, { provider, registry, policy, theme, model: flags.model ?? config.model });
   }
 
   console.error(`vesna: unknown command "${command}"`);

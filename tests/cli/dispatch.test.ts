@@ -36,7 +36,7 @@ test("asking for help or a version needs no provider", () => {
 });
 
 test("anything that reaches a model, or writes down which one, needs a provider", () => {
-  for (const route of ["chat", "do", "auth", "init"] as const) {
+  for (const route of ["chat", "do", "auth", "init", "build"] as const) {
     expect(needsProvider(route)).toBe(true);
   }
 });
