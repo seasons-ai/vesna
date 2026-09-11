@@ -1558,22 +1558,22 @@ test("/spec new opens a garden on the right", async () => {
   app.input.type("/spec new Reliable cancellation\r");
   await until(() => app.screen().includes("Reliable cancellation"), "the garden");
   // The stages are there from the first moment, so you know where you are.
-  expect(app.screen()).toContain("intent");
-  expect(app.screen()).toContain("verify");
+  expect(app.screen()).toContain("design");
+  expect(app.screen()).toContain("done");
   await quit(app);
 });
 
 test("ctrl-g hides the garden and brings it back", async () => {
   const app = await start(reply("x"), { rows: 20, cols: 130 });
   app.input.type("/spec new Some work\r");
-  // "verify" only ever appears in the garden; the title also sits in the
+  // "done" only ever appears in the garden; the title also sits in the
   // command the user just typed, so it cannot tell the column apart.
-  await until(() => app.screen().includes("verify"), "the garden");
+  await until(() => app.screen().includes("done"), "the garden");
 
   app.input.type("\x07");
-  await until(() => !app.screen().includes("verify"), "the garden hidden");
+  await until(() => !app.screen().includes("done"), "the garden hidden");
   app.input.type("\x07");
-  await until(() => app.screen().includes("verify"), "the garden back");
+  await until(() => app.screen().includes("done"), "the garden back");
   await quit(app);
 });
 
@@ -1589,12 +1589,12 @@ test("with no spec there is no column, and the conversation has the room", async
 test("a spec survives being reopened by name", async () => {
   const app = await start(reply("x"), { rows: 20, cols: 130 });
   app.input.type("/spec new Cancellation work\r");
-  await until(() => app.screen().includes("verify"), "the garden");
+  await until(() => app.screen().includes("done"), "the garden");
   app.input.type("\x07");
-  await until(() => !app.screen().includes("verify"), "hidden");
+  await until(() => !app.screen().includes("done"), "hidden");
 
   app.input.type("/spec open cancellation-work\r");
-  await until(() => app.screen().includes("verify"), "reopened");
+  await until(() => app.screen().includes("done"), "reopened");
   await quit(app);
 });
 

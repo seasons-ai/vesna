@@ -27,7 +27,7 @@ test("the title and the count of finished work are at the top", () => {
 
 test("every stage is listed, so you always know where you are", () => {
   const out = text([]);
-  for (const stage of ["intent", "spec", "build", "verify"]) expect(out).toContain(stage);
+  for (const stage of ["design", "spec", "build", "done"]) expect(out).toContain(stage);
 });
 
 test("a finished stage is not expanded — a tree showing everything stops being read", () => {
@@ -81,7 +81,7 @@ test("a finished task lets go of its agent on screen too", () => {
 
 test("blocked work stays visible even when its stage is folded away", () => {
   const out = text([
-    { t: "stage.entered", stage: "verify" },
+    { t: "stage.entered", stage: "done" },
     { t: "task.added", id: "T1", title: "first" },
     { t: "task.added", id: "T2", title: "waiting on the first" },
     { t: "task.started", id: "T2" },

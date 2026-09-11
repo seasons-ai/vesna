@@ -140,3 +140,101 @@ test("replaying a prefix gives the state at that moment, which is what recovery 
   expect(tree(full.slice(0, 2)).tasks[0]!.state).toBe("running");
   expect(tree(full).tasks[0]!.state).toBe("done");
 });
+
+test("the stages are the five phases of the process, in order", () => {
+  expect([...STAGES]).toEqual(["design", "spec", "plan", "build", "done"]);
+});
+
+test("nothing is approved until a person says so", () => {
+  const t = tree([]);
+  expect(t.approved).toEqual({ spec: false, plan: false });
+});
+
+test("approving the spec finishes it and opens the plan", () => {
+  const t = tree([{ t: "approved", what: "spec" }]);
+  expect(t.approved.spec).toBe(true);
+  expect(t.stages.find((s) => s.stage === "spec")!.state).toBe("done");
+  expect(t.stages.find((s) => s.stage === "plan")!.state).toBe("active");
+});
+
+test("a build that starts without an approved plan is ignored, and counted", () => {
+  const t = tree([{ t: "build.started" }]);
+  expect(t.building).toBe(false);
+  expect(t.ignored).toBe(1);
+  expect(t.stages.find((s) => s.stage === "build")!.state).toBe("todo");
+});
+
+test("a build that starts on an approved plan is a build", () => {
+  const t = tree([{ t: "approved", what: "plan" }, { t: "build.started" }]);
+  expect(t.building).toBe(true);
+  expect(t.ignored).toBe(0);
+  expect(t.stages.find((s) => s.stage === "plan")!.state).toBe("done");
+  expect(t.stages.find((s) => s.stage === "build")!.state).toBe("active");
+});
+
+test("a finished build is the done stage", () => {
+  const t = tree([{ t: "approved", what: "plan" }, { t: "build.started" }, { t: "build.done" }]);
+  expect(t.building).toBe(false);
+  expect(t.stages.find((s) => s.stage === "build")!.state).toBe("done");
+  expect(t.stages.find((s) => s.stage === "done")!.state).toBe("done");
+});
+
+test("a stopped build is still the build stage, not done", () => {
+  const t = tree([
+    { t: "approved", what: "plan" },
+    { t: "build.started" },
+    { t: "build.stopped", reason: "merge conflict in T2" },
+  ]);
+  expect(t.building).toBe(false);
+  expect(t.stages.find((s) => s.stage === "build")!.state).toBe("active");
+  expect(t.stages.find((s) => s.stage === "done")!.state).toBe("todo");
+});
+
+test("the agent's classification stands until a person overrides it", () => {
+  expect(tree([{ t: "classified", shape: "bounded", by: "agent" }]).shape).toBe("bounded");
+  expect(
+    tree([
+      { t: "classified", shape: "bounded", by: "agent" },
+      { t: "classified", shape: "architectural", by: "person" },
+      { t: "classified", shape: "spike", by: "agent" },
+    ]).shape,
+  ).toBe("architectural");
+});
+
+test("between two agent classifications the heavier wins", () => {
+  expect(
+    tree([
+      { t: "classified", shape: "architectural", by: "agent" },
+      { t: "classified", shape: "spike", by: "agent" },
+    ]).shape,
+  ).toBe("architectural");
+});
+
+test("a review's open findings are the ones that block, and the latest round wins", () => {
+  const important = { severity: "important" as const, file: "a.ts", line: 3, text: "wrong" };
+  const minor = { severity: "minor" as const, file: "a.ts", text: "nit" };
+  const t = tree([
+    { t: "task.added", id: "T1", title: "one" },
+    { t: "review.done", task: "T1", round: 1, spec: "met", findings: [important, minor] },
+    { t: "review.done", task: "T1", round: 2, spec: "met", findings: [minor] },
+  ]);
+  expect(t.reviews.T1!).toEqual({ round: 2, spec: "met", open: [] });
+});
+
+test("a not-met spec is open even with no findings", () => {
+  const t = tree([
+    { t: "task.added", id: "T1", title: "one" },
+    { t: "review.done", task: "T1", round: 1, spec: "not_met", findings: [] },
+  ]);
+  expect(t.reviews.T1!.spec).toBe("not_met");
+});
+
+test("parked findings and rulings are kept in order", () => {
+  const f = { severity: "minor" as const, file: "x", text: "later" };
+  const t = tree([
+    { t: "parked", task: "T1", finding: f },
+    { t: "ruling", text: "merge per task", why: "dependents need the code" },
+  ]);
+  expect(t.parked).toEqual([{ task: "T1", finding: f }]);
+  expect(t.rulings).toEqual([{ text: "merge per task", why: "dependents need the code" }]);
+});

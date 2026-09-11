@@ -74,9 +74,7 @@ export function createPlanNodes(sink: SpecSink): NodeDef[] {
       const named = (STAGES as readonly string[]).includes(input.stage ?? "")
         ? (input.stage as Stage)
         : undefined;
-      // Recording tasks is entering the build stage. Making the model say so
-      // separately means a plan that forgets shows a count and no tasks.
-      const stage = named ?? ((input.tasks?.length ?? 0) > 0 ? "build" : undefined);
+      const stage = named;
       if (stage !== undefined) {
         sink.emit({ t: "stage.entered", stage });
         recorded += 1;
