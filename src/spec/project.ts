@@ -197,7 +197,13 @@ export function project(events: SpecEvent[]): SpecTree | null {
         // Approving is what closes a phase: the spec is done when a person
         // says so, and the next phase opens on the same keystroke.
         stageState.set(event.what, "done");
-        if (event.what === "spec") stageState.set("plan", "active");
+        // Approving the spec's output is what closes the design conversation
+        // that produced it — nothing else ever marks design done, and a
+        // finished project left showing an open first stage is a lie.
+        if (event.what === "spec") {
+          stageState.set("design", "done");
+          stageState.set("plan", "active");
+        }
         break;
 
       case "build.started":
@@ -264,6 +270,30 @@ export function project(events: SpecEvent[]): SpecTree | null {
     parked,
     rulings,
   };
+}
+
+/**
+ * The phase to tell the model it is in, derived from facts the tree already
+ * carries rather than by scanning stage states for the furthest "active" one.
+ *
+ * A scan over stage state breaks on two real traces: nothing ever marks
+ * `design` done, so a fully finished spec falls through to "design" once
+ * `build` and `done` are both `done` and nothing is left `active`; and after
+ * `build.stopped`, `build` is left `active` forever even though nothing is
+ * running. Reading `building`, `approved.plan` and `approved.spec` directly
+ * cannot go stale the same way, because those are exactly the facts a stage
+ * scan was trying to reconstruct.
+ *
+ * An approved plan with no build running — never started, or stopped — is
+ * still the plan phase: `/build` is what runs it, and after a stop a person
+ * decides next, not the loop.
+ */
+export function activeStage(tree: SpecTree): Stage {
+  if (tree.stages.find((s) => s.stage === "done")?.state === "done") return "done";
+  if (tree.building) return "build";
+  if (tree.approved.plan) return "plan"; // approved; /build pending, or stopped
+  if (tree.approved.spec) return "plan";
+  return "design";
 }
 
 /**

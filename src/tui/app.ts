@@ -33,7 +33,7 @@ import { decodeKeys, type Key } from "./keys";
 import { layout, panelWidths, type Frame, type ViewState } from "./layout";
 import { chatsPane, gardenPane } from "./panes";
 import { createSpec, listSpecs, readSpec, specPaths, specsRoot } from "../spec/store";
-import type { SpecTree, Stage } from "../spec/project";
+import { activeStage, type SpecTree } from "../spec/project";
 import type { SpecSink } from "../spec/sink";
 import { wrapAnsi } from "./wrap";
 import { spinnerFrame } from "./render";
@@ -1116,13 +1116,6 @@ function newSession(
       return { stage: activeStage(tree), specPath: paths.spec, planPath: paths.plan };
     },
   });
-}
-
-/** The furthest stage that is active, or the first that is not done. */
-function activeStage(tree: SpecTree): Stage {
-  const active = [...tree.stages].reverse().find((s) => s.state === "active");
-  if (active) return active.stage;
-  return tree.stages.find((s) => s.state !== "done")?.stage ?? "done";
 }
 
 function header(deps: AppDeps, theme: Theme, glyphs: Glyphs): string {

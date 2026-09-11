@@ -1,5 +1,5 @@
 import { test, expect } from "bun:test";
-import { project, STAGES, type SpecEvent } from "../../src/spec/project";
+import { activeStage, project, STAGES, type SpecEvent } from "../../src/spec/project";
 
 const born: SpecEvent[] = [{ t: "created", id: "abort", title: "Reliable cancellation" }];
 const tree = (events: SpecEvent[]) => project([...born, ...events])!;
@@ -157,6 +157,14 @@ test("approving the spec finishes it and opens the plan", () => {
   expect(t.stages.find((s) => s.stage === "plan")!.state).toBe("active");
 });
 
+test("approving the spec also closes the design conversation that produced it", () => {
+  // Nothing else ever marks design done: no event closes it on its own, so a
+  // finished project left showing an open first stage would be the same
+  // stale-phase bug in the garden column instead of the prompt.
+  const t = tree([{ t: "approved", what: "spec" }]);
+  expect(t.stages.find((s) => s.stage === "design")!.state).toBe("done");
+});
+
 test("a build that starts without an approved plan is ignored, and counted", () => {
   const t = tree([{ t: "build.started" }]);
   expect(t.building).toBe(false);
@@ -237,4 +245,49 @@ test("parked findings and rulings are kept in order", () => {
   ]);
   expect(t.parked).toEqual([{ task: "T1", finding: f }]);
   expect(t.rulings).toEqual([{ text: "merge per task", why: "dependents need the code" }]);
+});
+
+test("activeStage: nothing done is the design phase", () => {
+  expect(activeStage(tree([]))).toBe("design");
+});
+
+test("activeStage: an approved spec with no plan yet is the plan phase", () => {
+  expect(activeStage(tree([{ t: "approved", what: "spec" }]))).toBe("plan");
+});
+
+test("activeStage: an approved plan with no build running is still the plan phase", () => {
+  // /build is what runs an approved plan — approval alone does not start it.
+  expect(activeStage(tree([{ t: "approved", what: "spec" }, { t: "approved", what: "plan" }]))).toBe(
+    "plan",
+  );
+});
+
+test("activeStage: a running build is the build phase", () => {
+  const t = tree([{ t: "approved", what: "spec" }, { t: "approved", what: "plan" }, { t: "build.started" }]);
+  expect(activeStage(t)).toBe("build");
+});
+
+test("activeStage: a stopped build falls back to the plan phase, not build", () => {
+  // The loop is no longer running, and a person decides what happens next —
+  // the same reason a stopped build must not still say "you are not the worker".
+  const t = tree([
+    { t: "approved", what: "spec" },
+    { t: "approved", what: "plan" },
+    { t: "build.started" },
+    { t: "build.stopped", reason: "merge conflict in T2" },
+  ]);
+  expect(activeStage(t)).toBe("plan");
+});
+
+test("activeStage: everything done is the done phase, not design", () => {
+  // A scan for the furthest "active" stage falls through to design here,
+  // because nothing ever marks design done by itself and nothing is left
+  // active once build and done both are — this is the bug the ruling fixed.
+  const t = tree([
+    { t: "approved", what: "spec" },
+    { t: "approved", what: "plan" },
+    { t: "build.started" },
+    { t: "build.done" },
+  ]);
+  expect(activeStage(t)).toBe("done");
 });
