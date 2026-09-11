@@ -489,9 +489,11 @@ $ echo $?
 0
 ```
 
-`/build` in the chat prints the identical lines into the transcript and the
-garden both — it calls the same loop through the same event-to-line
-formatting, not a second copy of it.
+`/build` in the chat opens with its own line — `building N tasks — events
+appear below and in the garden` — then prints the same event lines as the
+shell command above, into the transcript and the garden both, from the same
+formatter. Only `build.started` is skipped, because that opening line already
+said as much.
 
 A review answers through **`review_verdict`**, a tool like `task_verify`:
 spec met or not, findings each with a severity, a file, and what is wrong. A
