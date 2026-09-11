@@ -58,11 +58,19 @@ jobs:
           pkg="$(node -p "require('./package.json').version")"
           cd "$(mktemp -d)"
           npm init -y >/dev/null
-          # The registry replicates reads behind writes; give it a minute.
-          for i in 1 2 3 4 5 6; do
-            npm install --silent --prefer-online "@seasons-ai/vesna@$pkg" && break
+          # The registry replicates reads behind writes, sometimes for minutes.
+          # Loud, so the reason is in the log; and an explicit failure when it
+          # never arrives, rather than a missing binary two lines later.
+          ok=0
+          for i in $(seq 1 15); do
+            if npm install --prefer-online "@seasons-ai/vesna@$pkg"; then ok=1; break; fi
+            echo "attempt $i: not replicated yet, waiting 20s"
             sleep 20
           done
+          if [ "$ok" != 1 ]; then
+            echo "@seasons-ai/vesna@$pkg did not become installable within five minutes" >&2
+            exit 1
+          fi
           ./node_modules/.bin/vesna --version | grep -qx "$pkg"
 
       - name: GitHub Release
