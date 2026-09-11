@@ -168,3 +168,21 @@ test("a malformed verdict is rejected, not stored: bad summary", async () => {
   await expect(node.run({ spec: "met", findings: [], summary: 42 }, ctx)).rejects.toThrow(/summary/);
   expect(holder.verdict).toBeUndefined();
 });
+
+test("a reviewer cannot use git's --output to write, end to end", async () => {
+  const cwd = mkdtempSync(join(tmpdir(), "vesna-review-"));
+  const { execFileSync } = await import("node:child_process");
+  const git = (...args: string[]) => execFileSync("git", args, { cwd, stdio: "ignore" });
+  git("init", "-q");
+  git("config", "user.email", "t@t");
+  git("config", "user.name", "t");
+  writeFileSync(join(cwd, "a.txt"), "before");
+  git("add", "a.txt");
+  git("commit", "-qm", "init");
+  const provider = answers([
+    { type: "tool_call", id: "c1", name: "shell", input: { command: "git diff --output=x HEAD" } },
+  ]);
+  await reviewTask({ cwd, provider, brief: "b", report: "r", diff: "d" });
+  const { existsSync } = await import("node:fs");
+  expect(existsSync(join(cwd, "x"))).toBe(false);
+});

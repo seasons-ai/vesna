@@ -209,3 +209,11 @@ test("an allow rule does not open a hole in plan mode", () => {
   const action = { ...act("write", { path: "src/a.ts" }), effect: "write" as const };
   expect(decide(action, p, cwd)).toBe("deny");
 });
+
+test("plan mode is only as read-only as the classifier: an output flag is a write", () => {
+  const p = policy({ mode: "plan" });
+  for (const command of ["git diff --output=README.md", "sed -n '1w README.md' src/a.ts", "uniq src/a.ts README.md"]) {
+    const action = { ...act("shell", { command }), effect: "write" as const };
+    expect(decide(action, p, cwd)).toBe("deny");
+  }
+});

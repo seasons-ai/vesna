@@ -8,6 +8,8 @@
  *
  * Conservative by construction. Anything not recognised asks, because a false
  * "safe" is silent and permanent while an extra question is merely annoying.
+ * The reviewer's gate turns a "no" here into a refusal rather than a question,
+ * so every "yes" below has to be one that cannot write, run or change a repo.
  */
 
 /** Commands that read and print. None of them can write without redirection. */
@@ -25,7 +27,7 @@ const READS = new Set([
   "rg",
   "ag",
   "find",
-  // sed prints unless asked to edit in place, and -i is refused below.
+  // sed prints unless its script writes; the script is checked below.
   "sed",
   "file",
   "stat",
@@ -80,18 +82,41 @@ const GIT_READS = new Set([
   "grep",
 ]);
 
-/** Flags that turn a reader into a writer. */
+/**
+ * Flags that turn a reader into a writer: an output file, an in-place edit,
+ * or a program the tool runs on its own behalf.
+ */
 const WRITING_FLAGS = new Map<string, string[]>([
   ["find", ["-delete", "-exec", "-execdir", "-ok", "-okdir", "-fprint", "-fprint0", "-fprintf", "-fls"]],
-  ["git", ["-d", "-D", "--delete", "--prune", "--force"]],
-  ["sort", ["-o", "--output"]],
+  ["sort", ["-o", "--output", "--compress-program"]],
   ["shasum", ["-w"]],
+  ["tree", ["-o"]],
+  ["yq", ["-i", "--inplace", "-s", "--split-exp"]],
+  // --pre runs a command on every file it searches.
+  ["rg", ["--pre"]],
+  ["ag", ["--pager"]],
+  ["bat", ["--pager"]],
+  // -C compiles a magic file next to the source.
+  ["file", ["-C", "--compile"]],
+  ["date", ["-s", "--set"]],
 ]);
 
-/** git subcommands, read among the ones GIT_READS allows, that still write. */
-const WRITING_SUBCOMMANDS = new Map<string, string[]>([
-  ["git", ["push", "pull", "commit", "add", "rm", "reset", "checkout", "merge", "rebase"]],
-]);
+/**
+ * git flags that write whatever the subcommand: an output file for the diff
+ * family, a pager git grep runs per hit, and the deletion forms.
+ */
+const GIT_WRITING_FLAGS = ["-d", "-D", "--delete", "--prune", "--force", "-o", "--output", "-O", "--open-files-in-pager"];
+
+/**
+ * `branch` and `tag` list when given nothing, and create, move or retarget
+ * when given a name. `remote` likewise. Each gets its own reading forms
+ * rather than a deny-list, because the default action is the write.
+ */
+const BRANCH_WRITING_FLAGS = ["-m", "-M", "-c", "-C", "-f", "-u", "-t", "--move", "--copy", "--set-upstream-to", "--unset-upstream", "--edit-description", "--track"];
+const TAG_WRITING_FLAGS = ["-a", "-s", "-u", "-m", "-F", "-f", "-e", "--annotate", "--sign", "--local-user", "--message", "--file", "--edit", "--cleanup", "--trailer", "--create-reflog"];
+/** Listing flags whose value is the next word, so that word is not a name. */
+const LISTING_VALUE_FLAGS = ["--contains", "--no-contains", "--merged", "--no-merged", "--points-at", "--sort", "--format"];
+const REMOTE_READS = new Set(["show", "get-url"]);
 
 /**
  * `git stash` alone behaves like `git stash push`: it moves working-tree
@@ -101,6 +126,12 @@ const WRITING_SUBCOMMANDS = new Map<string, string[]>([
  * is treated as the write it defaults to being.
  */
 const STASH_READS = new Set(["list", "show"]);
+
+/**
+ * uniq's second operand is its output file. These flags take the next word
+ * as a value, so that word is not an operand.
+ */
+const UNIQ_VALUE_FLAGS = ["-f", "-s", "-w", "--skip-fields", "--skip-chars", "--check-chars"];
 
 /**
  * Anything that can send output somewhere, run something else, expand into
@@ -125,7 +156,8 @@ export function isReadOnlyCommand(command: string): boolean {
 }
 
 function stageReads(stage: string): boolean {
-  const words = stage.split(/\s+/).filter((word) => word !== "");
+  const words = tokenize(stage);
+  if (words === null) return false;
   const head = words[0];
   if (head === undefined) return false;
 
@@ -135,27 +167,183 @@ function stageReads(stage: string): boolean {
 
   const rest = words.slice(1);
 
-  if (head === "git") {
-    const subcommand = rest.find((word) => !word.startsWith("-"));
-    if (subcommand === undefined || !GIT_READS.has(subcommand)) return false;
-    const after = rest.slice(rest.indexOf(subcommand) + 1).find((word) => !word.startsWith("-"));
-    if (subcommand === "stash") {
-      if (after === undefined || !STASH_READS.has(after)) return false;
-    } else if (WRITING_SUBCOMMANDS.get(subcommand)?.includes(after ?? "")) {
-      return false;
-    }
-  }
+  if (head === "git") return gitReads(rest);
 
   const banned = WRITING_FLAGS.get(head) ?? [];
   if (rest.some((word) => banned.some((flag) => matchesFlag(word, flag)))) return false;
 
-  // In-place editing turns sed from a reader into a writer, whatever form the
-  // flag takes: a bare -i, a backup suffix glued on (-i.bak or -i''), -i
-  // buried in a combined short-flag cluster (-ni), or the long spelling.
-  if (head === "sed" && rest.some(isSedInPlaceFlag)) return false;
+  if (head === "sed") return sedReads(rest);
+  if (head === "uniq") return operandsOf(rest, UNIQ_VALUE_FLAGS).length <= 1;
+  // `hostname <name>` sets it.
+  if (head === "hostname") return operandsOf(rest, []).length === 0;
 
   return true;
 }
+
+/**
+ * The words the shell would hand the command. Quotes group and are stripped,
+ * so `'-o'` is the flag `-o` and `'w out'` is one word. Backslashes and every
+ * expansion are refused before this runs, so a quote is the only thing to
+ * handle; an unterminated one is not a command that can be reasoned about.
+ */
+function tokenize(stage: string): string[] | null {
+  const words: string[] = [];
+  let current = "";
+  let inWord = false;
+  let quote: "'" | '"' | null = null;
+  for (const char of stage) {
+    if (quote !== null) {
+      if (char === quote) quote = null;
+      else current += char;
+    } else if (char === "'" || char === '"') {
+      quote = char;
+      inWord = true;
+    } else if (/\s/.test(char)) {
+      if (inWord) words.push(current);
+      current = "";
+      inWord = false;
+    } else {
+      current += char;
+      inWord = true;
+    }
+  }
+  if (quote !== null) return null;
+  if (inWord) words.push(current);
+  return words;
+}
+
+function gitReads(rest: string[]): boolean {
+  const index = rest.findIndex((word) => !word.startsWith("-"));
+  if (index === -1) return false;
+
+  // Global options sit before the subcommand and reach into how it runs:
+  // `-c diff.external=<program>` makes `git diff` execute the program, `-p`
+  // forces a pager, `--exec-path` chooses where helpers come from. Only
+  // `--no-pager` is harmless enough to keep.
+  if (rest.slice(0, index).some((word) => word !== "--no-pager")) return false;
+
+  const subcommand = rest[index]!;
+  if (!GIT_READS.has(subcommand)) return false;
+  const args = rest.slice(index + 1);
+
+  if (args.some((word) => GIT_WRITING_FLAGS.some((flag) => matchesFlag(word, flag)))) return false;
+
+  switch (subcommand) {
+    case "stash":
+      return STASH_READS.has(operandsOf(args, [])[0] ?? "");
+    case "branch":
+    case "tag": {
+      const banned = subcommand === "branch" ? BRANCH_WRITING_FLAGS : TAG_WRITING_FLAGS;
+      if (args.some((word) => banned.some((flag) => matchesFlag(word, flag)))) return false;
+      // A name creates; a pattern under --list only filters.
+      const lists = args.includes("--list") || args.includes("-l");
+      return lists || operandsOf(args, LISTING_VALUE_FLAGS).length === 0;
+    }
+    case "remote": {
+      const action = operandsOf(args, [])[0];
+      return action === undefined || REMOTE_READS.has(action);
+    }
+    default:
+      return true;
+  }
+}
+
+/**
+ * The words that are neither a flag nor the value of a flag in `valueFlags`
+ * (matched exactly; the `=` form carries its value in the same word). A lone
+ * `-` is stdin, which is an operand. `--` ends the flags.
+ */
+function operandsOf(args: string[], valueFlags: string[]): string[] {
+  const operands: string[] = [];
+  let flagsEnded = false;
+  for (let i = 0; i < args.length; i += 1) {
+    const word = args[i]!;
+    if (flagsEnded || word === "-" || !word.startsWith("-")) {
+      operands.push(word);
+    } else if (word === "--") {
+      flagsEnded = true;
+    } else if (valueFlags.includes(word)) {
+      i += 1;
+    }
+  }
+  return operands;
+}
+
+/**
+ * sed reads only when every script it is given is one of a small set of
+ * commands that print, delete, substitute or transliterate. The `w` command
+ * and the `w` flag of `s` write a file, `e` runs a command, and a script in
+ * a file (-f) cannot be seen at all. In-place editing (-i) is a write
+ * whatever the script.
+ *
+ * `;`, `{`, newlines and backslashes are refused before this runs, so each
+ * script is a single command with at most an address in front of it, and
+ * nothing in it is escaped.
+ */
+function sedReads(rest: string[]): boolean {
+  const scripts: string[] = [];
+  let firstOperand: string | undefined;
+  let flagsEnded = false;
+
+  for (let i = 0; i < rest.length; i += 1) {
+    const word = rest[i]!;
+    if (flagsEnded || word === "-" || !word.startsWith("-")) {
+      firstOperand ??= word;
+      continue;
+    }
+    if (word === "--") {
+      flagsEnded = true;
+      continue;
+    }
+    if (word.startsWith("--")) {
+      const equals = word.indexOf("=");
+      const name = equals === -1 ? word : word.slice(0, equals);
+      const glued = equals === -1 ? undefined : word.slice(equals + 1);
+      if (name === "--in-place" || name === "--file") return false;
+      if (name === "--expression") {
+        const script = glued ?? rest[(i += 1)];
+        if (script === undefined) return false;
+        scripts.push(script);
+      } else if (name === "--line-length" && glued === undefined) {
+        i += 1;
+      }
+      continue;
+    }
+    // A short-flag cluster: letters until one that takes a value, whose
+    // value is the rest of the cluster or, when that is empty, the next word.
+    const cluster = word.slice(1);
+    for (let j = 0; j < cluster.length; j += 1) {
+      const letter = cluster[j]!;
+      if (letter === "i" || letter === "f") return false;
+      if (letter === "e" || letter === "l") {
+        const tail = cluster.slice(j + 1);
+        const value = tail !== "" ? tail : rest[(i += 1)];
+        if (value === undefined) return false;
+        if (letter === "e") scripts.push(value);
+        break;
+      }
+    }
+  }
+
+  if (scripts.length === 0) {
+    if (firstOperand === undefined) return false;
+    scripts.push(firstOperand);
+  }
+  return scripts.every((script) => SED_READING_SCRIPT.test(script));
+}
+
+/** An address: a line, a step, or a regex — nothing escaped, so no `/` inside. */
+const SED_ADDRESS = String.raw`(?:\d+(?:~\d+)?|/[^/]*/[IM]*)`;
+const SED_ADDRESS2 = String.raw`(?:\d+|/[^/]*/[IM]*|[+~]\d+)`;
+/**
+ * The commands that only print, drop, substitute or transliterate. `s` and
+ * `y` take a delimiter of their own choosing, matched by back-reference; the
+ * flags `s` may carry exclude `w` and `e`. `a`, `i` and `c` only emit text.
+ */
+const SED_COMMAND = String.raw`(?:[pPdDnNgGhHxzF=]|[qQl]\s*\d*|[aic]\s+.*|s(.)(?:(?!\1).)*\1(?:(?!\1).)*\1[gpiImM0-9]*|y(.)(?:(?!\2).)*\2(?:(?!\2).)*\2)`;
+const SED_READING_SCRIPT = new RegExp(
+  String.raw`^\s*(?:${SED_ADDRESS}(?:\s*,\s*${SED_ADDRESS2})?\s*!?\s*)?${SED_COMMAND}\s*$`,
+);
 
 /**
  * Whether `word` is the given writing flag — matched exactly, as a long
@@ -166,13 +354,4 @@ function matchesFlag(word: string, flag: string): boolean {
   if (word === flag) return true;
   if (flag.startsWith("--")) return word.startsWith(`${flag}=`);
   return word.startsWith(flag);
-}
-
-function isSedInPlaceFlag(word: string): boolean {
-  if (word.startsWith("--in-place")) return true;
-  if (!word.startsWith("-") || word.startsWith("--")) return false;
-  // The short-flag cluster is the run of letters right after the dash; a
-  // suffix like the ".bak" in -i.bak, or the '' in -i'', ends it.
-  const cluster = word.slice(1).match(/^[A-Za-z]*/)?.[0] ?? "";
-  return cluster.includes("i");
 }
