@@ -52,7 +52,7 @@ test("/approve is a command", () => {
 });
 
 test("approving the spec names what was approved", () => {
-  expect(approveOutcome("spec", open)).toEqual({
+  expect(approveOutcome("spec", open, true)).toEqual({
     kind: "approved",
     what: "spec",
     message: "approved: spec — the plan can be written now",
@@ -60,7 +60,7 @@ test("approving the spec names what was approved", () => {
 });
 
 test("approving the plan says what it unlocks", () => {
-  expect(approveOutcome("plan", open)).toEqual({
+  expect(approveOutcome("plan", open, true)).toEqual({
     kind: "approved",
     what: "plan",
     message: "approved: plan — /build will run it",
@@ -68,15 +68,22 @@ test("approving the plan says what it unlocks", () => {
 });
 
 test("approving with no spec open is refused", () => {
-  expect(approveOutcome("plan", null)).toEqual({
+  expect(approveOutcome("plan", null, true)).toEqual({
     kind: "refused",
     message: "nothing to approve — no spec is open",
   });
 });
 
 test("approving something that is not spec or plan is refused, naming both", () => {
-  expect(approveOutcome("everything", open)).toEqual({
+  expect(approveOutcome("everything", open, true)).toEqual({
     kind: "refused",
     message: 'approve what? "spec" or "plan"',
+  });
+});
+
+test("approving with nowhere to write it says so, not \"approved\" in a different tone", () => {
+  expect(approveOutcome("plan", open, false)).toEqual({
+    kind: "refused",
+    message: "cannot approve — nothing is recording this conversation",
   });
 });

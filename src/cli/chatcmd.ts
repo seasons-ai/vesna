@@ -77,9 +77,24 @@ export type ApproveOutcome =
 /**
  * The one event no tool can emit. A person typed this; that is the whole
  * meaning of it, so the wording says what the keystroke unlocked.
+ *
+ * `canWrite` is whether there is anywhere to put the event — a `SpecSink`
+ * wired up. Without one, saying "approved" would announce an effect that
+ * never happened: nothing was written, so the refusal has to say so in its
+ * own words rather than reuse the "approved" wording in a different tone.
  */
-export function approveOutcome(argument: string, tree: SpecTree | null): ApproveOutcome {
+export function approveOutcome(
+  argument: string,
+  tree: SpecTree | null,
+  canWrite: boolean,
+): ApproveOutcome {
   if (tree === null) return { kind: "refused", message: "nothing to approve — no spec is open" };
+  if (!canWrite) {
+    return {
+      kind: "refused",
+      message: "cannot approve — nothing is recording this conversation",
+    };
+  }
   const what = argument.trim();
   if (what === "spec") {
     return { kind: "approved", what, message: "approved: spec — the plan can be written now" };

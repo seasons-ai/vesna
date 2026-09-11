@@ -624,7 +624,7 @@ export async function runApp(deps: AppDeps, io: AppIo): Promise<number> {
         }
 
         if (input.name === "approve") {
-          const outcome = approveOutcome(input.argument, spec);
+          const outcome = approveOutcome(input.argument, spec, deps.sink !== undefined);
           if (outcome.kind === "approved" && deps.sink !== undefined) {
             deps.sink.emit({ t: "approved", what: outcome.what });
             refreshSpec();

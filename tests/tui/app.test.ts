@@ -1633,6 +1633,16 @@ test("/approve plan writes the approval to the log, and nothing else can", async
   await quit(app);
 });
 
+test("/approve with no sink refuses honestly instead of claiming an effect it did not have", async () => {
+  const app = await start(reply("x"), { rows: 24, cols: 100 });
+  app.input.type("/spec new gate\r");
+  await until(() => app.screen().includes("gate"), "the spec");
+  app.input.type("/approve plan\r");
+  await until(() => /cannot approve/.test(app.screen()), "the refusal");
+  expect(app.screen()).not.toContain("approved: plan");
+  await quit(app);
+});
+
 test("both columns can be open at once, on their own sides", async () => {
   const store = await mkdtemp(join(tmpdir(), "vesna-both-"));
   const base = await deps(reply("x"));
