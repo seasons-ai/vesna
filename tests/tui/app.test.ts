@@ -18,7 +18,7 @@ import { readSettings, settingsPath, writeSettings } from "../../src/cli/setting
 import { listSessions, openSession, readSession } from "../../src/store/sessions";
 import { createPlanNodes } from "../../src/nodes/plan";
 import { createSink } from "../../src/spec/sink";
-import { specsRoot } from "../../src/spec/store";
+import { readEvents, specsRoot } from "../../src/spec/store";
 
 /**
  * A terminal that keeps the visible rows, by applying the same move-and-clear
@@ -1617,6 +1617,19 @@ test("creating the same spec twice is refused, not silently appended to", async 
   await until(() => app.screen().includes("same name"), "the first");
   app.input.type("/spec new same name\r");
   await until(() => /already exists/.test(app.screen()), "the refusal");
+  await quit(app);
+});
+
+test("/approve plan writes the approval to the log, and nothing else can", async () => {
+  const base = await deps(reply("x"));
+  const sink = createSink(specsRoot(base.root));
+  const app = await start(reply("x"), { rows: 24, cols: 100 }, { ...base, sink });
+  app.input.type("/spec new gate\r");
+  await until(() => app.screen().includes("gate"), "the spec");
+  app.input.type("/approve plan\r");
+  await until(() => app.screen().includes("approved: plan"), "the approval");
+  const events = readEvents(specsRoot(base.root), "gate");
+  expect(events.some((e) => e.t === "approved" && e.what === "plan")).toBe(true);
   await quit(app);
 });
 

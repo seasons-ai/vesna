@@ -1,4 +1,5 @@
 import { PRESETS, findPreset, needsAddress, needsOauth, type Preset } from "../providers/catalog";
+import type { Approvable, SpecTree } from "../spec/project";
 
 export interface ChatCommand {
   name: string;
@@ -9,6 +10,7 @@ export const CHAT_COMMANDS: ChatCommand[] = [
   { name: "cost", help: "tokens and cost so far" },
   { name: "mode", help: "plan, ask or auto (shift-tab cycles)" },
   { name: "spec", help: "list specs, /spec new <name>, /spec open <slug>" },
+  { name: "approve", help: "approve the spec or the plan: /approve spec, /approve plan" },
   { name: "chats", help: "show or hide the conversations column (ctrl-b)" },
   { name: "history", help: "conversations from this folder: /history [all]" },
   { name: "resume", help: "reopen one: /resume 2" },
@@ -66,6 +68,26 @@ export function parseChatInput(line: string): ChatInput {
     return { kind: "unknown", name };
   }
   return { kind: "command", name, argument };
+}
+
+export type ApproveOutcome =
+  | { kind: "approved"; what: Approvable; message: string }
+  | { kind: "refused"; message: string };
+
+/**
+ * The one event no tool can emit. A person typed this; that is the whole
+ * meaning of it, so the wording says what the keystroke unlocked.
+ */
+export function approveOutcome(argument: string, tree: SpecTree | null): ApproveOutcome {
+  if (tree === null) return { kind: "refused", message: "nothing to approve — no spec is open" };
+  const what = argument.trim();
+  if (what === "spec") {
+    return { kind: "approved", what, message: "approved: spec — the plan can be written now" };
+  }
+  if (what === "plan") {
+    return { kind: "approved", what, message: "approved: plan — /build will run it" };
+  }
+  return { kind: "refused", message: 'approve what? "spec" or "plan"' };
 }
 
 /** One line per catalog entry: id, where its credential comes from, label. */

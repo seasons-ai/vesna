@@ -1,6 +1,7 @@
 import { homedir } from "node:os";
 import {
   CHAT_COMMANDS,
+  approveOutcome,
   describeHeader,
   describeModels,
   describeProviders,
@@ -617,6 +618,20 @@ export async function runApp(deps: AppDeps, io: AppIo): Promise<number> {
 
         if (input.name === "spec") {
           specCommand(input.argument);
+          transcript.endTurn();
+          draw();
+          continue;
+        }
+
+        if (input.name === "approve") {
+          const outcome = approveOutcome(input.argument, spec);
+          if (outcome.kind === "approved" && deps.sink !== undefined) {
+            deps.sink.emit({ t: "approved", what: outcome.what });
+            refreshSpec();
+            transcript.notice(outcome.message, "ok");
+          } else {
+            transcript.notice(outcome.message, "warn");
+          }
           transcript.endTurn();
           draw();
           continue;

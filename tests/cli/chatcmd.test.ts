@@ -1,5 +1,6 @@
 import { test, expect } from "bun:test";
-import { CHAT_COMMANDS, parseChatInput } from "../../src/cli/chatcmd";
+import { CHAT_COMMANDS, approveOutcome, parseChatInput } from "../../src/cli/chatcmd";
+import { project } from "../../src/spec/project";
 
 test("plain text is a message, not a command", () => {
   expect(parseChatInput("read src/a.ts")).toEqual({ kind: "message", text: "read src/a.ts" });
@@ -42,4 +43,40 @@ test("the help listing covers exit and provider, the two that matter", () => {
   const names = CHAT_COMMANDS.map((c) => c.name);
   expect(names).toContain("exit");
   expect(names).toContain("provider");
+});
+
+const open = project([{ t: "created", id: "x", title: "X" }]);
+
+test("/approve is a command", () => {
+  expect(CHAT_COMMANDS.map((c) => c.name)).toContain("approve");
+});
+
+test("approving the spec names what was approved", () => {
+  expect(approveOutcome("spec", open)).toEqual({
+    kind: "approved",
+    what: "spec",
+    message: "approved: spec — the plan can be written now",
+  });
+});
+
+test("approving the plan says what it unlocks", () => {
+  expect(approveOutcome("plan", open)).toEqual({
+    kind: "approved",
+    what: "plan",
+    message: "approved: plan — /build will run it",
+  });
+});
+
+test("approving with no spec open is refused", () => {
+  expect(approveOutcome("plan", null)).toEqual({
+    kind: "refused",
+    message: "nothing to approve — no spec is open",
+  });
+});
+
+test("approving something that is not spec or plan is refused, naming both", () => {
+  expect(approveOutcome("everything", open)).toEqual({
+    kind: "refused",
+    message: 'approve what? "spec" or "plan"',
+  });
 });
