@@ -1,8 +1,8 @@
 # Roadmap
 
 What exists, what is being built, and what comes after — in that order, with
-what would count as done. Dated design documents in `docs/superpowers/specs/`
-record the decisions; this file records the state.
+what would count as done. The decisions behind each piece are in the commit
+messages that made it; this file records the state.
 
 ## Shipped
 

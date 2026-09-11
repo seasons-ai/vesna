@@ -729,5 +729,4 @@ adapters touch the network, and nothing in the suite does.
 
 ## Licence
 
-[Apache License 2.0](LICENSE). Contributions are welcome — see
-[CONTRIBUTING.md](CONTRIBUTING.md); writing a node is the shortest path in.
+[MIT](LICENSE).
