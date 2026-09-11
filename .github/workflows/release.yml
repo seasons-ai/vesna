@@ -11,6 +11,7 @@ on:
 permissions:
   contents: write   # the GitHub Release
   id-token: write   # npm provenance
+  packages: write   # the copy on GitHub Packages
 
 jobs:
   verify:
@@ -72,6 +73,16 @@ jobs:
             exit 1
           fi
           ./node_modules/.bin/vesna --version | grep -qx "$pkg"
+
+      - name: Publish a copy to GitHub Packages
+        # Not where anyone installs from — npmjs is — but it puts the package
+        # in the repository's own sidebar, and it costs no second secret.
+        # GitHub Packages does not take --provenance.
+        run: |
+          echo "//npm.pkg.github.com/:_authToken=${GITHUB_TOKEN}" > "$RUNNER_TEMP/.npmrc-ghp"
+          NPM_CONFIG_USERCONFIG="$RUNNER_TEMP/.npmrc-ghp" npm publish --registry=https://npm.pkg.github.com --access public
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: GitHub Release
         uses: softprops/action-gh-release@v2
