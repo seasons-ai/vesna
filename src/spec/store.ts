@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { appendFileSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { project, type SpecEvent, type SpecTree } from "./project";
 
 /**
@@ -50,8 +50,50 @@ export function slugify(name: string): string {
   return kept === "" ? `spec-${digest}` : `${kept}-${digest}`;
 }
 
+/**
+ * Where a spec's files are. The folder is the process's workspace: the log,
+ * the design, the plan, one brief per task, the workers' reports and the
+ * reviews, all committed beside the code they describe. The hidden directory
+ * that held these before was destroyed by a cleanup step at least once.
+ */
+export interface SpecPaths {
+  dir: string;
+  events: string;
+  spec: string;
+  plan: string;
+  briefs: string;
+  reports: string;
+  reviews: string;
+}
+
+export function specPaths(root: string, slug: string): SpecPaths {
+  const dir = join(root, slug);
+  return {
+    dir,
+    events: join(dir, "events.jsonl"),
+    spec: join(dir, "spec.md"),
+    plan: join(dir, "plan.md"),
+    briefs: join(dir, "briefs"),
+    reports: join(dir, "reports"),
+    reviews: join(dir, "reviews"),
+  };
+}
+
+export function writeSpecFile(path: string, text: string): void {
+  mkdirSync(dirname(path), { recursive: true });
+  writeFileSync(path, text);
+}
+
+export function readSpecFile(path: string): string | null {
+  try {
+    return readFileSync(path, "utf8");
+  } catch {
+    return null;
+  }
+}
+
 function eventsPath(root: string, slug: string): string {
-  return join(root, slug, "events.jsonl");
+  return specPaths(root, slug).events;
 }
 
 export function createSpec(root: string, name: string): SpecSummary {

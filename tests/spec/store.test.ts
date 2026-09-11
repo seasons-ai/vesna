@@ -101,3 +101,26 @@ test("the same name always gives the same directory, or reopening would break", 
 test("a latin name is untouched, because those already read well", () => {
   expect(slugify("Reliable cancellation")).toBe("reliable-cancellation");
 });
+
+import { mkdtempSync, existsSync } from "node:fs";
+import { specPaths, writeSpecFile, readSpecFile } from "../../src/spec/store";
+
+test("a spec's files all live in its own folder", () => {
+  const p = specPaths("/repo/.vesna/specs", "cancel");
+  expect(p.dir).toBe("/repo/.vesna/specs/cancel");
+  expect(p.events).toBe("/repo/.vesna/specs/cancel/events.jsonl");
+  expect(p.spec).toBe("/repo/.vesna/specs/cancel/spec.md");
+  expect(p.plan).toBe("/repo/.vesna/specs/cancel/plan.md");
+  expect(p.briefs).toBe("/repo/.vesna/specs/cancel/briefs");
+  expect(p.reports).toBe("/repo/.vesna/specs/cancel/reports");
+  expect(p.reviews).toBe("/repo/.vesna/specs/cancel/reviews");
+});
+
+test("writing a spec file makes its folder, and reading it back is exact", () => {
+  const root = mkdtempSync(join(tmpdir(), "vesna-specfile-"));
+  const p = specPaths(root, "x");
+  expect(readSpecFile(p.spec)).toBeNull();
+  writeSpecFile(join(p.briefs, "T1.md"), "# T1\n");
+  expect(existsSync(p.briefs)).toBe(true);
+  expect(readSpecFile(join(p.briefs, "T1.md"))).toBe("# T1\n");
+});
