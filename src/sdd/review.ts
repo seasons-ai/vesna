@@ -154,8 +154,12 @@ export function reviewPrompt(request: ReviewRequest): string {
     "",
   ];
   if (request.findings !== undefined) {
+    // The tool has no "addressed" field, so the answer is carried by what
+    // is left out: a finding that is not reported again is one the fix
+    // addressed. Saying so is what stops a reviewer re-listing every
+    // finding it was handed, which reads as none of them fixed.
     lines.push(
-      "This is a scoped re-review of a fix. For each finding below, decide whether it is ADDRESSED or NOT ADDRESSED in the diff, and report new breakage the fix introduced. Do not re-review the rest of the task.",
+      "This is a scoped re-review of a fix. The findings below are what the fix was meant to address. Report only findings that are NOT addressed, plus any new breakage; leave addressed findings out entirely — an empty findings list means all were addressed. Do not re-review the rest of the task.",
       "",
       ...request.findings.map((f) => `- [${f.severity}] ${f.file}${f.line ? `:${f.line}` : ""} — ${f.text}`),
       "",

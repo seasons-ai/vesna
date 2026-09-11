@@ -98,6 +98,23 @@ test("a re-review is told which findings it is checking", () => {
   expect(text).toMatch(/ADDRESSED|addressed/);
 });
 
+test("a re-review is told how to say \"addressed\" through a tool that has no such field", () => {
+  const text = reviewPrompt({
+    cwd: "/x", provider: {} as any, brief: "b", report: "r", diff: "d",
+    findings: [{ severity: "important", file: "a.ts", text: "the one to check" }],
+  });
+  expect(text).toContain(
+    "Report only findings that are NOT addressed, plus any new breakage; leave addressed findings out entirely — an empty findings list means all were addressed.",
+  );
+  // The old wording asked for a verdict per finding the tool cannot carry.
+  expect(text).not.toMatch(/ADDRESSED or NOT ADDRESSED/);
+});
+
+test("a first review is not told about addressed findings, because there are none", () => {
+  const text = reviewPrompt({ cwd: "/x", provider: {} as any, brief: "b", report: "r", diff: "d" });
+  expect(text).not.toContain("addressed");
+});
+
 test("a reviewer cannot use sed's in-place edit to write, end to end", async () => {
   const cwd = mkdtempSync(join(tmpdir(), "vesna-review-"));
   writeFileSync(join(cwd, "a.txt"), "before");
