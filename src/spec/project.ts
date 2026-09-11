@@ -146,6 +146,13 @@ export function project(events: SpecEvent[]): SpecTree | null {
           state: "todo",
           dependsOn: event.dependsOn ?? [],
         });
+        // The approval was of the plan as it stood. A plan with a task the
+        // person never read is a different plan, and /build must not run
+        // it on the strength of the old approval.
+        if (approved.plan) {
+          approved.plan = false;
+          stageState.set("plan", "active");
+        }
         break;
 
       case "task.started": {

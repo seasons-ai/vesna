@@ -187,6 +187,42 @@ test("a finished build is the done stage", () => {
   expect(t.stages.find((s) => s.stage === "done")!.state).toBe("done");
 });
 
+test("a task added after the plan was approved withdraws the approval", () => {
+  // The approval was of the plan as it stood; a plan with one more task is
+  // a different plan, and /build must not run a task nobody read.
+  const t = tree([
+    { t: "task.added", id: "T1", title: "a" },
+    { t: "approved", what: "spec" },
+    { t: "approved", what: "plan" },
+    { t: "task.added", id: "T4", title: "d" },
+  ]);
+  expect(t.approved.plan).toBe(false);
+  expect(t.approved.spec).toBe(true);
+  expect(t.stages.find((s) => s.stage === "plan")!.state).toBe("active");
+  expect(activeStage(t)).toBe("plan");
+});
+
+test("a build that starts after the plan changed is ignored, like any unapproved build", () => {
+  const t = tree([
+    { t: "task.added", id: "T1", title: "a" },
+    { t: "approved", what: "plan" },
+    { t: "task.added", id: "T4", title: "d" },
+    { t: "build.started" },
+  ]);
+  expect(t.building).toBe(false);
+  expect(t.ignored).toBe(1);
+});
+
+test("approving the plan again after a change restores it", () => {
+  const t = tree([
+    { t: "task.added", id: "T1", title: "a" },
+    { t: "approved", what: "plan" },
+    { t: "task.added", id: "T4", title: "d" },
+    { t: "approved", what: "plan" },
+  ]);
+  expect(t.approved.plan).toBe(true);
+});
+
 test("a stopped build is still the build stage, not done", () => {
   const t = tree([
     { t: "approved", what: "plan" },

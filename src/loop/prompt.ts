@@ -26,7 +26,7 @@ export interface PromptContext {
    * Which phase of the process the open spec is in, when one is open, and
    * the shape the log already records for it, when it records one.
    */
-  phase?: { stage: Stage; specPath: string; planPath: string; shape?: Shape };
+  phase?: { stage: Stage; specPath: string; planPath: string; shape?: Shape; planApproved?: boolean };
 }
 
 export function systemPrompt(context: PromptContext): string {
@@ -130,6 +130,15 @@ export function phaseSection(phase: NonNullable<PromptContext["phase"]>): string
         `Write the design to \`${phase.specPath}\` with the write tool: the problem, the decisions with their reasons, what is out of scope, and how it will be tested. Then stop and ask the person to read it. They approve it with \`/approve spec\`; you cannot.`,
       ].join("\n");
     case "plan":
+      // An approved plan is still the plan phase until /build runs it, but
+      // the instruction changes: nothing to write, and a change withdraws
+      // the approval — the log clears it on the next `task.added`.
+      if (phase.planApproved === true) {
+        return [
+          "## Phase: plan",
+          `The plan is approved: \`/build\` runs it, and only the person can start that. Do not rewrite \`${phase.planPath}\` or call \`plan\` unless the person asks for a change; any change to the plan withdraws the approval and needs \`/approve plan\` again.`,
+        ].join("\n");
+      }
       return [
         "## Phase: plan",
         `Write the plan to \`${phase.planPath}\`: one section per task, headed exactly \`### Task 1: <title>\`, \`### Task 2: <title>\` and so on. Each task is the smallest unit with its own test cycle, and its section contains everything a worker with no other context needs — files, the exact test code, the exact implementation, the commit message. Then call \`plan\` with the same tasks, ids \`T1\`, \`T2\` ... matching the headings, and their dependencies. Then stop. The person approves with \`/approve plan\`; you cannot, and \`/build\` will not run an unapproved plan.`,

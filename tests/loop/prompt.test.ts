@@ -141,6 +141,15 @@ test("in spec, the prompt names the file to write and the command that approves 
   expect(text).toContain("/approve spec");
 });
 
+test("in plan, once approved, the prompt says so and that any change needs /approve plan again", () => {
+  const text = phaseSection({ ...phase("plan"), planApproved: true });
+  expect(text).toContain("The plan is approved");
+  expect(text).toContain("/build");
+  expect(text).toContain("`/approve plan` again");
+  expect(text).not.toContain("Write the plan");
+  expect(phaseSection(phase("plan"))).toContain("Write the plan");
+});
+
 test("in plan, the prompt names plan.md, the heading shape, and the ids the tasks must use", () => {
   const text = phaseSection(phase("plan"));
   expect(text).toContain("/r/.vesna/specs/x/plan.md");

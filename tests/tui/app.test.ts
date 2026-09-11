@@ -1628,6 +1628,14 @@ test("the model is told it is in the spec phase once spec.md exists and nobody h
   app.input.type("third\r");
   await until(() => systems.length === 3, "the third turn");
   expect(systems[2]).toContain("## Phase: plan");
+  expect(systems[2]).toContain("Write the plan");
+
+  app.input.type("/approve plan\r");
+  await until(() => app.screen().includes("approved: plan"), "the plan approval");
+  app.input.type("fourth\r");
+  await until(() => systems.length === 4, "the fourth turn");
+  expect(systems[3]).toContain("The plan is approved");
+  expect(systems[3]).toContain("`/approve plan` again");
   await quit(app);
 });
 

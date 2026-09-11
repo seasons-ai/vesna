@@ -484,6 +484,14 @@ test("the loop hands every worker the project's permit and notes, on the first b
   expect(seen.map((s) => s.call)).toEqual(["build", "resume", "build"]);
 });
 
+test("a task added after approval means the plan is not approved, so nothing is built unread", async () => {
+  const { root, specs } = setup([...approvedWithTasks, { t: "task.added", id: "T3", title: "Third" }]);
+  const f = fakes();
+  const out = await runBuild(base(root, specs, f));
+  expect(out).toEqual({ status: "could-not-start", reason: "the plan is not approved — /approve plan" });
+  expect(f.log).toEqual([]);
+});
+
 test("a stopped build marks the task in flight failed, before it says stopped", async () => {
   const { root, specs } = setup(approvedWithTasks);
   const f = fakes({
