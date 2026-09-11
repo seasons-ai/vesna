@@ -376,6 +376,18 @@ test("sed's w command and w flag write a file; e runs a command", () => {
   ]) refusedAndLeavesNothing(command);
 });
 
+test("BSD sed's -l takes no value, so an i after it in a cluster is in-place", () => {
+  // On macOS `sed -li p d f` edits f in place and leaves the backup `fp`.
+  const cwd = repo();
+  const before = readdirSync(cwd);
+  throughGate(cwd, "sed -li p d f");
+  expect(leftBehind(cwd, before)).toEqual([]);
+  expect(readFileSync(join(cwd, "f"), "utf8")).toBe("changed\n");
+  for (const command of ["sed -li p d f", "sed -nli p d f", "sed -l40i p d f"]) asks(command);
+  reads("sed -l 40 -n l file.txt");
+  reads("sed -l40 -n l file.txt");
+});
+
 test("sed's script may come from a file the classifier cannot see, so -f is refused", () => {
   asks("sed -f script.sed f");
   asks("sed --file=script.sed f");
@@ -603,7 +615,16 @@ test("git grep's pager hidden in a cluster does not get to delete the file it ma
   execFileSync("/bin/sh", ["-c", "git grep -nOrm changed"], { cwd: proof, stdio: "ignore" });
   expect(existsSync(join(proof, "f"))).toBe(false);
 
-  for (const command of ["git grep -nOrm changed", "git grep --open=rm changed", "git grep --open-files-in-pa=rm changed"]) {
+  // git's parse-options eats the leading digits of `-<num>` and keeps
+  // reading the rest of the word as short options, so `-5Orm` carries `-O`.
+  for (const command of [
+    "git grep -nOrm changed",
+    "git grep -5Orm changed",
+    "git grep -1Orm changed",
+    "git grep -5nO'rm' changed",
+    "git grep --open=rm changed",
+    "git grep --open-files-in-pa=rm changed",
+  ]) {
     throughGate(cwd, command);
     expect({ command, f: existsSync(join(cwd, "f")) }).toEqual({ command, f: true });
     asks(command);

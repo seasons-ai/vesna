@@ -314,17 +314,22 @@ function sedReads(rest: string[]): boolean {
     }
     // A short-flag cluster: letters until one that takes a value, whose
     // value is the rest of the cluster or, when that is empty, the next word.
+    // `-l` takes a value on GNU sed and none on BSD sed, where the rest of
+    // the cluster is more flags — `-li` is in-place there — so the letters
+    // after `l` are still read as flags, and only an empty tail consumes
+    // the next word.
     const cluster = word.slice(1);
     for (let j = 0; j < cluster.length; j += 1) {
       const letter = cluster[j]!;
       if (letter === "i" || letter === "f") return false;
-      if (letter === "e" || letter === "l") {
+      if (letter === "e") {
         const tail = cluster.slice(j + 1);
         const value = tail !== "" ? tail : rest[(i += 1)];
         if (value === undefined) return false;
-        if (letter === "e") scripts.push(value);
+        scripts.push(value);
         break;
       }
+      if (letter === "l" && j === cluster.length - 1 && rest[(i += 1)] === undefined) return false;
     }
   }
 
@@ -385,10 +390,12 @@ function abbreviates(name: string, flag: string): boolean {
 }
 
 /**
- * A word that a short-option parser reads letter by letter: `-` followed by
- * a letter and at least one more character. A lone `-` is stdin and `-5` is
- * a count, so neither is a cluster.
+ * A word that a short-option parser reads letter by letter: `-`, optional
+ * leading digits, a letter, and at least one more character. The digits are
+ * allowed because git's parse-options eats the count in `-5Orm` and keeps
+ * reading the rest of the word as options. A lone `-` is stdin and a word
+ * that is only digits (`-5`) is a count, so neither is a cluster.
  */
 function isCluster(word: string): boolean {
-  return word.length >= 3 && word[0] === "-" && /[A-Za-z]/.test(word[1]!);
+  return /^-\d*[A-Za-z]./.test(word);
 }
