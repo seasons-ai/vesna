@@ -1,7 +1,7 @@
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { ToolSpec } from "../providers/types";
-import type { Stage } from "../spec/project";
+import type { Shape, Stage } from "../spec/project";
 
 /**
  * Who Vesna tells the model it is.
@@ -22,8 +22,11 @@ export interface PromptContext {
   tools: ToolSpec[];
   /** Contents of .vesna/AGENTS.md, when the project has one. */
   notes?: string;
-  /** Which phase of the process the open spec is in, when one is open. */
-  phase?: { stage: Stage; specPath: string; planPath: string };
+  /**
+   * Which phase of the process the open spec is in, when one is open, and
+   * the shape the log already records for it, when it records one.
+   */
+  phase?: { stage: Stage; specPath: string; planPath: string; shape?: Shape };
 }
 
 export function systemPrompt(context: PromptContext): string {
@@ -111,9 +114,15 @@ function planningSection(tools: ToolSpec[]): string | null {
 export function phaseSection(phase: NonNullable<PromptContext["phase"]>): string {
   switch (phase.stage) {
     case "design":
+      // Once per spec, not every turn: the log carries the classification
+      // from the moment it is made, so a model told the shape does not
+      // classify again — and a person's `/classify` stands over its own.
       return [
         "## Phase: design",
-        "Before anything else, call `classify` to say what shape this work is — spike, bounded, or architectural — and why. When in doubt choose the heavier shape. Then understand the request: ask one question at a time, propose two or three approaches with a recommendation, and do not write code. A spike ends in an answer. A bounded change is designed here in the conversation and then built. An architectural change gets a written design next.",
+        phase.shape === undefined
+          ? "The log has no classification yet: before anything else, call `classify` to say what shape this work is — spike, bounded, or architectural — and why. When in doubt choose the heavier shape. The person can overrule you with `/classify <shape>`."
+          : `This work is classified as ${phase.shape}. Do not classify it again; the person changes the shape with \`/classify <shape>\` if they disagree.`,
+        "Then understand the request: ask one question at a time, propose two or three approaches with a recommendation, and do not write code. A spike ends in an answer. A bounded change is designed here in the conversation and then built. An architectural change gets a written design next.",
       ].join("\n");
     case "spec":
       return [

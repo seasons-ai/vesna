@@ -17,6 +17,7 @@ import { CODEX_BASE_URL, findPreset, type Preset } from "../../src/providers/cat
 import { readSettings, settingsPath, writeSettings } from "../../src/cli/settings";
 import { listSessions, openSession, readSession } from "../../src/store/sessions";
 import { createPlanNodes } from "../../src/nodes/plan";
+import { project } from "../../src/spec/project";
 import { createSink } from "../../src/spec/sink";
 import { appendEvent, createSpec, readEvents, specPaths, specsRoot, writeSpecFile } from "../../src/spec/store";
 import type { BuildResult } from "../../src/work/builder";
@@ -1709,6 +1710,31 @@ test("/approve plan writes the approval to the log, and nothing else can", async
   await until(() => app.screen().includes("approved: plan"), "the approval");
   const events = readEvents(specsRoot(base.root), "gate");
   expect(events.some((e) => e.t === "approved" && e.what === "plan")).toBe(true);
+  await quit(app);
+});
+
+test("/classify writes a person's classification to the log, and the garden takes the person's word", async () => {
+  const base = await deps(reply("x"));
+  const sink = createSink(specsRoot(base.root));
+  const app = await start(reply("x"), { rows: 30, cols: 120 }, { ...base, sink });
+  app.input.type("/spec new Shaped work\r");
+  await until(() => app.screen().includes("Shaped work"), "the garden");
+  sink.emit({ t: "classified", shape: "architectural", by: "agent" });
+  app.input.type("/classify bounded\r");
+  await until(() => app.screen().includes("classified: bounded"), "the classification");
+  const events = readEvents(specsRoot(base.root), sink.slug!);
+  expect(events).toContainEqual({ t: "classified", shape: "bounded", by: "person" });
+  expect(project(events)?.shape).toBe("bounded");
+  await quit(app);
+});
+
+test("/classify with no sink refuses honestly", async () => {
+  const app = await start(reply("x"), { rows: 20, cols: 100 });
+  app.input.type("/spec new Shaped work\r");
+  await until(() => app.screen().includes("Shaped work"), "the garden");
+  app.input.type("/classify bounded\r");
+  await until(() => /cannot classify/.test(app.screen()), "the refusal");
+  expect(app.screen()).not.toContain("classified: bounded");
   await quit(app);
 });
 

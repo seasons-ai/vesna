@@ -4,6 +4,7 @@ import {
   approveOutcome,
   buildFailed,
   buildStart,
+  classifyOutcome,
   parseChatInput,
   quitBlocked,
   specSwitchBlocked,
@@ -93,6 +94,43 @@ test("approving with nowhere to write it says so, not \"approved\" in a differen
   expect(approveOutcome("plan", open, false)).toEqual({
     kind: "refused",
     message: "cannot approve — nothing is recording this conversation",
+  });
+});
+
+test("/classify is a command", () => {
+  expect(CHAT_COMMANDS.map((c) => c.name)).toContain("classify");
+});
+
+test("/classify <shape> is a person's call, and says it stands over the agent's", () => {
+  for (const shape of ["spike", "bounded", "architectural"] as const) {
+    expect(classifyOutcome(shape, open, true)).toEqual({
+      kind: "classified",
+      shape,
+      message: `classified: ${shape} — your call, which stands over the agent's`,
+    });
+  }
+});
+
+test("/classify with no spec open is refused", () => {
+  expect(classifyOutcome("bounded", null, true)).toEqual({
+    kind: "refused",
+    message: "nothing to classify — no spec is open",
+  });
+});
+
+test("/classify with a shape that is not one of the three is refused, naming them", () => {
+  for (const argument of ["", "huge", "Bounded"]) {
+    expect(classifyOutcome(argument, open, true)).toEqual({
+      kind: "refused",
+      message: 'classify as what? "spike", "bounded" or "architectural"',
+    });
+  }
+});
+
+test("/classify with nowhere to write it says so", () => {
+  expect(classifyOutcome("bounded", open, false)).toEqual({
+    kind: "refused",
+    message: "cannot classify — nothing is recording this conversation",
   });
 });
 

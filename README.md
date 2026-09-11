@@ -435,14 +435,18 @@ Ask for anything and the agent calls `classify` before writing a line: a
 **spike** ends in an answer and keeps no code, a **bounded** change is
 designed in the conversation and built without a spec file, an
 **architectural** change goes through all five phases. It says why, out
-loud, and you can overrule it in your next message — the override is the
-event that counts. When it is unsure it takes the heavier shape: ceremony
-costs time, skipping it costs the review that would have caught the defect.
+loud, and you can overrule it with `/classify <shape>` — a person's
+classification is the event that counts, and no tool can write one. It
+classifies once per spec, not every turn: once the log carries a shape, the
+agent is told it rather than asked again. When it is unsure it takes the
+heavier shape: ceremony costs time, skipping it costs the review that would
+have caught the defect.
 
 ```text
 /spec                        what there is
 /spec new <name>             start one by hand
 /spec open <slug>            switch to it
+/classify <shape>            overrule the agent: spike, bounded or architectural
 /approve spec                closes design — the plan can be written
 /approve plan                closes plan — /build may run it
 /build                       run the approved plan: build, review, merge

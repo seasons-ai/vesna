@@ -125,6 +125,16 @@ test("in design, the prompt asks for classification first and forbids code", () 
   expect(text).toMatch(/do not write code|no code/i);
 });
 
+test("in design, classify is asked for once per spec: only while the log has no classification", () => {
+  const before = phaseSection(phase("design"));
+  expect(before).toContain("no classification yet");
+  expect(before).toContain("call `classify`");
+  const after = phaseSection({ ...phase("design"), shape: "bounded" });
+  expect(after).toContain("classified as bounded");
+  expect(after).not.toContain("call `classify`");
+  expect(after).toContain("/classify");
+});
+
 test("in spec, the prompt names the file to write and the command that approves it", () => {
   const text = phaseSection(phase("spec"));
   expect(text).toContain("/r/.vesna/specs/x/spec.md");

@@ -1,5 +1,6 @@
 import { PRESETS, findPreset, needsAddress, needsOauth, type Preset } from "../providers/catalog";
-import type { Approvable, SpecTree } from "../spec/project";
+import type { Approvable, Shape, SpecTree } from "../spec/project";
+import { SHAPES } from "../sdd/classify";
 
 export interface ChatCommand {
   name: string;
@@ -10,6 +11,7 @@ export const CHAT_COMMANDS: ChatCommand[] = [
   { name: "cost", help: "tokens and cost so far" },
   { name: "mode", help: "plan, ask or auto (shift-tab cycles)" },
   { name: "spec", help: "list specs, /spec new <name>, /spec open <slug>" },
+  { name: "classify", help: "overrule the shape of the work: /classify spike, bounded or architectural" },
   { name: "approve", help: "approve the spec or the plan: /approve spec, /approve plan" },
   { name: "build", help: "run the approved plan: build, review, merge, one task at a time" },
   { name: "chats", help: "show or hide the conversations column (ctrl-b)" },
@@ -104,6 +106,37 @@ export function approveOutcome(
     return { kind: "approved", what, message: "approved: plan — /build will run it" };
   }
   return { kind: "refused", message: 'approve what? "spec" or "plan"' };
+}
+
+export type ClassifyOutcome =
+  | { kind: "classified"; shape: Shape; message: string }
+  | { kind: "refused"; message: string };
+
+/**
+ * The other event only a person can write. The agent classifies with a tool
+ * and says `by: "agent"`; the reducer lets a person's classification stand
+ * over it, and this is the only way one gets written — a keystroke, not a
+ * tool. Same shape as `/approve`: no spec, nowhere to write, or a shape
+ * that is not one of the three, and the refusal says which.
+ */
+export function classifyOutcome(
+  argument: string,
+  tree: SpecTree | null,
+  canWrite: boolean,
+): ClassifyOutcome {
+  if (tree === null) return { kind: "refused", message: "nothing to classify — no spec is open" };
+  if (!canWrite) {
+    return { kind: "refused", message: "cannot classify — nothing is recording this conversation" };
+  }
+  const shape = argument.trim();
+  if (!(SHAPES as readonly string[]).includes(shape)) {
+    return { kind: "refused", message: 'classify as what? "spike", "bounded" or "architectural"' };
+  }
+  return {
+    kind: "classified",
+    shape: shape as Shape,
+    message: `classified: ${shape} — your call, which stands over the agent's`,
+  };
 }
 
 /**

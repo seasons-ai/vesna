@@ -4,6 +4,7 @@ import {
   approveOutcome,
   buildFailed,
   buildStart,
+  classifyOutcome,
   describeHeader,
   describeModels,
   describeProviders,
@@ -683,6 +684,20 @@ export async function runApp(deps: AppDeps, io: AppIo): Promise<number> {
           continue;
         }
 
+        if (input.name === "classify") {
+          const outcome = classifyOutcome(input.argument, spec, deps.sink !== undefined);
+          if (outcome.kind === "classified" && deps.sink !== undefined) {
+            deps.sink.emit({ t: "classified", shape: outcome.shape, by: "person" });
+            refreshSpec();
+            transcript.notice(outcome.message, "ok");
+          } else {
+            transcript.notice(outcome.message, "warn");
+          }
+          transcript.endTurn();
+          draw();
+          continue;
+        }
+
         if (input.name === "build") {
           const start = buildStart(spec);
           if (start.kind === "refused") {
@@ -1145,7 +1160,12 @@ function newSession(
       // Whether the design has been written is a fact about the file, not
       // the log; read it here, fresh each turn like the rest.
       const specWritten = readSpecFile(paths.spec) !== null;
-      return { stage: activeStage(tree, { specWritten }), specPath: paths.spec, planPath: paths.plan };
+      return {
+        stage: activeStage(tree, { specWritten }),
+        specPath: paths.spec,
+        planPath: paths.plan,
+        ...(tree.shape !== undefined ? { shape: tree.shape } : {}),
+      };
     },
   });
 }
