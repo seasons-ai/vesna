@@ -687,7 +687,8 @@ pull request.
 
 ## What is not built yet
 
-Named honestly, because the gap is deliberate rather than an oversight.
+Named honestly, because the gap is deliberate rather than an oversight. What
+comes next, and what would count as done, is in [docs/roadmap.md](docs/roadmap.md).
 
 - **`script` is not a sandbox. It runs model-authored code with your own
   privileges.** An earlier version of this README claimed the filesystem was
