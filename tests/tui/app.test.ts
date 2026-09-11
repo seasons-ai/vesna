@@ -1600,6 +1600,36 @@ test("a click in the conversation still copies, and does not open a chat", async
   await quit(app);
 });
 
+test("the model is told it is in the spec phase once spec.md exists and nobody has approved it", async () => {
+  const systems: string[] = [];
+  const p = provider(async (request) => {
+    systems.push(request.system ?? "");
+    return done("ok");
+  });
+  const base = await deps(p);
+  const sink = createSink(specsRoot(base.root));
+  const app = await start(p, { rows: 30, cols: 120 }, { ...base, sink });
+  app.input.type("/spec new Phased work\r");
+  await until(() => app.screen().includes("Phased work"), "the garden");
+
+  app.input.type("first\r");
+  await until(() => systems.length === 1, "the first turn");
+  expect(systems[0]).toContain("## Phase: design");
+
+  writeSpecFile(specPaths(specsRoot(base.root), sink.slug!).spec, "# Design\n");
+  app.input.type("second\r");
+  await until(() => systems.length === 2, "the second turn");
+  expect(systems[1]).toContain("## Phase: spec");
+  expect(systems[1]).toContain(specPaths(specsRoot(base.root), sink.slug!).spec);
+
+  app.input.type("/approve spec\r");
+  await until(() => app.screen().includes("approved: spec"), "the approval");
+  app.input.type("third\r");
+  await until(() => systems.length === 3, "the third turn");
+  expect(systems[2]).toContain("## Phase: plan");
+  await quit(app);
+});
+
 test("/spec new opens a garden on the right", async () => {
   const app = await start(reply("x"), { rows: 20, cols: 130 });
   expect(app.screen()).not.toContain("Reliable cancellation");

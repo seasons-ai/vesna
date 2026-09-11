@@ -251,6 +251,17 @@ test("activeStage: nothing done is the design phase", () => {
   expect(activeStage(tree([]))).toBe("design");
 });
 
+test("activeStage: a design written to spec.md but not yet approved is the spec phase", () => {
+  // The only prompt that names spec.md's path and says "stop and ask the
+  // person to read it" is the spec phase; it has to be reachable.
+  expect(activeStage(tree([]), { specWritten: true })).toBe("spec");
+  expect(activeStage(tree([{ t: "classified", shape: "architectural", by: "agent" }]), { specWritten: true })).toBe("spec");
+});
+
+test("activeStage: once the spec is approved, a written spec.md is the plan phase", () => {
+  expect(activeStage(tree([{ t: "approved", what: "spec" }]), { specWritten: true })).toBe("plan");
+});
+
 test("activeStage: an approved spec with no plan yet is the plan phase", () => {
   expect(activeStage(tree([{ t: "approved", what: "spec" }]))).toBe("plan");
 });

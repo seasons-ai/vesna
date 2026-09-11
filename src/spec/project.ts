@@ -287,12 +287,19 @@ export function project(events: SpecEvent[]): SpecTree | null {
  * An approved plan with no build running — never started, or stopped — is
  * still the plan phase: `/build` is what runs it, and after a stop a person
  * decides next, not the loop.
+ *
+ * Whether spec.md has been written is not in the log — the file is the
+ * fact — so the caller says. A written, unapproved spec is the spec phase:
+ * the one prompt that names the file and says to stop and ask the person to
+ * read it. Without that fact the phase would go straight from design to
+ * plan and that prompt could never appear.
  */
-export function activeStage(tree: SpecTree): Stage {
+export function activeStage(tree: SpecTree, facts: { specWritten: boolean } = { specWritten: false }): Stage {
   if (tree.stages.find((s) => s.stage === "done")?.state === "done") return "done";
   if (tree.building) return "build";
   if (tree.approved.plan) return "plan"; // approved; /build pending, or stopped
   if (tree.approved.spec) return "plan";
+  if (facts.specWritten) return "spec";
   return "design";
 }
 

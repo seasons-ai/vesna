@@ -33,7 +33,7 @@ import { resolveGlyphs, type Glyphs } from "./glyphs";
 import { decodeKeys, type Key } from "./keys";
 import { layout, panelWidths, type Frame, type ViewState } from "./layout";
 import { chatsPane, gardenPane } from "./panes";
-import { createSpec, listSpecs, readSpec, specPaths, specsRoot } from "../spec/store";
+import { createSpec, listSpecs, readSpec, readSpecFile, specPaths, specsRoot } from "../spec/store";
 import { activeStage, type SpecTree } from "../spec/project";
 import type { SpecSink } from "../spec/sink";
 import { wrapAnsi } from "./wrap";
@@ -1142,7 +1142,10 @@ function newSession(
       const slug = deps.sink?.slug;
       if (tree === null || slug === undefined || slug === null) return undefined;
       const paths = specPaths(specsRoot(deps.root), slug);
-      return { stage: activeStage(tree), specPath: paths.spec, planPath: paths.plan };
+      // Whether the design has been written is a fact about the file, not
+      // the log; read it here, fresh each turn like the rest.
+      const specWritten = readSpecFile(paths.spec) !== null;
+      return { stage: activeStage(tree, { specWritten }), specPath: paths.spec, planPath: paths.plan };
     },
   });
 }
