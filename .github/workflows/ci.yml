@@ -1,29 +1,24 @@
 name: ci
 
-# Runs on a push to main, when a pull request is opened or leaves draft, by
-# hand from the Actions tab or `gh workflow run ci.yml --ref <branch>`, and as
-# the first half of a release. Not on every push to a pull request branch:
-# that spends minutes on work in progress, and the person can run it when the
-# branch is worth checking. Merging still needs it green — main is protected
-# on the `check` job, so a pull request cannot land without a run.
+# Runs on a push to main, as the first half of a release, and by hand: the
+# Actions tab or `gh workflow run ci.yml --ref <branch>` for a branch here,
+# or the `ci` label on a pull request — from a fork or not — which runs it
+# on that request's code. Not on its own for a pull request: contributors
+# run the suite on their own machine and say so in the request's checklist,
+# and the maintainer spends minutes on a branch when it is worth checking.
 on:
   push:
     branches: [main]
   pull_request:
-    types: [opened, reopened, ready_for_review]
+    types: [labeled]
   workflow_dispatch:
   workflow_call:
 
-# A second push to the same branch makes the first run pointless.
-concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
-
 jobs:
   check:
-    # A draft opened as a draft is not ready to be checked; it gets its run
-    # when it is marked ready.
-    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
+    # On a pull request, only the `ci` label starts a run; any other label is
+    # not a request to spend minutes.
+    if: github.event_name != 'pull_request' || github.event.label.name == 'ci'
     # Both, because the terminal code reads the environment and spawns
     # processes, and those are exactly the places the two diverge.
     runs-on: ${{ matrix.os }}

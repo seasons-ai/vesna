@@ -28,7 +28,10 @@ bun test            # offline; anything reaching the network is a defect
 bun run typecheck
 ```
 
-Both must be green before you push. The suite is the gate, not a suggestion.
+Both must be green before you push, and the pull request template asks you
+to paste the output. CI does not run on a pull request by itself — it costs
+minutes, and a branch in progress is not yet worth them. The maintainer runs
+it on the request when it is ready to merge, by adding the `ci` label.
 
 For anything larger than a one-file fix, Vesna's own process applies: a spec,
 an approved plan, and `/build`. Ask in the issue and we will point you at it.
