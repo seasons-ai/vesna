@@ -1,14 +1,11 @@
 node_modules/
 dist/
-.vesna/traces/
-.vesna/worktrees/
-.vesna/specs/*/build.lock
+# Vesna's own working directory in this repository: config, specs, logs, worktrees.
+.vesna/
 *.log
 .DS_Store
 
 # Per-developer, not per-project: whose provider, whose learned permissions.
-.vesna/config.yaml
-.vesna/permissions.yaml
 
 # Scratch for the plan-execution skill; the record is the git history.
 .superpowers/
