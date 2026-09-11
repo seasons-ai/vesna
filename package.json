@@ -25,7 +25,7 @@
     "llm"
   ],
   "bin": {
-    "vesna": "./bin/vesna"
+    "vesna": "bin/vesna"
   },
   "files": [
     "bin",
