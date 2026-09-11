@@ -174,12 +174,15 @@ export function buildFailed(error: Error): string {
 }
 
 /**
- * Why `/spec open` refuses while a build is running.
+ * Why `/spec open` and `/spec new` refuse while a build is running.
  *
- * The build writes every event to whichever spec `deps.sink.slug` currently
- * names. Switching that slug mid-build would not stop the build — it would
- * just redirect its remaining events into a different spec's log, silently
- * mixing one piece of work's history into another's.
+ * Not because the build's events would move: `runBuild` takes the slug by
+ * value when it starts, so they keep landing in the spec it was started on
+ * whatever the sink names afterwards. It is the rest of the chat that
+ * would move — the garden, `/approve`, `/classify` and the `plan` tool
+ * would all point at the other spec while the build ran unseen, and
+ * `/build`'s "already running" check reads the open spec, so a second
+ * build could start beside the first.
  */
 export function specSwitchBlocked(): string {
   return "a build is running — wait for it to stop before switching specs";

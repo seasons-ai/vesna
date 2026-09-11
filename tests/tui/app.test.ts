@@ -1924,6 +1924,37 @@ test("leaving while a build runs is refused on every path, and allowed once it s
   expect(await app.finished).toBe(0);
 });
 
+test("/spec new refuses while a build is running, and creates nothing", async () => {
+  const base = await deps(reply("x"));
+  const sink = createSink(specsRoot(base.root));
+  const specs = specsRoot(base.root);
+  oneTaskSpec(specs, "gate");
+
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const seams = buildFakes();
+  const build = async (r: { task: string }) => {
+    await gate;
+    return seams.build(r);
+  };
+
+  const app = await start(reply("x"), { rows: 40, cols: 120 }, { ...base, sink, buildSeams: { ...seams, build } });
+  app.input.type("/spec open gate\r");
+  await until(() => app.screen().includes("spec gate"), "the spec opening");
+  app.input.type("/build\r");
+  await until(() => /T1\s+building/.test(app.screen()), "the task starting");
+  app.input.type("/spec new Something else\r");
+  await until(() => /a build is running — wait for it to stop before switching specs/.test(app.screen()), "the refusal");
+  const { listSpecs } = await import("../../src/spec/store");
+  expect(listSpecs(specs).map((s) => s.slug)).toEqual(["gate"]);
+  expect(sink.slug).toBe("gate");
+  release();
+  await until(() => /T1\s+merged/.test(app.screen()), "the build finishing, so the run ends cleanly");
+  await quit(app);
+});
+
 test("/spec open refuses while a build is running, so its events are not redirected", async () => {
   const base = await deps(reply("x"));
   const sink = createSink(specsRoot(base.root));

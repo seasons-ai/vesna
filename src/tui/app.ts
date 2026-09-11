@@ -350,6 +350,11 @@ export async function runApp(deps: AppDeps, io: AppIo): Promise<number> {
         transcript.notice("/spec new <name>", "warn");
         return;
       }
+      // Creating a spec opens it, which is a switch: see /spec open below.
+      if (spec?.building === true) {
+        transcript.notice(specSwitchBlocked(), "warn");
+        return;
+      }
       try {
         const made = createSpec(specs, name);
         openSpec(made.slug);
@@ -361,9 +366,12 @@ export async function runApp(deps: AppDeps, io: AppIo): Promise<number> {
     }
 
     if (verb === "open") {
-      // The build writes to whichever spec `deps.sink.slug` currently names.
-      // Switching that mid-build would not stop it — it would just redirect
-      // its remaining events into a different spec's log.
+      // The build keeps writing to the spec it was started on — `runBuild`
+      // took the slug by value. What a switch would move is everything
+      // else: the garden, `/approve`, `/classify` and the chat's own `plan`
+      // tool would all point at the new spec while the build's events kept
+      // landing in the old one, and `/build`'s "already running" check,
+      // which reads the open spec, would let a second build start.
       if (spec?.building === true) {
         transcript.notice(specSwitchBlocked(), "warn");
         return;
