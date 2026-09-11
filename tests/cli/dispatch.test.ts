@@ -29,25 +29,18 @@ test("an unknown first word stays an error rather than becoming a task", () => {
  * file is Vesna's own, so a typo in it must not reach a command that never
  * asks what the service is — `vesna --help` exiting 2 fails a shell script.
  */
-test("asking for help, a version or a report needs no provider", () => {
-  const dry = { dryRun: false };
-  for (const route of ["usage", "version", "error", "doctor", "flows", "traces"] as const) {
-    expect(needsProvider(route, dry)).toBe(false);
+test("asking for help or a version needs no provider", () => {
+  for (const route of ["usage", "version", "error"] as const) {
+    expect(needsProvider(route)).toBe(false);
   }
 });
 
 test("anything that reaches a model, or writes down which one, needs a provider", () => {
-  const dry = { dryRun: false };
-  for (const route of ["chat", "do", "auth", "init", "heal"] as const) {
-    expect(needsProvider(route, dry)).toBe(true);
+  for (const route of ["chat", "do", "auth", "init"] as const) {
+    expect(needsProvider(route)).toBe(true);
   }
 });
 
-test("a dry run prints a plan and calls nobody, so it needs no provider", () => {
-  expect(needsProvider("run", { dryRun: true })).toBe(false);
-  expect(needsProvider("run", { dryRun: false })).toBe(true);
-});
-
 test("onboarding is how an unusable machine file gets rewritten, so it is not blocked by one", () => {
-  expect(needsProvider("onboard", { dryRun: false })).toBe(false);
+  expect(needsProvider("onboard")).toBe(false);
 });

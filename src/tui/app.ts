@@ -1,9 +1,4 @@
-import { mkdir, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
-import { join } from "node:path";
-import { stringify as toYaml } from "yaml";
-import { applyParameters } from "../crystallize/apply";
-import { proposeFlow } from "../crystallize/propose";
 import {
   CHAT_COMMANDS,
   describeHeader,
@@ -15,9 +10,7 @@ import {
   switchFailed,
   switchOutcome,
 } from "../cli/chatcmd";
-import { describeDropped } from "../cli/dropped";
 import { EXIT } from "../cli/exit";
-import { formatParameter } from "../cli/format";
 import { readSettings, settingsPath, writeSettings } from "../cli/settings";
 import { asPreset, inspectCredential, problem, remedy, usable } from "../cli/preflight";
 import { carryHistory } from "../loop/carry";
@@ -26,7 +19,6 @@ import { findPreset } from "../providers/catalog";
 import { listModels } from "../providers/models";
 import type { Provider } from "../providers/types";
 import type { Registry } from "../registry/types";
-import type { TraceStore } from "../store/types";
 import { permits, type VesnaConfig } from "../cli/config";
 import type { ProviderHandle } from "../cli/context";
 import { createEditor, applyKey, type EditorState } from "./editor";
@@ -59,7 +51,6 @@ import { createTranscript, type Transcript } from "./transcript";
 export interface AppDeps {
   registry: Registry;
   provider: Provider;
-  store: TraceStore;
   config: VesnaConfig;
   theme: Theme;
   root: string;
@@ -985,36 +976,6 @@ async function command(
     // the model the new session is seeded with has to come from newSession
     // reading the handle, not from the stale snapshot in deps.config.
     return makeSession(carried.messages);
-  }
-
-  if (name === "crystallize") {
-    if (argument === "") {
-      transcript.notice("/crystallize needs a name", "warn");
-      return session;
-    }
-    const trace = await session.toTrace();
-    if (trace.steps.length === 0) {
-      transcript.notice("nothing to crystallise yet - no tools were used", "warn");
-      return session;
-    }
-
-    const traceId = await deps.store.saveLiveTrace(trace);
-    const proposal = proposeFlow(trace, argument);
-    // The full-screen box has no room for a question per parameter, so every
-    // proposal is applied and listed; `vesna crystallize <id>` asks one by one.
-    const accepted = new Map(proposal.parameters.map((p) => [p.suggestedName, p.suggestedName]));
-    const flow = applyParameters(proposal.flow, proposal.parameters, accepted);
-
-    await mkdir(join(deps.root, ".vesna", "flows"), { recursive: true });
-    const path = join(deps.root, ".vesna", "flows", `${flow.name}.yaml`);
-    await writeFile(path, toYaml(flow));
-
-    for (const parameter of proposal.parameters) transcript.notice(formatParameter(parameter), "muted");
-    for (const line of describeDropped(proposal.dropped, theme)) transcript.notice(line.trim(), "muted");
-    // Warm petal marks live work; cold ice marks what has been crystallised.
-    // This line is the moment the metaphor is about.
-    transcript.notice(`wrote ${path}`, "ice");
-    transcript.notice(`trace ${traceId} ${glyphs.bullet} vesna run ${flow.name} --dry-run`, "muted");
   }
 
   return session;

@@ -17,8 +17,8 @@ test("the mark and the wordmark are always there", () => {
 test("a roomy window gets the three examples", () => {
   const text = at(70, 12).join("\n");
   expect(text).toContain("ask for something");
-  expect(text).toContain("freeze what worked");
-  expect(text).toContain("run it forever");
+  expect(text).toContain("pick what answers");
+  expect(text).toContain("see where you are");
 });
 
 test("a narrow window drops the examples and keeps the mark", () => {
@@ -50,7 +50,7 @@ test("the composition is centred, not flush left", () => {
 
 test("the example rows line up as one block, not each centred on its own", () => {
   const lines = at(84, 14);
-  const labels = ["ask for something", "freeze what worked", "run it forever"];
+  const labels = ["ask for something", "pick what answers", "see where you are"];
   const indents = labels.map((label) => {
     const line = lines.find((candidate) => candidate.includes(label))!;
     return line.length - line.trimStart().length;

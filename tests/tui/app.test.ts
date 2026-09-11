@@ -9,7 +9,6 @@ import { fg24 } from "../../src/tui/color";
 import { PALETTES, type Token } from "../../src/tui/palette";
 import { createRegistry } from "../../src/registry/registry";
 import type { NodeDef } from "../../src/registry/types";
-import { createTraceStore } from "../../src/store/trace";
 import type { CompletionRequest, CompletionResult, Provider } from "../../src/providers/types";
 import { loadConfig, type VesnaConfig } from "../../src/cli/config";
 import { saveAuth, authPath } from "../../src/auth/store";
@@ -193,7 +192,6 @@ async function deps(p: Provider, overrides: Partial<AppDeps> = {}): Promise<AppD
   return {
     registry: createRegistry(),
     provider: p,
-    store: createTraceStore(join(root, ".vesna", "traces")),
     config,
     theme: resolveTheme("mono", { depth: 0 }),
     root,
@@ -411,7 +409,7 @@ test("in ASCII mode not one non-ascii byte reaches the screen", async () => {
 test("the empty screen greets you and then gets out of the way", async () => {
   const app = await start(reply("answered"), { rows: 14, cols: 80 });
   expect(app.screen()).toContain("v e s n a");
-  expect(app.screen()).toContain("freeze what worked");
+  expect(app.screen()).toContain("pick what answers");
   app.input.type("hello\r");
   await until(() => app.screen().includes("answered"), "the answer");
   expect(app.screen()).not.toContain("freeze what worked");
@@ -511,31 +509,6 @@ function usesATool(): Provider {
     };
   });
 }
-
-test("crystallising is painted ice, the cold half of frost and blossom", async () => {
-  const registry = createRegistry();
-  registry.register(ECHO);
-  const base = await deps(usesATool(), { registry, theme: PAINTED });
-  const host = fakeTerminal(20, 90);
-  const input = keyboard();
-  const finished = runApp(
-    { ...base, config: { ...base.config, permissions: { nodes: ["echo"] } } },
-    { terminal: host.terminal, input },
-  );
-  await until(() => host.screen().includes("vesna"), "the first frame");
-
-  input.type("go\r");
-  await until(() => host.screen().includes("finished"), "the answer");
-  input.type("/crystallize report\r");
-  await until(() => host.screen().includes("wrote "), "the crystallise notice");
-
-  const row = rowWith(host, "wrote ");
-  expect(row).toContain(fg("ice"));
-  expect(row).not.toContain(fg("ok"));
-
-  input.type("\x03\x03\x03");
-  await finished;
-});
 
 /**
  * The frame's real invariant, which is per character and not per row.

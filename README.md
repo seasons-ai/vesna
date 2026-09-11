@@ -7,113 +7,81 @@
 fit — ships as the same light/dark pair: `assets/mark.svg` for dark
 backgrounds, `assets/mark-light.svg` for light ones.*
 
-An agent that turns its own work into deterministic, reviewable workflows.
+A coding agent with spec-driven development built in.
 
-The first time you ask for something, a model does it live: expensive, slow, and
-different every time. Vesna records what happened, derives a graph of typed nodes
-from it, and — once you confirm the generalisation — freezes that graph into a
-**crystal**: a callable flow with declared inputs and per-node assertions.
+Ask it for a piece of work and it does not start typing. It records a plan,
+opens a spec beside your code, and works through the tasks — and it cannot
+mark one finished by saying so. To finish a task it hands Vesna a command that
+fails when the work is not done, and Vesna runs that command and reads the exit
+status. The evidence is produced by the system rather than asserted by the
+party being checked.
 
-Every later run is an ordinary program. Tokens are spent only on the nodes that
-genuinely need judgement. When an assertion fails, that one node, for that one
-row, melts back into live mode, gets repaired, and re-freezes.
+The state of the work is a log of typed events, reduced into a column you can
+watch. "I finished T2" in a chat message is never mistaken for the fact of it.
 
 > Vesna is the Slavic goddess of spring — the thing that comes back on its own,
-> every year, unasked and unsupervised. That is what a crystal is meant to become.
+> every year, unasked and unsupervised.
 
-**Status: v0.1, a walking skeleton.** It runs end to end and is well covered by
-tests, but it is early. See [What is not built yet](#what-is-not-built-yet).
+**Status: v0.2.** It runs end to end and is well covered by tests, but it is
+early. See [What is not built yet](#what-is-not-built-yet).
 
 ---
 
 ## The thing it does
 
-Talk to it, get it right, then freeze it:
+Ask for work, and it is not called done until a check says so:
 
-```console
-$ vesna chat
-vesna · claude-opus-5 · /help for commands, ctrl-c to interrupt
+````console
+$ vesna do "add a function sub to math.ts that subtracts two numbers; verify with: grep -q 'export function sub' math.ts"
+  · read     0ms
+  · edit     2ms
+  · plan     5ms
+  · task_start 1ms
+  · task_verify 17ms
 
-› read reports/acme.txt and write a summary to out/acme.md
-  · read      12ms
-  · write      4ms
+Added to `math.ts`:
 
-Wrote the summary.
-
-› /crystallize client-report
-  "reports/acme.txt"  ->  ${inputs.source}   at read_1.path
-  wrote .vesna/flows/client-report.yaml
+```ts
+export function sub(a: number, b: number) { return a - b; }
 ```
 
-`/crystallize` is the point of the conversation: you iterate until the agent
-does the thing correctly, then that exact run becomes a flow you can replay over
-two hundred rows without a model in the loop.
+Verification passed:
 
-Or in one shot, without the conversation:
-
-```console
-$ vesna do "summarise reports/acme.txt into out/acme.md"
-  · read   412ms
-  · write   18ms
-
-Wrote the summary.
-
-2 steps · 6.1s · $0.0412 · trace live_msyz1k_a7f2c9
-
-next: vesna crystallize live_msyz1k_a7f2c9 --name client-report
+```sh
+grep -q 'export function sub' math.ts
 ```
 
-Then freeze it:
+5 steps · 18.5s · $0.0000
+````
+
+In the full-screen chat the same run opens a column on the right — the spec,
+its tasks, and which of them have turned cold.
+
+`task_verify` is the only way a task turns cold. The agent may declare a plan
+and say which task it has picked up; it may not say a task is done. Vesna runs
+the check and decides. A task whose check exits non-zero stays warm, and the
+model sees the output rather than getting to retry the claim.
+
+Or in one shot:
 
 ```console
-$ vesna crystallize live_msyz1k_a7f2c9 --name client-report
-Proposed parameters — confirm before applying:
-  "reports/acme.txt"  ->  ${inputs.path}   at read_1.path
-  "out/acme.md"  ->  ${inputs.write_2_path}   at write_2.path
-Wrote .vesna/flows/client-report.yaml
-```
+$ vesna do "reply with only the number of exported functions in src/cli/flags.ts, as digits"
+  · read     0ms
 
-In a terminal, `crystallize` walks the proposed parameters with you — accept,
-skip, or rename each one — and writes a flow that is already parameterised. Off
-a terminal it accepts every suggestion, so it works in a script too.
+1
 
-Nothing here is hand-written: `do` records the trace, `crystallize` reads it back
-by id, and values that flowed between steps are wired as references rather than
-frozen as constants.
-
-Then run it over a data file:
-
-```console
-$ vesna run client-report --map clients.csv
-run_msyurd00_90pf2f: 2 ok · 1 held
-  row 2 held at read_1: ENOENT: no such file or directory, open '.../reports/initech.txt'
-```
-
-**Two rows finished. One is held, and it says where and why.** A wrong result is
-an event, not a swallowed exception — no green checkmark above an empty file.
-
-Fix the cause, then repair only what held:
-
-```console
-$ vesna heal run_msyurd00_90pf2f --flow client-report
-run_msyurd00_90pf2f: 3 ok · 0 held
-```
-
-```console
-$ vesna doctor
-read_1   runs 3  asserts 100%  $0.0000/run
-write_2  runs 3  asserts 100%  $0.0000/run
+1 steps · 4.9s · $0.0000
 ```
 
 ### Exit codes
 
-Scriptable, because "some rows are held" is not the same as "it broke":
+Scriptable, because "something was left undone" is not the same as "it broke":
 
 | Code | Meaning |
 | --- | --- |
 | `0` | everything ran |
-| `1` | ran, but at least one row is held and needs repair |
-| `2` | did not run — bad usage, bad flow, missing credentials |
+| `1` | ran, but something the user asked for was left undone |
+| `2` | did not run — bad usage, missing credentials |
 
 ---
 
@@ -376,83 +344,36 @@ the developer platform.
 
 ## Concepts
 
-### Flows are functions
+### A claim is not a fact
 
-A flow declares typed inputs, so it has one signature and several call sites:
+Every agent can say "done". Vesna separates saying it from it being so.
 
-```bash
-vesna run client-report --client Acme      # once
-vesna run client-report --map clients.csv  # fan out, one run per row
-```
+A task is opened by the model and closed by the system. The model proposes a
+check — a test file, a typecheck, a grep — and Vesna runs it. Exit `0` closes
+the task; anything else leaves it open and hands the model the output. There is
+no other path to closed, which is what makes the column in the garden a record
+rather than a mood.
 
-```yaml
-name: client-report
-inputs:
-  client: { type: string, required: true }
-nodes:
-  - id: read_1
-    use: read
-    in:
-      path: reports/${inputs.client}.txt
-    assert:
-      - non_empty: $.out.text
-  - id: write_2
-    use: write
-    in:
-      path: out/${inputs.client}.md
-      text: "${inputs.client}: ${read_1.text}"
-```
+The same rule governs the process around the code. Onboarding reports success
+because a model answered, not because a settings file was written. `/provider`
+refuses a service it can see has no credential rather than switching and
+letting the next turn fail. A status command that says you are signed in while
+the next command fails is treated as a bug, not a nuance.
 
-`$.inputs.client` as a whole value keeps its type. `${inputs.client}` inside a
-larger string interpolates. Both contribute to execution order, so a node that
-reads `out/${parse.name}.md` runs after `parse`.
+### Effects
 
-Flow files live in `.vesna/flows/` and are committed, so a change to an
-automation arrives as a reviewable diff.
-
-### Assertions make failure loud
-
-Each node declares what must be true of its output.
-
-| Assertion | Catches |
-| --- | --- |
-| `non_empty: $.out.rows` | an empty result that would otherwise pass silently |
-| `has_keys: { value: $.out.rows, keys: [sku, qty] }` | a parse that lost a column |
-| `not_matches: { value: $.out.text, pattern: '\{\{.*\}\}' }` | an unsubstituted placeholder shipped to a customer |
-| `contains: { value: $.out.text, needle: $.inputs.client }` | the right shape with the wrong content |
-
-A failed assertion holds that row. The others keep going.
-
-### Four failures, not one
-
-| Class | Meaning | Response |
-| --- | --- | --- |
-| `contract_error` | input does not match the schema | caught before execution; no tokens spent |
-| `permission_denied` | a node reached where it may not | never retried, always surfaced |
-| `node_error` | the node itself failed | retried, then held |
-| `assert_failed` | it succeeded but produced the wrong thing | held, repaired via `heal` |
-
-Collapsing these into one `catch` is what produces a green checkmark above a
-wrong result: "it crashed" and "it worked incorrectly" need opposite responses
-and look identical from outside.
-
-### Effects and the receipt rule
-
-Every node declares an effect: `pure`, `write`, or `external`. An `external`
-node — sending mail, calling a paid API — records a **receipt** when it runs.
-
-**Nodes with a receipt are never re-executed during repair.** Without that rule
-the first repair would send every message a second time, which is worse than not
-repairing at all. It is covered by a property test over randomised failure
-scenarios, not a single example.
+Every node declares what it does: `pure`, `write`, or `external`. The
+declaration is what the approval layer reads before a call is made — reading
+never asks, writing outside the project always asks, and an `external` node
+(mail, a paid API) is asked about however the policy is written. A node
+declares its worst case, so pick the class honestly.
 
 ---
 
 ## Adding a node
 
-This is the whole extension surface. A node registered here is available both as
-a tool the live agent can call **and** as a node any flow can use — one
-contribution upgrades both.
+This is the whole extension surface. A node registered here is a tool the agent
+can call, and the effect class you give it is what the approval layer enforces.
 
 ```ts
 import type { NodeDef } from "./src/registry/types";
@@ -475,7 +396,7 @@ export const slackNode: NodeDef<{ channel: string; text: string }, { ts: string 
 ```
 
 Register it in `src/nodes/index.ts` and it is usable everywhere. Pick the effect
-class honestly — it is what the receipt rule keys on.
+class honestly — it is what the policy keys on.
 
 ---
 
@@ -483,9 +404,9 @@ class honestly — it is what the receipt rule keys on.
 
 ```
 .vesna/
-  flows/       *.yaml — crystals, committed and reviewed in pull requests
-  traces/      runs, cost, assertion outcomes — gitignored
-  config.yaml  model and permissions
+  specs/            one folder per piece of work — a log of events, committed
+  config.yaml       pins a service to this repository — hand-written
+  permissions.yaml  what you have allowed — written by Vesna
 ```
 
 Permissions are the registry: if no node exists, no capability exists.
@@ -653,8 +574,8 @@ in `.vesna/config.yaml`:
 theme: hanami
 ```
 
-Warm petal marks what a model is doing live; cold ice marks what has been
-crystallised. A theme is a table of eleven colours, and two tests keep it
+Warm petal marks what a model is doing live; cold ice marks what is settled.
+A theme is a table of eleven colours, and two tests keep it
 honest — every meaningful colour must clear 4.5:1 against its own background,
 and no two may collapse onto the same 256-colour code. Adding one is a small
 pull request.
@@ -665,9 +586,6 @@ pull request.
 
 Named honestly, because the gap is deliberate rather than an oversight.
 
-- **Generalisation is not automatic.** Vesna proposes which literals look like
-  parameters; you confirm them. Guessing wrong produces a flow that works exactly
-  once, and that is an open problem, not a solved one.
 - **`script` is not a sandbox. It runs model-authored code with your own
   privileges.** An earlier version of this README claimed the filesystem was
   confined to the working directory and the network was off. Neither is true,
@@ -682,8 +600,13 @@ Named honestly, because the gap is deliberate rather than an oversight.
   The real control is `permissions.nodes`: remove `script` and `shell` there and
   the model is never offered them. Actual containment needs OS-level isolation
   and is not built.
-- No `watch` command, no flow-calling-flow, no `vesna upgrade` for model changes,
-  no container sandbox, no memory directory.
+- **The process runs one task at a time, in this process.** Work trees, a
+  builder, a scheduler over the task graph and a merge queue all exist in
+  `src/work/` and are tested; nothing starts them yet. `/build` is the next
+  thing.
+- **The agent is a terminal program.** There is no server mode, so there is no
+  editor extension and no other client. That is the step after `/build`.
+- No container sandbox, no memory directory.
 
 ---
 
@@ -694,10 +617,10 @@ bun test        # the whole suite, offline
 bun run typecheck
 ```
 
-The engine is tested against a fake registry, so DAG execution, fan-out,
-`held`/`heal` and the receipt invariant all run in milliseconds and offline. The
-crystallizer is tested against fixture traces. Only the provider adapter touches
-the network, and nothing in the suite does.
+The garden's reducer, the policy layer, configuration precedence and the
+slash commands are all tested without a terminal or a network. The TUI is driven
+through a fake terminal and asserted on the rendered screen. Only the provider
+adapters touch the network, and nothing in the suite does.
 
 ---
 

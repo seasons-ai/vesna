@@ -1,8 +1,8 @@
 /**
  * The palettes, as data.
  *
- * Warm petal marks what a model is doing live; cold ice marks what has been
- * crystallised. That is the one rule a contributor has to keep, and the tests
+ * Warm petal marks what a model is doing live; cold ice marks what is
+ * settled. That is the one rule a contributor has to keep, and the tests
  * beside this file enforce the rest.
  */
 

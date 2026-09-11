@@ -7,9 +7,8 @@ import type { AgentMessage } from "../providers/types";
 /**
  * Conversations on disk.
  *
- * Until now a chat existed only in memory: `saveLiveTrace` ran on
- * `/crystallize` and nowhere else, so every conversation that did not end in a
- * flow — which is most of them — vanished when the terminal closed.
+ * A chat that exists only in memory vanishes when the terminal closes, and
+ * most of what is said in one is worth coming back to.
  *
  * Written as it happens rather than at exit, because the process can be
  * killed and an exit handler is not a place to be putting data. Kept under the

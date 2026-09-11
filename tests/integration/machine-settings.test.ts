@@ -49,7 +49,6 @@ test("an unusable machine file leaves the commands that need no provider alone",
   expect(help.stdout).toContain("usage:");
 
   expect((await run(where, ["--version"])).status).toBe(0);
-  expect((await run(where, ["doctor"])).status).toBe(0);
 }, 30_000);
 
 /**

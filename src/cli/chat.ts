@@ -1,13 +1,6 @@
-import { mkdir, writeFile } from "node:fs/promises";
-import { join } from "node:path";
-import { stringify as toYaml } from "yaml";
-import { applyParameters } from "../crystallize/apply";
-import { proposeFlow } from "../crystallize/propose";
 import { createSession, type Session } from "../loop/session";
 import type { Provider } from "../providers/types";
 import type { Registry } from "../registry/types";
-import type { TraceStore } from "../store/types";
-import { confirmParameters } from "../tui/prompt";
 import { createStdioPrompt, isInteractive } from "../tui/stdio";
 import type { Theme } from "../tui/theme";
 import type { PromptIO } from "../tui/prompt";
@@ -20,13 +13,10 @@ import {
   parseChatInput,
 } from "./chatcmd";
 import { EXIT } from "./exit";
-import { formatParameter } from "./format";
-import { describeDropped } from "./dropped";
 
 export interface ChatDeps {
   registry: Registry;
   provider: Provider;
-  store: TraceStore;
   config: VesnaConfig;
   theme: Theme;
   root: string;
@@ -116,10 +106,6 @@ export async function runChat(deps: ChatDeps): Promise<number> {
           console.log(theme.paint("muted", "  new conversation"));
           continue;
         }
-        if (input.name === "crystallize") {
-          await crystallize(deps, session, io, input.argument);
-          continue;
-        }
 
         // Every other command belongs to the full-screen chat. Falling through
         // to the turn below sent the model an empty user message — a request
@@ -181,39 +167,4 @@ async function runTurn(
   // A provider without streaming never called onText, so print the turn now.
   if (!wroteText && result.text) console.log(`\n${result.text}`);
   console.log("");
-}
-
-async function crystallize(
-  deps: ChatDeps,
-  session: Session,
-  io: { write(text: string): void; question(prompt: string): Promise<string> },
-  name: string,
-): Promise<void> {
-  const { theme, root } = deps;
-  if (name === "") {
-    console.log(theme.paint("warn", "  /crystallize needs a name"));
-    return;
-  }
-
-  const trace = await session.toTrace();
-  if (trace.steps.length === 0) {
-    console.log(theme.paint("warn", "  nothing to crystallise yet — no tools were used"));
-    return;
-  }
-
-  const traceId = await deps.store.saveLiveTrace(trace);
-  const proposal = proposeFlow(trace, name);
-  const accepted = await confirmParameters(proposal.parameters, io, theme);
-  const flow = applyParameters(proposal.flow, proposal.parameters, accepted);
-
-  await mkdir(join(root, ".vesna", "flows"), { recursive: true });
-  const path = join(root, ".vesna", "flows", `${flow.name}.yaml`);
-  await writeFile(path, toYaml(flow));
-
-  for (const parameter of proposal.parameters) {
-    console.log(theme.paint("muted", `  ${formatParameter(parameter)}`));
-  }
-  for (const line of describeDropped(proposal.dropped, theme)) console.log(line);
-  console.log(theme.paint("ok", `  wrote ${path}`));
-  console.log(theme.paint("muted", `  trace ${traceId} · try: vesna run ${flow.name} --dry-run`));
 }

@@ -1,6 +1,5 @@
 import { test, expect } from "bun:test";
 import { EXIT, explainError } from "../../src/cli/exit";
-import { ContractError } from "../../src/flow/parse";
 
 test("exit codes distinguish success, held work and failure", () => {
   expect(EXIT.ok).toBe(0);
@@ -14,12 +13,6 @@ test("a missing credential is explained, not dumped as a stack trace", () => {
   );
   expect(explained.message).toContain("No model credentials");
   expect(explained.hint).toContain("ANTHROPIC_API_KEY");
-});
-
-test("a contract error is reported as the flow being wrong, with its own message", () => {
-  const explained = explainError(new ContractError("node a references unknown node: ghost"));
-  expect(explained.message).toContain("references unknown node: ghost");
-  expect(explained.hint).toContain("flow");
 });
 
 test("a missing file names the path", () => {

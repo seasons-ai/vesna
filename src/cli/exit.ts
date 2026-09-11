@@ -1,14 +1,12 @@
-import { ContractError } from "../flow/parse";
-
 /**
  * Exit codes are part of the contract: a wrapper script must be able to tell
  * "everything ran" from "some rows are held" from "it broke".
  */
 export const EXIT = {
   ok: 0,
-  /** Ran, but at least one row is held and needs repair. */
+  /** Ran, but something the user asked for was left undone. */
   held: 1,
-  /** Did not run: bad usage, bad flow, missing credentials, crash. */
+  /** Did not run: bad usage, missing credentials, crash. */
   error: 2,
 } as const;
 
@@ -20,13 +18,6 @@ export interface Explained {
 export function explainError(error: unknown): Explained {
   if (typeof error === "string") return { message: error };
   if (!(error instanceof Error)) return { message: String(error) };
-
-  if (error instanceof ContractError) {
-    return {
-      message: error.message,
-      hint: "the flow file does not satisfy its own contract — fix it and re-run",
-    };
-  }
 
   if (/authentication method|x-api-key|401/i.test(error.message)) {
     return {

@@ -10,10 +10,10 @@ test("a leading slash is a command", () => {
 });
 
 test("a command carries the rest of the line as one argument", () => {
-  expect(parseChatInput("/crystallize client report")).toEqual({
+  expect(parseChatInput("/spec new client report")).toEqual({
     kind: "command",
-    name: "crystallize",
-    argument: "client report",
+    name: "spec",
+    argument: "new client report",
   });
 });
 
@@ -38,8 +38,8 @@ test("every advertised command is recognised by the parser", () => {
   }
 });
 
-test("the help listing covers exit and crystallize, the two that matter", () => {
+test("the help listing covers exit and provider, the two that matter", () => {
   const names = CHAT_COMMANDS.map((c) => c.name);
   expect(names).toContain("exit");
-  expect(names).toContain("crystallize");
+  expect(names).toContain("provider");
 });

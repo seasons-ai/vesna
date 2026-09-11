@@ -6,7 +6,6 @@ export interface ChatCommand {
 }
 
 export const CHAT_COMMANDS: ChatCommand[] = [
-  { name: "crystallize", help: "freeze this conversation into a flow: /crystallize <name>" },
   { name: "cost", help: "tokens and cost so far" },
   { name: "mode", help: "plan, ask or auto (shift-tab cycles)" },
   { name: "spec", help: "list specs, /spec new <name>, /spec open <slug>" },
@@ -31,7 +30,6 @@ export const CHAT_COMMANDS: ChatCommand[] = [
  * that rebuilds a running session.
  */
 export const PLAIN_CHAT_COMMANDS: readonly string[] = [
-  "crystallize",
   "cost",
   "clear",
   "help",

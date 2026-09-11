@@ -4,7 +4,6 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { runChat, type ChatDeps } from "../../src/cli/chat";
 import { createRegistry } from "../../src/registry/registry";
-import { createTraceStore } from "../../src/store/trace";
 import { findPreset } from "../../src/providers/catalog";
 import type { VesnaConfig } from "../../src/cli/config";
 import type { Provider } from "../../src/providers/types";
@@ -55,7 +54,6 @@ async function chat(provider: Provider, lines: string[]): Promise<string[]> {
   const deps: ChatDeps = {
     registry: createRegistry(),
     provider,
-    store: createTraceStore(join(root, ".vesna", "traces")),
     config,
     theme: resolveTheme("mono", { depth: 0 }),
     root,
@@ -104,8 +102,8 @@ test("/help here lists what this surface can do, and says where the rest are", a
   const printed = await chat(provider, ["/help"]);
   const text = printed.join("\n");
 
-  expect(text).toContain("/crystallize");
   expect(text).toContain("/cost");
+  expect(text).toContain("/clear");
   // Not offered as commands of this chat, since typing them does nothing here.
   expect(text).not.toMatch(/^ {2}\/provider\s/m);
   expect(text).not.toMatch(/^ {2}\/model\s/m);

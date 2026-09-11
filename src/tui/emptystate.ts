@@ -17,8 +17,8 @@ const WORDMARK_PLAIN = "vesna";
 const EXAMPLES: [string, string][] = [
   ["ask for something", "read src/*.ts and find the dead code"],
   ["plan a piece of work", "/spec new reliable cancellation"],
-  ["freeze what worked", "/crystallize report"],
-  ["run it forever", "vesna run report --map clients.csv"],
+  ["pick what answers", "/provider"],
+  ["see where you are", "ctrl-g"],
 ];
 
 /**
