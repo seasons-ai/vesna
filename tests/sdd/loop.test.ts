@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { runBuild, renderFindings } from "../../src/sdd/loop";
 import { appendEvent, createSpec, readEvents, readSpecFile, specPaths, writeSpecFile } from "../../src/spec/store";
-import type { Finding, SpecEvent } from "../../src/spec/project";
+import { project, type Finding, type SpecEvent } from "../../src/spec/project";
 import type { BuildResult } from "../../src/work/builder";
 import type { ReviewOutcome } from "../../src/sdd/review";
 import type { MergeReport } from "../../src/work/merge";
@@ -482,4 +482,58 @@ test("the loop hands every worker the project's permit and notes, on the first b
   expect(seen.length).toBe(3);
   for (const request of seen) expect(request).toEqual({ call: request.call, permit, notes: "House rules." });
   expect(seen.map((s) => s.call)).toEqual(["build", "resume", "build"]);
+});
+
+test("a stopped build marks the task in flight failed, before it says stopped", async () => {
+  const { root, specs } = setup(approvedWithTasks);
+  const f = fakes({
+    build: (task) => ({ ...built(task, 1), status: "refused", refusals: ["write src/a.ts"] }),
+  });
+  const out = await runBuild(base(root, specs, f));
+  expect(out).toEqual({ status: "stopped", reason: "T1: the worker was not allowed to: write src/a.ts" });
+  const events = readEvents(specs, "work");
+  const failedAt = events.findIndex((e) => e.t === "task.failed");
+  const stoppedAt = events.findIndex((e) => e.t === "build.stopped");
+  expect(events[failedAt]).toEqual({ t: "task.failed", id: "T1", reason: "the worker was not allowed to: write src/a.ts" });
+  expect(failedAt).toBeLessThan(stoppedAt);
+  const tree = project(events)!;
+  expect(tree.tasks.find((t) => t.id === "T1")).toMatchObject({ state: "failed" });
+  expect(tree.tasks.find((t) => t.id === "T1")?.agent).toBeUndefined();
+  expect(tree.building).toBe(false);
+});
+
+test("an interrupted build marks the task in flight failed as interrupted", async () => {
+  const { root, specs } = setup(approvedWithTasks);
+  const controller = new AbortController();
+  const f = fakes({
+    reviews: [Object.assign(new Error("aborted"), { name: "AbortError" })],
+  });
+  const build = async (r: any) => {
+    controller.abort();
+    return f.seams.build(r);
+  };
+  const out = await runBuild(base(root, specs, f, { build, signal: controller.signal }));
+  expect(out).toEqual({ status: "stopped", reason: "interrupted" });
+  const events = readEvents(specs, "work");
+  expect(events.filter((e) => e.t === "task.failed")).toEqual([{ t: "task.failed", id: "T1", reason: "interrupted" }]);
+  expect(project(events)!.tasks.find((t) => t.id === "T1")).toMatchObject({ state: "failed" });
+});
+
+test("a spec whose every task is merged has nothing to build, and no review is paid for", async () => {
+  const { root, specs } = setup([
+    ...approvedWithTasks,
+    { t: "build.started" },
+    { t: "task.started", id: "T1" },
+    { t: "task.done", id: "T1", commit: "a" },
+    { t: "task.started", id: "T2" },
+    { t: "task.done", id: "T2", commit: "b" },
+    { t: "build.done" },
+  ]);
+  writeSpecFile(join(specPaths(specs, "work").reviews, "branch.md"), "the first review\n");
+  const f = fakes();
+  const out = await runBuild(base(root, specs, f));
+  expect(out).toEqual({ status: "could-not-start", reason: "nothing to build — every task is merged" });
+  expect(f.log).toEqual([]);
+  expect(readSpecFile(join(specPaths(specs, "work").reviews, "branch.md"))).toBe("the first review\n");
+  expect(readEvents(specs, "work").filter((e) => e.t === "build.started")).toHaveLength(1);
 });

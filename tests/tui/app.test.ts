@@ -1816,6 +1816,50 @@ test("/build while one is already running is refused", async () => {
   await quit(app);
 });
 
+test("leaving while a build runs is refused on every path, and allowed once it stops", async () => {
+  const base = await deps(reply("x"));
+  const sink = createSink(specsRoot(base.root));
+  const specs = specsRoot(base.root);
+  oneTaskSpec(specs, "gate");
+
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const seams = buildFakes();
+  const build = async (r: { task: string }) => {
+    await gate;
+    return seams.build(r);
+  };
+
+  const app = await start(reply("x"), { rows: 40, cols: 120 }, { ...base, sink, buildSeams: { ...seams, build } });
+  app.input.type("/spec open gate\r");
+  await until(() => app.screen().includes("spec gate"), "the spec opening");
+  app.input.type("/build\r");
+  await until(() => /T1\s+building/.test(app.screen()), "the task starting");
+
+  const stillRunning = () =>
+    Promise.race([app.finished.then(() => "finished"), new Promise((r) => setTimeout(() => r("running"), 50))]);
+  const refusals = () => app.screen().split("\n").filter((row) => /a build is running — wait for it to stop before leaving/.test(row)).length;
+
+  app.input.type("\x03\x03");
+  await until(() => refusals() === 1, "the refusal on ctrl-c twice");
+  expect(await stillRunning()).toBe("running");
+
+  app.input.type("/exit\r");
+  await until(() => refusals() === 2, "the refusal on /exit");
+  expect(await stillRunning()).toBe("running");
+
+  app.input.type("\x04");
+  await until(() => refusals() === 3, "the refusal on ctrl-d");
+  expect(await stillRunning()).toBe("running");
+
+  release();
+  await until(() => /T1\s+merged/.test(app.screen()), "the build finishing");
+  app.input.type("/exit\r");
+  expect(await app.finished).toBe(0);
+});
+
 test("/spec open refuses while a build is running, so its events are not redirected", async () => {
   const base = await deps(reply("x"));
   const sink = createSink(specsRoot(base.root));

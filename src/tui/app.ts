@@ -9,6 +9,7 @@ import {
   describeProviders,
   modelSwitchOutcome,
   parseChatInput,
+  quitBlocked,
   specSwitchBlocked,
   switchBlocked,
   switchFailed,
@@ -121,6 +122,10 @@ export async function runApp(deps: AppDeps, io: AppIo): Promise<number> {
   let quitting = false;
   let confirmExit = false;
   let turn: AbortController | null = null;
+  // Whether this process has a build in flight. Not the log's `building`,
+  // which a build killed in an earlier process leaves true forever — that
+  // one must not trap the person here as well.
+  let building = false;
 
   const submissions = createQueue<string>();
 
@@ -473,6 +478,22 @@ export async function runApp(deps: AppDeps, io: AppIo): Promise<number> {
     draw();
   }
 
+  /**
+   * Leaves, unless a build is running: its promise would die with the
+   * process, leaving the spec's log saying "building" with nothing left to
+   * ever say otherwise. False when refused, with the reason in the transcript.
+   */
+  function leave(): boolean {
+    if (building) {
+      transcript.notice(quitBlocked(), "warn");
+      transcript.endTurn();
+      return false;
+    }
+    quitting = true;
+    submissions.close();
+    return true;
+  }
+
   function dispatch(key: Key): void {
     // A question owns the keyboard until it is answered. Only the three
     // answers decide: a stray key must not refuse an action by accident.
@@ -504,8 +525,10 @@ export async function runApp(deps: AppDeps, io: AppIo): Promise<number> {
           return;
         }
         if (confirmExit) {
-          quitting = true;
-          submissions.close();
+          if (!leave()) {
+            confirmExit = false;
+            draw();
+          }
           return;
         }
         confirmExit = true;
@@ -513,10 +536,7 @@ export async function runApp(deps: AppDeps, io: AppIo): Promise<number> {
         return;
 
       case "eof":
-        if (editor.text === "" && turn === null) {
-          quitting = true;
-          submissions.close();
-        }
+        if (editor.text === "" && turn === null && !leave()) draw();
         return;
 
       case "click": {
@@ -627,7 +647,11 @@ export async function runApp(deps: AppDeps, io: AppIo): Promise<number> {
       draw();
 
       if (input.kind === "command") {
-        if (input.name === "exit") break;
+        if (input.name === "exit") {
+          if (leave()) break;
+          draw();
+          continue;
+        }
 
         if (input.name === "mode") {
           const wanted = input.argument.trim();
@@ -682,6 +706,7 @@ export async function runApp(deps: AppDeps, io: AppIo): Promise<number> {
           draw();
           // Runs alongside the conversation. Each event redraws the garden and
           // adds a line, so the person watches it happen rather than waiting.
+          building = true;
           void runBuild({
             root: deps.root,
             specsRoot: specsRoot(deps.root),
@@ -704,11 +729,13 @@ export async function runApp(deps: AppDeps, io: AppIo): Promise<number> {
             },
           })
             .then((outcome) => {
+              building = false;
               if (outcome.status !== "done") transcript.notice(outcome.reason, "warn");
               refreshSpec();
               draw();
             })
             .catch((error) => {
+              building = false;
               // A build can reject rather than resolve: an ordinary git
               // failure deep inside a worker's own commit throws a plain
               // `Error`, which `runBuild` does not catch into a `Stop`. Left

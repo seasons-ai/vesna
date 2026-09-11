@@ -5,6 +5,7 @@ import {
   buildFailed,
   buildStart,
   parseChatInput,
+  quitBlocked,
   specSwitchBlocked,
 } from "../../src/cli/chatcmd";
 import { project } from "../../src/spec/project";
@@ -116,6 +117,26 @@ test("/build on an approved plan starts, and says how many tasks", () => {
     { t: "approved", what: "plan" },
   ]);
   expect(buildStart(t)).toEqual({ kind: "start", message: "building 2 tasks — events appear below and in the garden" });
+});
+
+test("/build on a spec whose every task is merged is refused, so no review of an empty diff is paid for", () => {
+  const t = project([
+    { t: "created", id: "x", title: "X" },
+    { t: "task.added", id: "T1", title: "a" },
+    { t: "task.added", id: "T2", title: "b" },
+    { t: "approved", what: "plan" },
+    { t: "build.started" },
+    { t: "task.started", id: "T1" },
+    { t: "task.done", id: "T1" },
+    { t: "task.started", id: "T2" },
+    { t: "task.done", id: "T2" },
+    { t: "build.done" },
+  ]);
+  expect(buildStart(t)).toEqual({ kind: "refused", message: "nothing to build — every task is merged" });
+});
+
+test("leaving while a build runs is refused, because killing the process wedges the spec", () => {
+  expect(quitBlocked()).toBe("a build is running — wait for it to stop before leaving");
 });
 
 test("/build while a build is running is refused", () => {

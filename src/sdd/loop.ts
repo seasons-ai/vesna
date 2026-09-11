@@ -144,6 +144,11 @@ export async function runBuild(request: BuildLoopRequest): Promise<BuildOutcome>
   }
   if (planTasks.length === 0) return { status: "could-not-start", reason: "plan.md names no tasks" };
   if (tree.tasks.length === 0) return { status: "could-not-start", reason: "the log names no tasks" };
+  // A finished spec has no work left: running it again would build nothing
+  // and then pay for a review of an empty diff, overwriting the real one.
+  if (tree.tasks.every((task) => task.state === "done")) {
+    return { status: "could-not-start", reason: "nothing to build — every task is merged" };
+  }
 
   // A task the log knows and the plan does not — or the reverse — is not a
   // task that can be built: the worker would read no brief at all, or build
@@ -170,7 +175,26 @@ export async function runBuild(request: BuildLoopRequest): Promise<BuildOutcome>
     const baseBranch = (await runLoopGit(git, ["rev-parse", "--abbrev-ref", "HEAD"], request.root)).stdout.trim();
     const startSha = (await runLoopGit(git, ["rev-parse", "HEAD"], request.root)).stdout.trim();
 
+    // Whatever ends a task early — a Stop, an interrupt, a plain error from
+    // a worker's own commit — the task in flight is recorded as failed
+    // before the build is recorded as stopped. Without that the log keeps
+    // it "running", with an agent name, forever.
     const one = async (task: Task): Promise<BuildResult> => {
+      try {
+        return await attempt(task);
+      } catch (error) {
+        const err = error as Error;
+        const reason = err instanceof Stop
+          ? err.reason.replace(new RegExp(`^${task.id}: `), "")
+          : isAbort(err, request.signal)
+            ? "interrupted"
+            : err.message;
+        emit({ t: "task.failed", id: task.id, reason });
+        throw error;
+      }
+    };
+
+    const attempt = async (task: Task): Promise<BuildResult> => {
       const brief = readSpecFile(briefs[task.id] ?? "") ?? task.title;
       emit({ t: "task.started", id: task.id, agent: "vesna build" });
 
@@ -348,6 +372,15 @@ export async function runBuild(request: BuildLoopRequest): Promise<BuildOutcome>
     if (error instanceof CycleError) {
       emit({ t: "build.stopped", reason: error.message });
       return { status: "stopped", reason: error.message };
+    }
+    // An interrupt that lands while a task is in flight surfaces here as
+    // the task's own abort error rather than through the check above. It
+    // is the person's doing, and the log has to say so — otherwise the
+    // build that ctrl-c ended leaves `building` true with nothing left to
+    // clear it. An abort nobody asked for still propagates.
+    if (request.signal?.aborted && isAbort(error as Error, request.signal)) {
+      emit({ t: "build.stopped", reason: "interrupted" });
+      return { status: "stopped", reason: "interrupted" };
     }
     throw error;
   }

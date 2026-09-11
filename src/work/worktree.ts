@@ -58,10 +58,14 @@ export async function createWorktree(
   const path = join(worktreesRoot(repo), `${spec}-${task}`);
 
   // A branch that already exists means a previous attempt is still around, and
-  // reusing it silently would mix two attempts into one history.
+  // reusing it silently would mix two attempts into one history. The message
+  // names the two commands that clear it, because "remove that worktree" is
+  // not something a person can type.
   const existing = await git(["rev-parse", "--verify", branch], repo);
   if (existing.code === 0) {
-    throw new WorktreeError(`branch ${branch} already exists — remove that worktree first`);
+    throw new WorktreeError(
+      `branch ${branch} already exists — a previous attempt is still around: git worktree remove --force ${path} && git branch -D ${branch}`,
+    );
   }
 
   await ensureIgnored(repo);

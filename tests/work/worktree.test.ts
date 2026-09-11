@@ -61,6 +61,14 @@ test("a second attempt on the same task is refused, not quietly merged into the 
   await expect(createWorktree(repo, "spec", "T1")).rejects.toThrow(/already exists/);
 });
 
+test("the refusal names the two commands that clear the way", async () => {
+  const repo = await repository();
+  const first = await createWorktree(repo, "spec", "T1");
+  await expect(createWorktree(repo, "spec", "T1")).rejects.toThrow(
+    `branch vesna/spec/T1 already exists — a previous attempt is still around: git worktree remove --force ${first.path} && git branch -D vesna/spec/T1`,
+  );
+});
+
 test("only Vesna's own worktrees are listed", async () => {
   const repo = await repository();
   await createWorktree(repo, "spec", "T1");

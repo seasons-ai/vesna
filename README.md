@@ -542,8 +542,13 @@ $ echo $?
 2
 ```
 
-There is no way yet to interrupt a running build from the chat; stopping it
-means killing the process.
+ctrl-c stops `vesna build` through the log: the task in flight is marked
+failed and the build stopped as "interrupted", so the spec can be picked up
+again. There is no way yet to interrupt a running build from the chat, and the
+chat refuses to leave while one runs — a build killed with its process leaves
+the log saying "building" with nothing left to ever say otherwise. A stopped
+build leaves its task's worktree and branch behind; the next attempt names the
+two `git` commands that clear them.
 
 It lives in `.vesna/specs/<slug>/` and is worth committing: `events.jsonl`
 (the log), `spec.md`, `plan.md`, and one brief, one report and one review per

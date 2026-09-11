@@ -1,6 +1,6 @@
 import type { SpecEvent } from "../spec/project";
 import { specsRoot } from "../spec/store";
-import { runBuild, type BuildOutcome, renderFindings } from "../sdd/loop";
+import { runBuild, type BuildLoopRequest, type BuildOutcome, renderFindings } from "../sdd/loop";
 import type { Policy } from "../policy/decide";
 import type { Provider } from "../providers/types";
 import type { Registry } from "../registry/types";
@@ -60,27 +60,45 @@ export async function buildCommand(
     permit?: (type: string) => boolean;
     notes?: string;
     model?: string;
+    /** Seams for tests, the same ones `runBuild` takes. */
+    seams?: Pick<BuildLoopRequest, "build" | "resume" | "review" | "merge" | "git">;
   },
 ): Promise<number> {
   if (slug === undefined || slug === "") {
     console.error("vesna: build needs a spec — vesna build <slug>");
     return EXIT.error;
   }
-  const outcome = await runBuild({
-    root,
-    specsRoot: specsRoot(root),
-    slug,
-    provider: deps.provider,
-    registry: deps.registry,
-    policy: deps.policy,
-    ...(deps.permit ? { permit: deps.permit } : {}),
-    ...(deps.notes !== undefined ? { notes: deps.notes } : {}),
-    ...(deps.model ? { model: deps.model } : {}),
-    onEvent: (event) => {
-      const line = describeEvent(event);
-      if (line !== null) console.log(`  ${deps.theme.paint("petal", "·")} ${line}`);
-    },
-  });
+
+  // ctrl-c reaches the build as its own signal, so the log ends with
+  // `build.stopped "interrupted"` and the task in flight is marked failed.
+  // Killing the process instead leaves `building` true with nothing left to
+  // ever clear it. The handler lives only as long as the build: after it,
+  // ctrl-c ends the process the ordinary way again.
+  const controller = new AbortController();
+  const onSigint = () => controller.abort();
+  process.on("SIGINT", onSigint);
+  let outcome: BuildOutcome;
+  try {
+    outcome = await runBuild({
+      root,
+      specsRoot: specsRoot(root),
+      slug,
+      provider: deps.provider,
+      registry: deps.registry,
+      policy: deps.policy,
+      ...(deps.permit ? { permit: deps.permit } : {}),
+      ...(deps.notes !== undefined ? { notes: deps.notes } : {}),
+      ...(deps.model ? { model: deps.model } : {}),
+      signal: controller.signal,
+      ...deps.seams,
+      onEvent: (event) => {
+        const line = describeEvent(event);
+        if (line !== null) console.log(`  ${deps.theme.paint("petal", "·")} ${line}`);
+      },
+    });
+  } finally {
+    process.off("SIGINT", onSigint);
+  }
   if (outcome.status !== "done") console.error(`vesna: ${outcome.reason}`);
   return exitFor(outcome);
 }

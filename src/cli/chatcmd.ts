@@ -120,6 +120,9 @@ export function buildStart(
   if (tree.building) return { kind: "refused", message: "a build is already running" };
   if (!tree.approved.plan) return { kind: "refused", message: "the plan is not approved — /approve plan" };
   const n = tree.tasks.length;
+  if (n > 0 && tree.tasks.every((task) => task.state === "done")) {
+    return { kind: "refused", message: "nothing to build — every task is merged" };
+  }
   return {
     kind: "start",
     message: `building ${n} task${n === 1 ? "" : "s"} — events appear below and in the garden`,
@@ -147,6 +150,19 @@ export function buildFailed(error: Error): string {
  */
 export function specSwitchBlocked(): string {
   return "a build is running — wait for it to stop before switching specs";
+}
+
+/**
+ * Why the TUI refuses to leave while a build is running.
+ *
+ * The build's promise dies with the process, and its last event is whatever
+ * it had reached: `building` stays true in the log and the task in flight
+ * stays `running`, with nothing left to ever write `build.stopped`. The
+ * shell command wires ctrl-c to the build's own signal; the TUI has no such
+ * route yet, so it waits.
+ */
+export function quitBlocked(): string {
+  return "a build is running — wait for it to stop before leaving";
 }
 
 /** One line per catalog entry: id, where its credential comes from, label. */
