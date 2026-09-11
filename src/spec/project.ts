@@ -164,6 +164,13 @@ export function project(events: SpecEvent[]): SpecTree | null {
           state: "running",
           ...(event.agent ? { agent: event.agent } : {}),
         });
+        // Working on a task is building, whether /build started it or the
+        // agent picked it up in the conversation. A running task under a
+        // stage marked "to do" is the panel contradicting itself. Design is
+        // over once work starts; spec and plan are left as they are — for a
+        // bounded change they were skipped, and the panel should say so.
+        stageState.set("build", "active");
+        if (stageState.get("design") === "active") stageState.set("design", "done");
         break;
       }
 

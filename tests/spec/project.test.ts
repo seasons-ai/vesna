@@ -346,3 +346,26 @@ test("activeStage: everything done is the done phase, not design", () => {
   ]);
   expect(activeStage(t)).toBe("done");
 });
+
+test("starting a task is building, whatever the log said before: build goes active and design closes", () => {
+  const t = tree([
+    { t: "stage.entered", stage: "design" },
+    { t: "task.added", id: "T1", title: "one" },
+    { t: "task.started", id: "T1" },
+  ]);
+  expect(t.stages.find((s) => s.stage === "build")!.state).toBe("active");
+  expect(t.stages.find((s) => s.stage === "design")!.state).toBe("done");
+  expect(t.tasks[0]!.state).toBe("running");
+});
+
+test("starting a task inside a /build does not re-open a finished plan stage", () => {
+  const t = tree([
+    { t: "task.added", id: "T1", title: "one" },
+    { t: "approved", what: "spec" },
+    { t: "approved", what: "plan" },
+    { t: "build.started" },
+    { t: "task.started", id: "T1" },
+  ]);
+  expect(t.stages.find((s) => s.stage === "plan")!.state).toBe("done");
+  expect(t.stages.find((s) => s.stage === "build")!.state).toBe("active");
+});
