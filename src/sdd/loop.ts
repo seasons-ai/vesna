@@ -6,7 +6,7 @@ import { project, type Finding, type SpecEvent, type Task } from "../spec/projec
 import { appendEvent, readEvents, readSpecFile, specPaths, writeSpecFile } from "../spec/store";
 import { resumeTask, runTask, type BuildResult } from "../work/builder";
 import { mergeAll } from "../work/merge";
-import { schedule } from "../work/schedule";
+import { CycleError, schedule } from "../work/schedule";
 import { runGit, type GitRunner } from "../work/worktree";
 import { splitPlan, writeBriefs } from "./brief";
 import { reviewTask, type ReviewOutcome } from "./review";
@@ -88,6 +88,27 @@ async function safeReview(
   }
 }
 
+/**
+ * A git call the loop itself issues — not one buried inside `runTask`,
+ * `mergeAll`, or their worktree helpers, which answer for their own
+ * failures. A non-zero exit here means the repository is in a state the loop
+ * cannot reason about: reading `""` as a branch name or a commit and
+ * pressing on would hand the reviewer an empty diff and record its verdict
+ * as if it meant something.
+ */
+async function runLoopGit(
+  git: GitRunner,
+  args: string[],
+  cwd: string,
+): Promise<{ code: number; stdout: string; stderr: string }> {
+  const result = await git(args, cwd);
+  if (result.code !== 0) {
+    const detail = (result.stderr || result.stdout).trim().split("\n")[0] || "unknown git error";
+    throw new Stop(`git ${args[0]} failed: ${detail}`);
+  }
+  return result;
+}
+
 export async function runBuild(request: BuildLoopRequest): Promise<BuildOutcome> {
   const { specsRoot, slug } = request;
   const git = request.git ?? runGit;
@@ -120,116 +141,152 @@ export async function runBuild(request: BuildLoopRequest): Promise<BuildOutcome>
   if (planTasks.length === 0) return { status: "could-not-start", reason: "plan.md names no tasks" };
   if (tree.tasks.length === 0) return { status: "could-not-start", reason: "the log names no tasks" };
 
-  // The diff range assumes nothing about the repository's default branch: a
-  // fork on `master` (or anything else) works exactly as one on `main` does.
-  const baseBranch = (await git(["rev-parse", "--abbrev-ref", "HEAD"], request.root)).stdout.trim();
+  // A task the log knows and the plan does not — or the reverse — is not a
+  // task that can be built: the worker would read no brief at all, or build
+  // something the log never agreed to run. Caught here, before anything
+  // starts, rather than as a one-line title standing in for a brief.
+  const planIds = new Set(planTasks.map((t) => t.id));
+  const logIds = new Set(tree.tasks.map((t) => t.id));
+  for (const id of logIds) {
+    if (!planIds.has(id)) return { status: "could-not-start", reason: `${id} is in the log but not in plan.md` };
+  }
+  for (const id of planIds) {
+    if (!logIds.has(id)) return { status: "could-not-start", reason: `${id} is in plan.md but not in the log` };
+  }
 
   const briefs = writeBriefs(specsRoot, slug, planTasks);
-  emit({ t: "build.started" });
-
-  const one = async (task: Task): Promise<BuildResult> => {
-    const brief = readSpecFile(briefs[task.id] ?? "") ?? task.title;
-    emit({ t: "task.started", id: task.id, agent: "vesna build" });
-
-    const common = {
-      repo: request.root,
-      task: task.id,
-      provider: request.provider,
-      registry: request.registry,
-      policy: request.policy,
-      ...(request.model ? { model: request.model } : {}),
-      ...(request.maxUsd !== undefined ? { maxUsd: request.maxUsd } : {}),
-      ...(request.signal ? { signal: request.signal } : {}),
-      git,
-    };
-
-    let result = await build({ ...common, spec: slug, objective: brief });
-    let report = `# ${task.id}\n\n${result.text}\n`;
-    writeSpecFile(join(paths.reports, `${task.id}.md`), report);
-
-    if (result.status === "refused") {
-      throw new Stop(`${task.id}: the worker was not allowed to: ${result.refusals.join("; ")}`);
-    }
-    if (result.status === "failed") throw new Stop(`${task.id}: ${result.error ?? "the build failed"}`);
-
-    let round = 0;
-    let silent = 0;
-    let open: Finding[] | undefined;
-    for (;;) {
-      const diff = await git(["diff", `${baseBranch}...${result.branch}`], request.root);
-
-      const { outcome, failReason } = await safeReview(
-        review,
-        {
-          cwd: result.worktree,
-          provider: request.provider,
-          brief,
-          report,
-          diff: diff.stdout,
-          ...(open !== undefined ? { findings: open } : {}),
-          ...(request.model ? { model: request.model } : {}),
-          ...(request.signal ? { signal: request.signal } : {}),
-        },
-        request.signal,
-      );
-
-      if (outcome.kind === "no-verdict") {
-        silent += 1;
-        emit({ t: "review.failed", task: task.id, round, reason: failReason ?? "no verdict" });
-        writeSpecFile(join(paths.reviews, `${task.id}-r${round}.md`), `(no verdict)\n\n${outcome.text}\n`);
-        if (silent >= 2) throw new Stop(`${task.id}: the reviewer produced no verdict twice`);
-        continue;
-      }
-      silent = 0;
-      const { verdict } = outcome;
-      emit({ t: "review.done", task: task.id, round, spec: verdict.spec, findings: verdict.findings });
-      writeSpecFile(
-        join(paths.reviews, `${task.id}-r${round}.md`),
-        `spec: ${verdict.spec}\n\n${verdict.summary}\n\n${renderFindings(verdict.findings)}\n`,
-      );
-
-      open = verdict.findings.filter(blocking);
-      if (verdict.spec === "met" && open.length === 0) break;
-
-      if (round >= maxRounds) {
-        const critical = open.find((f) => f.severity === "critical");
-        if (critical !== undefined) {
-          throw new Stop(
-            `${task.id}: a critical finding is still open after ${maxRounds} fix rounds — ${critical.text}`,
-          );
-        }
-        for (const finding of verdict.findings) emit({ t: "parked", task: task.id, finding });
-        break;
-      }
-
-      round += 1;
-      const message = [
-        `Review round ${round} found the following. Fix each, re-run the tests that cover it, and say what you changed.`,
-        "",
-        verdict.spec === "not_met" ? "The reviewer judged the brief NOT MET." : "",
-        renderFindings(open),
-      ].join("\n");
-      result = await resume({ ...common, worktree: { path: result.worktree, branch: result.branch }, message });
-      report += `\n## Fix round ${round}\n\n${result.text}\n`;
-      writeSpecFile(join(paths.reports, `${task.id}.md`), report);
-      if (result.status === "failed") throw new Stop(`${task.id}: fix round ${round} failed — ${result.error}`);
-    }
-
-    const merged = await merge(request.root, [{ task: task.id, branch: result.branch }], git);
-    if (merged.conflict) throw new Stop(`${task.id}: merge conflict in ${merged.conflict.files.join(", ")}`);
-    if (merged.error) throw new Stop(`${task.id}: ${merged.error.message}`);
-
-    emit({ t: "task.done", id: task.id, ...(result.commit ? { commit: result.commit } : {}) });
-    return result;
-  };
-
-  // The whole-branch review at the end diffs from where the build began, not
-  // from some fixed point in the branch's past — `main~0` was never right
-  // either, since `main` may not even be the branch this repo is on.
-  const startSha = (await git(["rev-parse", "HEAD"], request.root)).stdout.trim();
 
   try {
-    await schedule<BuildResult>({
+    emit({ t: "build.started" });
+
+    // Neither diff range assumes anything about the repository: the base
+    // branch is read rather than guessed to be `main`, and the whole-branch
+    // diff at the end (below) runs from the commit the build actually
+    // started at rather than a fixed point that presumes a branch name.
+    const baseBranch = (await runLoopGit(git, ["rev-parse", "--abbrev-ref", "HEAD"], request.root)).stdout.trim();
+    const startSha = (await runLoopGit(git, ["rev-parse", "HEAD"], request.root)).stdout.trim();
+
+    const one = async (task: Task): Promise<BuildResult> => {
+      const brief = readSpecFile(briefs[task.id] ?? "") ?? task.title;
+      emit({ t: "task.started", id: task.id, agent: "vesna build" });
+
+      const common = {
+        repo: request.root,
+        task: task.id,
+        provider: request.provider,
+        registry: request.registry,
+        policy: request.policy,
+        ...(request.model ? { model: request.model } : {}),
+        ...(request.maxUsd !== undefined ? { maxUsd: request.maxUsd } : {}),
+        ...(request.signal ? { signal: request.signal } : {}),
+        git,
+      };
+
+      let result = await build({ ...common, spec: slug, objective: brief });
+      let report = `# ${task.id}\n\n${result.text}\n`;
+      writeSpecFile(join(paths.reports, `${task.id}.md`), report);
+
+      if (result.status === "refused") {
+        throw new Stop(`${task.id}: the worker was not allowed to: ${result.refusals.join("; ")}`);
+      }
+      if (result.status === "failed") throw new Stop(`${task.id}: ${result.error ?? "the build failed"}`);
+      if (result.status === "no-changes") throw new Stop(`${task.id}: the worker changed nothing`);
+
+      let round = 0;
+      let silent = 0;
+      let attempt = 0;
+      let open: Finding[] | undefined;
+      for (;;) {
+        const diff = await runLoopGit(git, ["diff", `${baseBranch}...${result.branch}`], request.root);
+
+        const { outcome, failReason } = await safeReview(
+          review,
+          {
+            cwd: result.worktree,
+            provider: request.provider,
+            brief,
+            report,
+            diff: diff.stdout,
+            ...(open !== undefined ? { findings: open } : {}),
+            ...(request.model ? { model: request.model } : {}),
+            ...(request.signal ? { signal: request.signal } : {}),
+          },
+          request.signal,
+        );
+
+        if (outcome.kind === "no-verdict") {
+          silent += 1;
+          attempt += 1;
+          emit({ t: "review.failed", task: task.id, round, reason: failReason ?? "no verdict" });
+          // Suffixed by attempt: a silent retry at the same round must not
+          // overwrite the last silent attempt's record.
+          writeSpecFile(
+            join(paths.reviews, `${task.id}-r${round}-attempt${attempt}.md`),
+            `(no verdict)\n\n${outcome.text}\n`,
+          );
+          if (silent >= 2) throw new Stop(`${task.id}: the reviewer produced no verdict twice`);
+          continue;
+        }
+        silent = 0;
+        attempt = 0;
+        const { verdict } = outcome;
+        emit({ t: "review.done", task: task.id, round, spec: verdict.spec, findings: verdict.findings });
+        writeSpecFile(
+          join(paths.reviews, `${task.id}-r${round}.md`),
+          `spec: ${verdict.spec}\n\n${verdict.summary}\n\n${renderFindings(verdict.findings)}\n`,
+        );
+
+        open = verdict.findings.filter(blocking);
+        if (verdict.spec === "met" && open.length === 0) break;
+
+        if (round >= maxRounds) {
+          const critical = open.find((f) => f.severity === "critical");
+          if (critical !== undefined) {
+            throw new Stop(
+              `${task.id}: a critical finding is still open after ${maxRounds} fix rounds — ${critical.text}`,
+            );
+          }
+          // Five rounds that never got the brief to "met" is not one more
+          // Important finding to park — it is the task not doing what was
+          // asked, and that stops the build exactly like a Critical would.
+          if (verdict.spec === "not_met") {
+            throw new Stop(`${task.id}: the brief is still not met after ${maxRounds} fix rounds`);
+          }
+          for (const finding of verdict.findings) emit({ t: "parked", task: task.id, finding });
+          break;
+        }
+
+        round += 1;
+        const message = [
+          `Review round ${round} found the following. Fix each, re-run the tests that cover it, and say what you changed.`,
+          "",
+          verdict.spec === "not_met" ? "The reviewer judged the brief NOT MET." : "",
+          renderFindings(open),
+        ].join("\n");
+        const resumed = await resume({ ...common, worktree: { path: result.worktree, branch: result.branch }, message });
+        if (resumed.status === "no-changes") {
+          // The worker looked and made no change — a valid answer to "fix
+          // this", distinct from having fixed it. `result` (and the commit
+          // the branch actually holds) is left exactly as it was.
+          report += `\n## Fix round ${round} (no changes)\n\n${resumed.text}\n`;
+          writeSpecFile(join(paths.reports, `${task.id}.md`), report);
+        } else {
+          result = resumed;
+          report += `\n## Fix round ${round}\n\n${result.text}\n`;
+          writeSpecFile(join(paths.reports, `${task.id}.md`), report);
+          if (result.status === "failed") throw new Stop(`${task.id}: fix round ${round} failed — ${result.error}`);
+        }
+      }
+
+      const merged = await merge(request.root, [{ task: task.id, branch: result.branch }], git);
+      if (merged.conflict) throw new Stop(`${task.id}: merge conflict in ${merged.conflict.files.join(", ")}`);
+      if (merged.error) throw new Stop(`${task.id}: ${merged.error.message}`);
+
+      emit({ t: "task.done", id: task.id, ...(result.commit ? { commit: result.commit } : {}) });
+      return result;
+    };
+
+    const scheduled = await schedule<BuildResult>({
       tasks: tree.tasks,
       concurrency: 1,
       run: one,
@@ -237,9 +294,23 @@ export async function runBuild(request: BuildLoopRequest): Promise<BuildOutcome>
       ...(request.signal ? { signal: request.signal } : {}),
     });
 
+    // An interrupt, whether it landed before the first task or partway
+    // through, ends the build here — never at "done", which would say
+    // everything the plan asked for actually happened.
+    if (request.signal?.aborted) {
+      emit({ t: "build.stopped", reason: "interrupted" });
+      return { status: "stopped", reason: "interrupted" };
+    }
+    // A task the scheduler never ran (a missing dependency, one whose
+    // dependency failed) is not a build that finished; the log must not say
+    // "done" over work that was silently never attempted.
+    if (scheduled.skipped.length > 0) {
+      throw new Stop(scheduled.skipped.map((s) => `${s.id}: skipped — ${s.reason}`).join("; "));
+    }
+
     // One more pair of eyes over the whole branch, with the parked findings
     // beside it. Nothing is fixed here; the person decides.
-    const whole = await git(["diff", `${startSha}...HEAD`], request.root);
+    const whole = await runLoopGit(git, ["diff", `${startSha}...HEAD`], request.root);
     const parked = project(readEvents(specsRoot, slug))?.parked ?? [];
     const { outcome: final, failReason: finalFailReason } = await safeReview(
       review,
@@ -250,6 +321,7 @@ export async function runBuild(request: BuildLoopRequest): Promise<BuildOutcome>
         report: "(whole-branch review)",
         diff: whole.stdout,
         ...(request.model ? { model: request.model } : {}),
+        ...(request.signal ? { signal: request.signal } : {}),
       },
       request.signal,
     );
@@ -266,6 +338,10 @@ export async function runBuild(request: BuildLoopRequest): Promise<BuildOutcome>
     if (error instanceof Stop) {
       emit({ t: "build.stopped", reason: error.reason });
       return { status: "stopped", reason: error.reason };
+    }
+    if (error instanceof CycleError) {
+      emit({ t: "build.stopped", reason: error.message });
+      return { status: "stopped", reason: error.message };
     }
     throw error;
   }
