@@ -770,3 +770,78 @@ test("a branch survives even when its worktree directory was removed by hand fir
 
   expect((await runGit(["branch", "--list", "vesna/work/T1"], repo)).stdout.trim()).toBe("");
 });
+
+const deadAfterT1: SpecEvent[] = [
+  { t: "task.added", id: "T1", title: "First" },
+  { t: "task.added", id: "T2", title: "Second", dependsOn: ["T1"] },
+  { t: "approved", what: "spec" }, { t: "approved", what: "plan" },
+  { t: "build.started" },
+  { t: "task.started", id: "T1", agent: "vesna build" },
+  { t: "task.done", id: "T1", commit: "sha-T1" },
+  { t: "task.started", id: "T2", agent: "vesna build" },
+];
+
+test("a plain start on a dead build refuses and names the three actions", async () => {
+  const { root, specs } = setup(deadAfterT1);
+  const f = fakes();
+  const out = await runBuild(base(root, specs, f));
+  expect(out).toEqual({
+    status: "could-not-start",
+    reason: 'a build of "work" was interrupted — /build resume, /build retry <task>, or /build abort',
+  });
+  expect(f.log).toEqual([]);
+});
+
+test("resume continues the in-flight task in its own worktree, then the rest", async () => {
+  const { root, specs } = setup(deadAfterT1);
+  const f = fakes();
+  const out = await runBuild(base(root, specs, f, { recovery: { action: "resume" } }));
+  expect(out).toEqual({ status: "done" });
+  // T1 is done and not rebuilt; T2 goes through resume, not build.
+  expect(f.log).toEqual(["resume T2", "review", "merge T2", "review"]);
+  const events = readEvents(specs, "work");
+  expect(events.some((e) => e.t === "build.recovered" && (e as any).action === "resume")).toBe(true);
+  expect(events.filter((e) => e.t === "build.started").length).toBe(2);
+});
+
+test("retry discards the named task's checkout and builds it from scratch", async () => {
+  const { root, specs } = setup(deadAfterT1);
+  const f = fakes();
+  const discarded: string[] = [];
+  const out = await runBuild(base(root, specs, f, {
+    recovery: { action: "retry", task: "T2" },
+    discard: async (_repo: string, r: any) => { discarded.push(r.task); },
+  }));
+  expect(out).toEqual({ status: "done" });
+  expect(discarded).toEqual(["T2"]);
+  expect(f.log).toEqual(["build T2", "review", "merge T2", "review"]);
+});
+
+test("retry of a task that is already merged is refused", async () => {
+  const { root, specs } = setup(deadAfterT1);
+  const out = await runBuild(base(root, specs, fakes(), { recovery: { action: "retry", task: "T1" } }));
+  expect(out).toEqual({ status: "could-not-start", reason: "T1 is merged — it cannot be retried" });
+});
+
+test("abort builds nothing, discards the in-flight checkout, and ends the build as abandoned", async () => {
+  const { root, specs } = setup(deadAfterT1);
+  const f = fakes();
+  const discarded: string[] = [];
+  const out = await runBuild(base(root, specs, f, {
+    recovery: { action: "abort" },
+    discard: async (_repo: string, r: any) => { discarded.push(r.task); },
+  }));
+  expect(out).toEqual({ status: "stopped", reason: "abandoned" });
+  expect(f.log).toEqual([]);
+  expect(discarded).toEqual(["T2"]);
+  const events = readEvents(specs, "work");
+  const last = events.at(-1)!;
+  expect(last).toEqual({ t: "build.stopped", reason: "abandoned" });
+  expect(events.at(-2)).toEqual({ t: "build.recovered", action: "abort", task: "T2" });
+});
+
+test("a recovery on a build that is not dead is refused", async () => {
+  const { root, specs } = setup(approvedWithTasks);
+  const out = await runBuild(base(root, specs, fakes(), { recovery: { action: "resume" } }));
+  expect(out).toEqual({ status: "could-not-start", reason: "nothing to recover — no interrupted build" });
+});

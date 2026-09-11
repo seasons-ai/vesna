@@ -3,14 +3,14 @@ import { join } from "node:path";
 import type { Policy } from "../policy/decide";
 import type { Provider } from "../providers/types";
 import type { Registry } from "../registry/types";
-import { project, type Finding, type SpecEvent, type Task } from "../spec/project";
+import { project, type Finding, type RecoveryAction, type SpecEvent, type Task } from "../spec/project";
 import { appendEvent, readEvents, readSpecFile, specPaths, writeSpecFile } from "../spec/store";
-import { resumeTask, runTask, type BuildResult } from "../work/builder";
+import { discardBuild, resumeTask, runTask, type BuildResult } from "../work/builder";
 import { mergeAll } from "../work/merge";
 import { CycleError, schedule } from "../work/schedule";
-import { deleteBranch, removeWorktree, runGit, type GitRunner } from "../work/worktree";
+import { branchName, deleteBranch, removeWorktree, runGit, worktreesRoot, type GitRunner } from "../work/worktree";
 import { splitPlan, writeBriefs } from "./brief";
-import { pidAlive, readLockPid } from "./recover";
+import { buildState, inFlightTask, pidAlive, readLockPid } from "./recover";
 import { reviewTask, type ReviewOutcome } from "./review";
 
 /**
@@ -48,6 +48,10 @@ export interface BuildLoopRequest {
   resume?: typeof resumeTask;
   review?: typeof reviewTask;
   merge?: typeof mergeAll;
+  /** How to treat a build a killed process left behind. Absent means: refuse if there is one. */
+  recovery?: { action: RecoveryAction; task?: string };
+  /** Seam for tests; default discardBuild. */
+  discard?: typeof discardBuild;
 }
 
 export type BuildOutcome =
@@ -95,6 +99,11 @@ function releaseLock(path: string): void {
   } catch {
     // Already gone is the state we wanted.
   }
+}
+
+/** Where a task's own checkout lives — confirmed against `createWorktree`. */
+function worktreePathFor(root: string, spec: string, task: string): string {
+  return join(worktreesRoot(root), `${spec}-${task}`);
 }
 
 function isAbort(error: Error, signal: AbortSignal | undefined): boolean {
@@ -194,6 +203,47 @@ export async function runBuild(request: BuildLoopRequest): Promise<BuildOutcome>
   }
 
   const lockPath = join(paths.dir, "build.lock");
+  const holder = readLockPid(lockPath);
+  const state = buildState(tree, holder !== null && pidAlive(holder));
+  const discard = request.discard ?? discardBuild;
+
+  if (request.recovery === undefined) {
+    if (state === "dead") {
+      return {
+        status: "could-not-start",
+        reason: `a build of "${slug}" was interrupted — /build resume, /build retry <task>, or /build abort`,
+      };
+    }
+  } else {
+    if (state !== "dead") return { status: "could-not-start", reason: "nothing to recover — no interrupted build" };
+    const running = inFlightTask(tree);
+    const { action } = request.recovery;
+    const target = action === "retry" ? request.recovery.task : running;
+    if (action === "retry") {
+      if (target === undefined) return { status: "could-not-start", reason: "retry needs a task — /build retry <task>" };
+      const t = tree.tasks.find((x) => x.id === target);
+      if (t === undefined) return { status: "could-not-start", reason: `${target} is not a task of this spec` };
+      if (t.state === "done") return { status: "could-not-start", reason: `${target} is merged — it cannot be retried` };
+    }
+    emit({ t: "build.recovered", action, ...(target !== undefined ? { task: target } : {}) });
+    if (action !== "resume" && target !== undefined) {
+      await discard(
+        request.root,
+        {
+          task: target,
+          worktree: worktreePathFor(request.root, slug, target),
+          branch: branchName(slug, target),
+        } as BuildResult,
+        git,
+      );
+    }
+    if (action === "abort") {
+      releaseLock(lockPath);
+      emit({ t: "build.stopped", reason: "abandoned" });
+      return { status: "stopped", reason: "abandoned" };
+    }
+  }
+
   const lock = takeLock(lockPath);
   if (!lock.ok) {
     return { status: "could-not-start", reason: `a build of "${slug}" is already running (pid ${lock.pid})` };
@@ -234,6 +284,8 @@ export async function runBuild(request: BuildLoopRequest): Promise<BuildOutcome>
       }
     };
 
+    const inFlight = inFlightTask(tree);
+
     const attempt = async (task: Task): Promise<BuildResult> => {
       const brief = readSpecFile(briefs[task.id] ?? "") ?? task.title;
       emit({ t: "task.started", id: task.id, agent: "vesna build" });
@@ -252,7 +304,16 @@ export async function runBuild(request: BuildLoopRequest): Promise<BuildOutcome>
         git,
       };
 
-      let result = await build({ ...common, spec: slug, objective: brief });
+      const resuming = request.recovery?.action === "resume" && request.recovery.task === undefined
+        ? inFlight === task.id
+        : request.recovery?.action === "resume" && request.recovery.task === task.id;
+      let result = resuming
+        ? await resume({
+            ...common,
+            worktree: { path: worktreePathFor(request.root, slug, task.id), branch: branchName(slug, task.id) },
+            message: brief,
+          })
+        : await build({ ...common, spec: slug, objective: brief });
       let report = `# ${task.id}\n\n${result.text}\n`;
       writeSpecFile(join(paths.reports, `${task.id}.md`), report);
 
