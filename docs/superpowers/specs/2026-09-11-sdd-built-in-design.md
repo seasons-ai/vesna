@@ -49,9 +49,10 @@ expensive, and a model that skips a review because it felt confident is the
 failure this exists to remove.
 
 So the design and spec phases are prompts the model follows, recorded as events
-as they happen. The plan, build and review phases are a loop Vesna runs,
-calling the model once per step with a step-specific prompt and reading its
-answer through tools rather than prose.
+as they happen. Writing the plan is one model call with a fixed prompt and a
+file as its output. Build and review are a loop Vesna runs, calling the model
+once per step with a step-specific prompt and reading its answer through tools
+rather than prose.
 
 ### 2. Phases are the garden's stages
 
@@ -129,9 +130,12 @@ For a spec with an approved plan, in dependency order from the scheduler:
    pass.
 4. **Fix rounds.** A verdict with a failed spec check or a Critical or
    Important finding resumes the worker with the findings, then runs a scoped
-   re-review over the fix diff. Five rounds at most. At the cap the remaining
-   findings are recorded as `parked` events with the reviewer's text, and the
-   task is marked complete with them attached rather than silently dropped.
+   re-review over the fix diff. Five rounds at most. At the cap, an Important
+   or Minor finding still open is recorded as a `parked` event with the
+   reviewer's text, and the task is marked complete with it attached rather
+   than silently dropped. A Critical still open at the cap stops the build for
+   a person (see §8): five rounds that could not close a Critical is a
+   structural problem, not one more round's worth of work.
 5. **Merge.** The task's branch joins the merge queue. `mergeAll` stops at the
    first conflict and reports it; the conflicting task's branch is left for a
    person.
