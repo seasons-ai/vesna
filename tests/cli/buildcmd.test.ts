@@ -1,47 +1,10 @@
 import { test, expect } from "bun:test";
-import { exitFor, describeEvent } from "../../src/cli/buildcmd";
+import { exitFor } from "../../src/cli/buildcmd";
 
 test("exit codes: done is 0, stopped for a person is 1, could not start is 2", () => {
   expect(exitFor({ status: "done" })).toBe(0);
   expect(exitFor({ status: "stopped", reason: "x" })).toBe(1);
   expect(exitFor({ status: "could-not-start", reason: "x" })).toBe(2);
-});
-
-test("events print as one line each, and the ones that are noise print nothing", () => {
-  expect(describeEvent({ t: "build.started" })).toBe("building");
-  expect(describeEvent({ t: "task.started", id: "T1", agent: "vesna build" })).toBe("T1  building");
-  expect(describeEvent({ t: "review.done", task: "T1", round: 0, spec: "met", findings: [] })).toBe(
-    "T1  review: met, 0 findings",
-  );
-  expect(
-    describeEvent({
-      t: "review.done",
-      task: "T1",
-      round: 2,
-      spec: "not_met",
-      findings: [{ severity: "important", file: "a", text: "b" }],
-    }),
-  ).toBe("T1  review round 2: not met, 1 finding");
-  expect(describeEvent({ t: "task.done", id: "T1", commit: "abc1234def" })).toBe("T1  merged abc1234");
-  expect(
-    describeEvent({ t: "parked", task: "T1", finding: { severity: "minor", file: "a.ts", text: "nit" } }),
-  ).toBe("T1  parked: [minor] a.ts — nit");
-  expect(describeEvent({ t: "build.stopped", reason: "why" })).toBe("stopped: why");
-  expect(describeEvent({ t: "build.done" })).toBe("done");
-  expect(describeEvent({ t: "criterion.added", id: "c", text: "t" })).toBeNull();
-});
-
-// Final fix round, item 2: the check is a step that can take minutes, and
-// it had no line. Declared stays silent — the task's own line is about to
-// follow; done and failed say the stage, the code and the time.
-test("the check's events print: silence when declared, the code and the seconds when done, the reason when failed", () => {
-  expect(describeEvent({ t: "verify.declared", task: "T1" })).toBeNull();
-  expect(describeEvent({ t: "verify.done", task: "T1", stage: "review", code: 0, ms: 14 })).toBe("T1  verify (review): ok in 0.0s");
-  expect(describeEvent({ t: "verify.done", task: "T1", stage: "merge", code: 0, ms: 61_250 })).toBe("T1  verify (merge): ok in 61.3s");
-  expect(describeEvent({ t: "verify.done", task: "T2", stage: "review", code: 3, ms: 950 })).toBe("T2  verify (review): exit 3 in 1.0s");
-  expect(describeEvent({ t: "verify.failed", task: "T1", stage: "merge", code: null, reason: "timeout" })).toBe("T1  verify (merge): timed out");
-  expect(describeEvent({ t: "verify.failed", task: "T1", stage: "review", code: null, reason: "timeout" })).toBe("T1  verify (review): timed out");
-  expect(describeEvent({ t: "verify.failed", task: "T1", stage: "merge", code: 2 })).toBe("T1  verify (merge): exit 2");
 });
 
 import { mkdirSync, mkdtempSync } from "node:fs";

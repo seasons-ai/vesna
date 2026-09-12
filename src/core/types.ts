@@ -31,6 +31,10 @@ export interface State {
   model: string; service: string;
   usage: { inputTokens: number; outputTokens: number; costUsd: number };
   spec: SpecTree | null; specSlug: string | null; chats: SessionSummary[] | null;
+  /** The id of the conversation being recorded, so a list can mark it; null when nothing records it. */
+  chatId: string | null;
+  /** The folder the conversation is about — the heading of a conversations column. */
+  root: string;
 }
 
 /** What a client subscribes to via `Core.on` to stay in sync with the core. */

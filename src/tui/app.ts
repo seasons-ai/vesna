@@ -119,7 +119,7 @@ export async function runApp(deps: AppDeps, io: AppIo): Promise<number> {
         : {}),
       ...(widths.left > 0
         ? {
-            left: chatsPane(chats ?? [], deps.record?.id, deps.root, {
+            left: chatsPane(chats ?? [], state.chatId ?? undefined, state.root, {
               theme,
               glyphs,
               width: widths.left,

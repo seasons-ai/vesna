@@ -8,6 +8,7 @@ import {
   buildStart,
   cancelElsewhere,
   classifyOutcome,
+  describeEvent,
   describeHeader,
   describeModels,
   describeProviders,
@@ -19,7 +20,6 @@ import {
   switchFailed,
   switchOutcome,
 } from "../cli/chatcmd";
-import { describeEvent } from "../cli/buildcmd";
 import { permits, type VesnaConfig } from "../cli/config";
 import type { ProviderHandle } from "../cli/context";
 import { asPreset, inspectCredential, problem, remedy, usable } from "../cli/preflight";
@@ -940,7 +940,7 @@ export function createCore(deps: CoreDeps): Core {
 
   function command(name: string, argument: string, options: { typed?: string } = {}): Promise<void> {
     if (closing) return Promise.resolve();
-    // The two that skip the queue — see `free` above.
+    // The three that skip the queue — see `free` above.
     if (name === "chats") {
       // The list, not a column: whether it is shown is the client's.
       refreshChats();
@@ -1079,6 +1079,8 @@ export function createCore(deps: CoreDeps): Core {
       spec,
       specSlug: spec?.id ?? null,
       chats,
+      chatId: deps.record?.id ?? null,
+      root: deps.root,
     };
   }
 

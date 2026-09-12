@@ -51,6 +51,22 @@ test("the snapshot names the model and the service, the way the header does", as
   await core.close();
 });
 
+// The conversations column marks the chat being had and is headed by the
+// folder it is about. Both are facts of the core's, so a client that draws
+// the column reads them from the state — not from deps it should not hold.
+test("the snapshot names this chat and the folder, for the conversations column", async () => {
+  const d = await deps(reply("x"));
+  const unrecorded = createCore(d);
+  expect(unrecorded.snapshot().chatId).toBeNull();
+  expect(unrecorded.snapshot().root).toBe(d.root);
+  await unrecorded.close();
+
+  const record = { id: "chat-7", path: "/nowhere", async append() {} } as any;
+  const recorded = createCore({ ...d, record });
+  expect(recorded.snapshot().chatId).toBe("chat-7");
+  await recorded.close();
+});
+
 test("/mode changes the state and says so with the chat's words", async () => {
   const core = createCore(await deps(reply("x")));
   const seen = collect(core);

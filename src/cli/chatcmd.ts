@@ -1,7 +1,8 @@
 import { PRESETS, findPreset, needsAddress, needsOauth, type Preset } from "../providers/catalog";
-import type { Approvable, RecoveryAction, Shape, SpecTree } from "../spec/project";
+import type { Approvable, RecoveryAction, Shape, SpecEvent, SpecTree } from "../spec/project";
 import type { PlanTask } from "../sdd/brief";
 import { SHAPES } from "../sdd/classify";
+import { renderFindings } from "../sdd/loop";
 import type { BuildState } from "../sdd/recover";
 import { MODES, type Mode } from "../policy/decide";
 
@@ -333,6 +334,51 @@ export function quitTimedOut(): string {
  */
 export function buildFailed(error: Error): string {
   return `build failed: ${error.message}`;
+}
+
+/**
+ * One line per build event, the same line wherever the build is watched —
+ * the chat's transcript, or `vesna build` in a shell. Null for the events
+ * that are bookkeeping rather than news.
+ */
+export function describeEvent(event: SpecEvent): string | null {
+  switch (event.t) {
+    case "build.started":
+      return "building";
+    case "task.started":
+      return `${event.id}  building`;
+    case "review.done": {
+      const n = event.findings.length;
+      const where = event.round === 0 ? "review" : `review round ${event.round}`;
+      return `${event.task}  ${where}: ${event.spec === "met" ? "met" : "not met"}, ${n} finding${n === 1 ? "" : "s"}`;
+    }
+    case "review.failed":
+      return `${event.task}  review: no verdict`;
+    case "task.done":
+      return `${event.id}  merged${event.commit ? ` ${event.commit.slice(0, 7)}` : ""}`;
+    case "task.failed":
+      return `${event.id}  failed${event.reason ? `: ${event.reason}` : ""}`;
+    case "parked":
+      return `${event.task}  parked: ${renderFindings([event.finding]).slice(2)}`;
+    case "ruling":
+      return `ruling: ${event.text}`;
+    case "build.stopped":
+      return `stopped: ${event.reason}`;
+    case "build.done":
+      return "done";
+    // The check is a step that can take minutes; without a line a person
+    // watching a ten-minute `bun test` sees a frozen review verdict.
+    // Declared prints nothing — the task's own line follows at once.
+    case "verify.done": {
+      // Rounded in tenths as integers: 950 ms is 1.0 s, which `(0.95).toFixed(1)` would not say.
+      const seconds = (Math.round(event.ms / 100) / 10).toFixed(1);
+      return `${event.task}  verify (${event.stage}): ${event.code === 0 ? "ok" : `exit ${event.code}`} in ${seconds}s`;
+    }
+    case "verify.failed":
+      return `${event.task}  verify (${event.stage}): ${event.reason === "timeout" ? "timed out" : `exit ${event.code}`}`;
+    default:
+      return null;
+  }
 }
 
 /**
