@@ -7,6 +7,9 @@ import {
   classifyOutcome,
   parseChatInput,
   quitBlocked,
+  quitCancelling,
+  quitTimedOut,
+  recoverOutcome,
   specSwitchBlocked,
 } from "../../src/cli/chatcmd";
 import { project } from "../../src/spec/project";
@@ -139,12 +142,12 @@ test("/build is a command", () => {
 });
 
 test("/build with no spec is refused", () => {
-  expect(buildStart(null)).toEqual({ kind: "refused", message: "nothing to build — no spec is open" });
+  expect(buildStart(null, "idle")).toEqual({ kind: "refused", message: "nothing to build — no spec is open" });
 });
 
 test("/build on an unapproved plan is refused, naming the command", () => {
   const t = project([{ t: "created", id: "x", title: "X" }, { t: "task.added", id: "T1", title: "a" }]);
-  expect(buildStart(t)).toEqual({ kind: "refused", message: "the plan is not approved — /approve plan" });
+  expect(buildStart(t, "idle")).toEqual({ kind: "refused", message: "the plan is not approved — /approve plan" });
 });
 
 test("/build on an approved plan starts, and says how many tasks", () => {
@@ -154,7 +157,7 @@ test("/build on an approved plan starts, and says how many tasks", () => {
     { t: "task.added", id: "T2", title: "b" },
     { t: "approved", what: "plan" },
   ]);
-  expect(buildStart(t)).toEqual({ kind: "start", message: "building 2 tasks — events appear below and in the garden" });
+  expect(buildStart(t, "idle")).toEqual({ kind: "start", message: "building 2 tasks — events appear below and in the garden" });
 });
 
 test("/build on a spec whose every task is merged is refused, so no review of an empty diff is paid for", () => {
@@ -170,7 +173,7 @@ test("/build on a spec whose every task is merged is refused, so no review of an
     { t: "task.done", id: "T2" },
     { t: "build.done" },
   ]);
-  expect(buildStart(t)).toEqual({ kind: "refused", message: "nothing to build — every task is merged" });
+  expect(buildStart(t, "idle")).toEqual({ kind: "refused", message: "nothing to build — every task is merged" });
 });
 
 test("leaving while a build runs is refused, because killing the process wedges the spec", () => {
@@ -184,7 +187,7 @@ test("/build while a build is running is refused", () => {
     { t: "approved", what: "plan" },
     { t: "build.started" },
   ]);
-  expect(buildStart(t)).toEqual({ kind: "refused", message: "a build is already running" });
+  expect(buildStart(t, "running")).toEqual({ kind: "refused", message: "a build is already running" });
 });
 
 test("a rejected build says so in the loop's own words, not a generic crash message", () => {
@@ -193,4 +196,72 @@ test("a rejected build says so in the loop's own words, not a generic crash mess
 
 test("switching specs mid-build is refused, so the running build's events are not redirected", () => {
   expect(specSwitchBlocked()).toBe("a build is running — wait for it to stop before switching specs");
+});
+
+const deadTree = project([
+  { t: "created", id: "x", title: "X" },
+  { t: "task.added", id: "T1", title: "a" }, { t: "task.added", id: "T2", title: "b" },
+  { t: "approved", what: "spec" }, { t: "approved", what: "plan" },
+  { t: "build.started" }, { t: "task.started", id: "T1" }, { t: "task.done", id: "T1" },
+  { t: "task.started", id: "T2" },
+]);
+const idleTree = project([
+  { t: "created", id: "x", title: "X" },
+  { t: "task.added", id: "T1", title: "a" },
+  { t: "approved", what: "spec" }, { t: "approved", what: "plan" },
+]);
+
+test("/build on a dead build refuses with the three actions", () => {
+  expect(buildStart(deadTree, "dead")).toEqual({
+    kind: "refused",
+    message: "a build was interrupted — /build resume, /build retry <task>, or /build abort",
+  });
+});
+
+test("/build on a running build still says so", () => {
+  expect(buildStart(deadTree, "running")).toEqual({ kind: "refused", message: "a build is already running" });
+});
+
+test("/build resume names the task it continues", () => {
+  expect(recoverOutcome("resume", deadTree, "dead")).toEqual({
+    kind: "recover", action: "resume", task: "T2", message: "resuming T2 in its own checkout",
+  });
+});
+
+test("/build retry T2 names the task it redoes", () => {
+  expect(recoverOutcome("retry T2", deadTree, "dead")).toEqual({
+    kind: "recover", action: "retry", task: "T2", message: "retrying T2 from scratch",
+  });
+});
+
+test("/build retry without a task says which are open", () => {
+  expect(recoverOutcome("retry", deadTree, "dead")).toEqual({
+    kind: "refused", message: "retry which task? T2 is open",
+  });
+});
+
+test("/build abort says what stays merged", () => {
+  expect(recoverOutcome("abort", deadTree, "dead")).toEqual({
+    kind: "recover", action: "abort", task: "T2", message: "abandoning the build — T1 stays merged, T2 is discarded",
+  });
+});
+
+test("/build cancel on a running build is a cancel; on anything else it is refused", () => {
+  expect(recoverOutcome("cancel", deadTree, "running")).toEqual({ kind: "cancel", message: "cancelling — the build stops after the task in flight is interrupted" });
+  expect(recoverOutcome("cancel", idleTree, "idle")).toEqual({ kind: "refused", message: "nothing to cancel — no build is running" });
+});
+
+test("a recovery on a build that is not dead is refused", () => {
+  expect(recoverOutcome("resume", idleTree, "idle")).toEqual({ kind: "refused", message: "nothing to recover — no interrupted build" });
+});
+
+test("an unknown /build argument names the five", () => {
+  expect(recoverOutcome("faster", idleTree, "idle")).toEqual({
+    kind: "refused", message: "/build takes nothing, or cancel, resume, retry <task>, abort",
+  });
+});
+
+test("quitting mid-build says what it is doing, and what it did if the build did not stop", () => {
+  expect(quitCancelling()).toBe("cancelling the build before leaving…");
+  expect(quitTimedOut()).toBe("the build did not stop in time — leaving anyway; the next /build will treat it as interrupted");
 });

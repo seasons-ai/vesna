@@ -1,6 +1,7 @@
 import { PRESETS, findPreset, needsAddress, needsOauth, type Preset } from "../providers/catalog";
-import type { Approvable, Shape, SpecTree } from "../spec/project";
+import type { Approvable, RecoveryAction, Shape, SpecTree } from "../spec/project";
 import { SHAPES } from "../sdd/classify";
+import type { BuildState } from "../sdd/recover";
 
 export interface ChatCommand {
   name: string;
@@ -148,9 +149,13 @@ export function classifyOutcome(
  */
 export function buildStart(
   tree: SpecTree | null,
+  state: BuildState,
 ): { kind: "start"; message: string } | { kind: "refused"; message: string } {
   if (tree === null) return { kind: "refused", message: "nothing to build — no spec is open" };
-  if (tree.building) return { kind: "refused", message: "a build is already running" };
+  if (state === "dead") {
+    return { kind: "refused", message: "a build was interrupted — /build resume, /build retry <task>, or /build abort" };
+  }
+  if (state === "running" || tree.building) return { kind: "refused", message: "a build is already running" };
   if (!tree.approved.plan) return { kind: "refused", message: "the plan is not approved — /approve plan" };
   const n = tree.tasks.length;
   if (n > 0 && tree.tasks.every((task) => task.state === "done")) {
@@ -160,6 +165,56 @@ export function buildStart(
     kind: "start",
     message: `building ${n} task${n === 1 ? "" : "s"} — events appear below and in the garden`,
   };
+}
+
+/**
+ * What `/build <word>` means. The five words are the whole of it; anything
+ * else is refused naming them, so a typo cannot start a build.
+ */
+export function recoverOutcome(
+  argument: string,
+  tree: SpecTree | null,
+  state: BuildState,
+):
+  | { kind: "recover"; action: RecoveryAction; task?: string; message: string }
+  | { kind: "cancel"; message: string }
+  | { kind: "refused"; message: string } {
+  const [word, arg] = argument.trim().split(/\s+/, 2);
+  if (word === "cancel") {
+    return state === "running"
+      ? { kind: "cancel", message: "cancelling — the build stops after the task in flight is interrupted" }
+      : { kind: "refused", message: "nothing to cancel — no build is running" };
+  }
+  if (word !== "resume" && word !== "retry" && word !== "abort") {
+    return { kind: "refused", message: "/build takes nothing, or cancel, resume, retry <task>, abort" };
+  }
+  if (tree === null || state !== "dead") return { kind: "refused", message: "nothing to recover — no interrupted build" };
+  const running = tree.tasks.find((t) => t.state === "running")?.id;
+  if (word === "resume") {
+    return { kind: "recover", action: "resume", ...(running ? { task: running } : {}), message: `resuming ${running ?? "the build"} in its own checkout` };
+  }
+  if (word === "retry") {
+    const open = tree.tasks.filter((t) => t.state !== "done").map((t) => t.id);
+    if (arg === undefined) return { kind: "refused", message: `retry which task? ${open.join(", ")} ${open.length === 1 ? "is" : "are"} open` };
+    const target = tree.tasks.find((t) => t.id === arg);
+    if (target === undefined) return { kind: "refused", message: `${arg} is not a task of this spec` };
+    if (target.state === "done") return { kind: "refused", message: `${arg} is merged — it cannot be retried` };
+    return { kind: "recover", action: "retry", task: arg, message: `retrying ${arg} from scratch` };
+  }
+  const merged = tree.tasks.filter((t) => t.state === "done").map((t) => t.id);
+  const kept = merged.length > 0 ? `${merged.join(", ")} stay${merged.length === 1 ? "s" : ""} merged` : "nothing was merged";
+  return {
+    kind: "recover", action: "abort", ...(running ? { task: running } : {}),
+    message: `abandoning the build — ${kept}${running ? `, ${running} is discarded` : ""}`,
+  };
+}
+
+export function quitCancelling(): string {
+  return "cancelling the build before leaving…";
+}
+
+export function quitTimedOut(): string {
+  return "the build did not stop in time — leaving anyway; the next /build will treat it as interrupted";
 }
 
 /**

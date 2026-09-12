@@ -44,6 +44,7 @@ import { resolveTheme, themeNames, type Theme } from "./theme";
 import { copyToClipboard, systemCopyIo } from "./clipboard";
 import { decide, facetOf, MODES, type Mode, type Policy } from "../policy/decide";
 import { runBuild, type BuildLoopRequest } from "../sdd/loop";
+import type { BuildState } from "../sdd/recover";
 import { rememberAllow, suggestPattern } from "../policy/store";
 import {
   listSessions,
@@ -258,6 +259,22 @@ export async function runApp(deps: AppDeps, io: AppIo): Promise<number> {
       }
     }
     if (spec !== null) spec = readSpec(specs, spec.id) ?? spec;
+  }
+
+  /**
+   * `spec` read as a plain property access, from a function of its own —
+   * not inline in `runApp`'s own body. TypeScript's flow analysis only ever
+   * sees `spec` reassigned through calls to functions like `openSpec` and
+   * `refreshSpec`, never a literal assignment in its own scope, so inline it
+   * narrows `spec` to exactly its initial `null` and then refuses `.building`
+   * as a property of `never`. A function boundary resets that to the
+   * declared type, the same way `refreshSpec` above reads `spec` safely.
+   *
+   * Task 5 computes the real state from the recovery lock; for now this
+   * only distinguishes "already running" from everything else.
+   */
+  function currentBuildState(): BuildState {
+    return spec?.building ? "running" : "idle";
   }
 
   function refreshChats(): void {
@@ -707,7 +724,7 @@ export async function runApp(deps: AppDeps, io: AppIo): Promise<number> {
         }
 
         if (input.name === "build") {
-          const start = buildStart(spec);
+          const start = buildStart(spec, currentBuildState());
           if (start.kind === "refused") {
             transcript.notice(start.message, "warn");
             transcript.endTurn();
