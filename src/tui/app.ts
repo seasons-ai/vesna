@@ -1,110 +1,43 @@
-import { homedir } from "node:os";
-import { join } from "node:path";
 import {
   CHAT_COMMANDS,
-  approvalQuestion,
-  approveOutcome,
   buildBusy,
   buildFailed,
   buildStart,
   cancelElsewhere,
-  classifyOutcome,
-  describeHeader,
-  describeModels,
-  describeProviders,
   hintLine,
   modeRole,
-  modelSwitchOutcome,
   nextMode,
   parseChatInput,
   quitCancelling,
   quitTimedOut,
   recoverOutcome,
-  specSwitchBlocked,
-  switchBlocked,
-  switchFailed,
-  switchOutcome,
 } from "../cli/chatcmd";
 import { describeEvent } from "../cli/buildcmd";
 import { EXIT } from "../cli/exit";
-import { readSettings, settingsPath, writeSettings } from "../cli/settings";
-import { asPreset, inspectCredential, problem, remedy, usable } from "../cli/preflight";
-import { carryHistory } from "../loop/carry";
-import { createSession, type Session } from "../loop/session";
-import { findPreset } from "../providers/catalog";
-import { listModels } from "../providers/models";
-import type { Provider } from "../providers/types";
-import type { Registry } from "../registry/types";
-import { permits, type VesnaConfig } from "../cli/config";
-import type { ProviderHandle } from "../cli/context";
-import { createEditor, applyKey, type EditorState } from "./editor";
+import { permits } from "../cli/config";
+import { createEditor, applyKey } from "./editor";
 import { emptyState } from "./emptystate";
 import { resolveGlyphs, type Glyphs } from "./glyphs";
 import { decodeKeys, type Key } from "./keys";
 import { layout, panelWidths, type Frame, type ViewState } from "./layout";
 import { chatsPane, gardenPane } from "./panes";
-import { createSpec, digestOf, digestOfText, listSpecs, readSpec, readSpecFile, specPaths, specsRoot } from "../spec/store";
-import { activeStage, type Approvable, type SpecTree } from "../spec/project";
-import { splitPlan } from "../sdd/brief";
-import type { SpecSink } from "../spec/sink";
+import { specsRoot } from "../spec/store";
 import { wrapAnsi } from "./wrap";
 import { spinnerFrame } from "./render";
 import { createScreen, type Terminal } from "./screen";
 import { resolveTheme, themeNames, type Theme } from "./theme";
 import { copyToClipboard, systemCopyIo } from "./clipboard";
-import { decide, facetOf, MODES, type Mode, type Policy } from "../policy/decide";
+import type { Mode } from "../policy/decide";
 import { runBuild, type BuildLoopRequest } from "../sdd/loop";
-import { buildState, pidAlive, readLockPid, type BuildState } from "../sdd/recover";
-import { rememberAllow, suggestPattern } from "../policy/store";
-import {
-  listSessions,
-  listSessionsSync,
-  readSession,
-  type OpenSession,
-  type SessionEvent,
-  type SessionSummary,
-} from "../store/sessions";
-import type { AgentMessage } from "../providers/types";
 import { createTranscript, type Transcript } from "./transcript";
+import { createCore, type CoreDeps } from "../core/core";
+import type { State } from "../core/types";
+import { detailOf } from "../loop/trace";
 
-export interface AppDeps {
-  registry: Registry;
-  provider: Provider;
-  config: VesnaConfig;
+export interface AppDeps extends CoreDeps {
   theme: Theme;
-  root: string;
-  /** The project's own instructions, from .vesna/AGENTS.md. */
-  notes?: string;
   /** Puts text on the clipboard. Injected so a test never touches the real one. */
   copy?: (text: string) => void | Promise<void>;
-  /** Where this conversation is written down as it happens. */
-  record?: OpenSession;
-  /** Prior turns, when this run resumed a stored conversation. */
-  resumed?: AgentMessage[];
-  /** Where conversations are stored, for /history and /resume. */
-  sessionsRoot?: string;
-  /** Which actions may proceed without asking. */
-  policy?: Policy;
-  /** Where the plan nodes write. Told which spec is open. */
-  sink?: SpecSink;
-  /** Where `/provider` writes the machine-wide default. Defaults to the real environment and home. */
-  env?: Record<string, string | undefined>;
-  home?: string;
-  /**
-   * Seams for `/build`'s call into `runBuild`, so a test can fake the worker,
-   * the reviewer and the merge step without a real git checkout. `git` is
-   * included alongside them: `runBuild` issues a few git calls of its own
-   * (reading the base branch, diffing a task's branch) even when the worker
-   * and reviewer are faked, and those branches only exist for real when the
-   * worker actually makes them. Production never sets this — the real
-   * functions are `runBuild`'s own defaults.
-   */
-  buildSeams?: Pick<BuildLoopRequest, "build" | "resume" | "review" | "merge" | "git" | "verify">;
-  /**
-   * How long quitting waits for a cancelled build to write `build.stopped`
-   * before leaving anyway. Ten seconds unless a test shortens it.
-   */
-  quitCeilingMs?: number;
 }
 
 export interface AppIo {
@@ -131,14 +64,16 @@ export async function runApp(deps: AppDeps, io: AppIo): Promise<number> {
   });
   const transcript = createTranscript(theme, glyphs);
 
+  // The agent itself. Everything drawn below comes from what it says: the
+  // transcript as it grows, and the state as the core last reported it.
+  const core = createCore(deps);
+  let state: State = core.snapshot();
+
   let editor = createEditor();
-  let session = newSession(deps, approve, deps.resumed, () => spec);
   let scroll = 0;
-  let busy = false;
   let tick = 0;
   let quitting = false;
   let confirmExit = false;
-  let turn: AbortController | null = null;
   // Whether this process has a build in flight. Not the log's `building`,
   // which a build killed in an earlier process leaves true forever — that
   // one must not trap the person here as well.
@@ -163,6 +98,19 @@ export async function runApp(deps: AppDeps, io: AppIo): Promise<number> {
     screen.draw(shown);
   };
 
+  // What the core says arrives one line at a time — a replayed conversation
+  // is hundreds of them in one go — and one frame at the end of the burst is
+  // the same frame as one after each.
+  let drawPending = false;
+  const scheduleDraw = () => {
+    if (drawPending) return;
+    drawPending = true;
+    queueMicrotask(() => {
+      drawPending = false;
+      draw();
+    });
+  };
+
   /** Never scroll past the top, and never past the newest line. */
   function clampScroll(next: number): number {
     const size = screen.size();
@@ -175,6 +123,7 @@ export async function runApp(deps: AppDeps, io: AppIo): Promise<number> {
 
   function currentView(): ViewState {
     const size = screen.size();
+    const { spec, chats } = state;
     const widths = panelWidths(size.cols, {
       left: showChats,
       // Nothing to show is not a column: the conversation takes the room.
@@ -195,7 +144,7 @@ export async function runApp(deps: AppDeps, io: AppIo): Promise<number> {
         : {}),
       ...(widths.left > 0
         ? {
-            left: chatsPane(chats, deps.record?.id, deps.root, {
+            left: chatsPane(chats ?? [], deps.record?.id, deps.root, {
               theme,
               glyphs,
               width: widths.left,
@@ -203,13 +152,13 @@ export async function runApp(deps: AppDeps, io: AppIo): Promise<number> {
             }),
           }
         : {}),
-      header: header(deps, theme, glyphs),
+      header: header(state, theme, glyphs),
       transcript: transcript.lines(Math.max(1, size.cols)),
       targets: transcript.copyTargets(Math.max(1, size.cols)),
       empty: emptyState({ theme, glyphs, cols: size.cols, rows: size.rows }),
       editor,
-      hint: hint(theme, busy, confirmExit, glyphs, policy.mode),
-      status: status(theme, session, busy, tick, glyphs, policy.mode),
+      hint: hint(theme, state.busy, confirmExit, glyphs, state.mode),
+      status: status(theme, state, tick, glyphs),
       scroll,
       panel: theme.panel,
       // The layout paints its own rule, prompt and input text through this,
@@ -217,13 +166,6 @@ export async function runApp(deps: AppDeps, io: AppIo): Promise<number> {
       paint: (role, text) => theme.paint(role, text),
       glyphs,
     };
-  }
-
-  /** Changes how much the agent may do without asking. */
-  function setMode(mode: Mode): void {
-    policy = { ...policy, mode };
-    transcript.notice(`mode: ${mode}  ${MODE_HELP[mode]}`, "ok");
-    draw();
   }
 
   /** Swaps the palette everywhere it shows. False when the name is unknown. */
@@ -236,365 +178,94 @@ export async function runApp(deps: AppDeps, io: AppIo): Promise<number> {
     return true;
   }
 
-  /** Never lets a write to disk take the conversation down with it. */
-  function remember(event: SessionEvent): void {
-    void deps.record?.append(event).catch(() => {});
-  }
-
   // While a question is on screen the next key answers it, rather than being
   // typed into a box the user cannot see behind the question. A `strict`
   // question takes only a typed y or n: enter is not a yes for it, because a
   // person leaning on enter to leave must not write a durable event.
   let awaiting: { resolve: (answer: string) => void; strict: boolean } | null = null;
-  let policy: Policy = deps.policy ?? { mode: "ask", allow: {}, deny: {} };
 
   // The left column is asked for; the right one shows the work in hand.
   let showChats = false;
-  let chats: SessionSummary[] = [];
   let showGarden = true;
-  let spec: SpecTree | null = null;
+  // Set while a stored conversation is being reopened, so the clear that
+  // starts the replay is known to be that and not a /clear.
+  let resuming = false;
 
-  const specs = specsRoot(deps.root);
-
-  function openSpec(slug: string): boolean {
-    const tree = readSpec(specs, slug);
-    if (tree === null) return false;
-    spec = tree;
-    showGarden = true;
-    // The nodes write to whichever spec the user is looking at.
-    if (deps.sink !== undefined) deps.sink.slug = slug;
-    return true;
-  }
-
-  /**
-   * The tree is the log reduced, so it is re-read rather than patched. It also
-   * picks up a spec the agent opened for itself: planning is what makes the
-   * column appear, and the user should not have had to know a command first.
-   */
-  function refreshSpec(): void {
-    const slug = deps.sink?.slug;
-    if (slug !== undefined && slug !== null && spec?.id !== slug) {
-      const opened = readSpec(specs, slug);
-      if (opened !== null) {
-        spec = opened;
-        showGarden = true;
-        transcript.notice(`plan: ${opened.title}  (ctrl-g hides it)`, "ok");
+  core.on((notification) => {
+    switch (notification.method) {
+      case "transcript": {
+        const entry = notification.params;
+        switch (entry.kind) {
+          case "user":
+            transcript.user(entry.text);
+            break;
+          case "delta":
+            transcript.delta(entry.text);
+            break;
+          case "step":
+            transcript.step(entry.step.nodeType, entry.step.durationMs, detailOf(entry.step.input));
+            break;
+          case "notice":
+            transcript.notice(entry.text, entry.level);
+            break;
+          case "turn-end":
+            transcript.endTurn();
+            break;
+          case "clear":
+            transcript.clear();
+            // What was there is gone, so there is nothing to be scrolled
+            // back into; a reopened conversation also closes the column
+            // it was picked from.
+            scroll = 0;
+            if (resuming) showChats = false;
+            break;
+        }
+        scheduleDraw();
         return;
       }
-    }
-    if (spec !== null) spec = readSpec(specs, spec.id) ?? spec;
-  }
-
-  /**
-   * `spec` read as a plain property access, from a function of its own —
-   * not inline in `runApp`'s own body. TypeScript's flow analysis only ever
-   * sees `spec` reassigned through calls to functions like `openSpec` and
-   * `refreshSpec`, never a literal assignment in its own scope, so inline it
-   * narrows `spec` to exactly its initial `null` and then refuses `.building`
-   * as a property of `never`. A function boundary resets that to the
-   * declared type, the same way `refreshSpec` above reads `spec` safely.
-   *
-   * The state comes from the log and the lock together, the way `runBuild`
-   * reads it: a log that says building is a live build only while some
-   * process holds the lock. No lock, or a lock whose pid is gone, is a
-   * build a killed process left behind — dead, and a person's to recover.
-   */
-  function currentBuildState(): BuildState {
-    if (spec === null || deps.sink?.slug == null) return "idle";
-    const lock = join(specPaths(specs, deps.sink.slug).dir, "build.lock");
-    const pid = readLockPid(lock);
-    return buildState(spec, pid !== null && pidAlive(pid));
-  }
-
-  /**
-   * The sha256 of the text being approved, so the log names what the yes was
-   * for and the loop can refuse a plan edited after it. Null when the file is
-   * not there — an approval before the text is written carries no digest.
-   */
-  function approvalDigest(what: Approvable): string | null {
-    const slug = deps.sink?.slug;
-    if (slug == null) return null;
-    const paths = specPaths(specs, slug);
-    return digestOf(what === "spec" ? paths.spec : paths.plan);
-  }
-
-  /**
-   * The one event no tool can emit, written with the digest of what it
-   * approves. `/approve` reads the file now; the question passes the digest
-   * it took when it was shown, so a yes names the text that was read.
-   */
-  function writeApproval(what: Approvable, digest: string | null = approvalDigest(what)): void {
-    if (deps.sink === undefined) return;
-    deps.sink.emit({ t: "approved", what, ...(digest !== null ? { digest } : {}) });
-  }
-
-  /**
-   * After a turn that leaves a spec or a plan waiting, one question under the
-   * answer. The plan's tasks and their checks come first: the checks are
-   * what Vesna will run, so they are part of the yes. Only y writes anything;
-   * n writes nothing and the question returns after the next turn. A plan
-   * that does not split is not asked about — /build says why.
-   *
-   * Only a typed y or n answers: enter is what a person presses to send
-   * `/exit`, and an approval is a durable event that unlocks /build, so the
-   * keystroke that writes it has to be the one the question named.
-   */
-  async function askApproval(): Promise<void> {
-    if (turn !== null || leaving || building) return;
-    const slug = deps.sink?.slug;
-    if (slug == null) return;
-    const paths = specPaths(specs, slug);
-    const specText = readSpecFile(paths.spec);
-    const planText = readSpecFile(paths.plan);
-    const plan = (() => {
-      if (planText === null) return null;
-      try {
-        return splitPlan(planText);
-      } catch {
-        return null;
+      case "state": {
+        // A spec that was just opened — by the person or by the agent
+        // planning — is shown; hiding it again is ctrl-g, as before.
+        const next = notification.params;
+        if (next.specSlug !== null && next.specSlug !== state.specSlug) showGarden = true;
+        state = next;
+        scheduleDraw();
+        return;
       }
-    })();
-    const question = approvalQuestion(spec, { specWritten: specText !== null, plan });
-    if (question === null) return;
-    // The digest of the text in hand — the one whose tasks are listed — not
-    // of the file at y: an outside edit while the question stands must not
-    // be approved by a yes to a different text. The loop compares the
-    // digest at /build and refuses a plan.md that no longer matches it.
-    const text = question.what === "spec" ? specText : planText;
-    const digest = text === null ? null : digestOfText(text);
-
-    for (const [index, line] of question.lines.entries()) {
-      transcript.notice(line, index === question.lines.length - 1 ? "warn" : "muted");
+      case "ask": {
+        // The question's lines are notices, painted as the prompt always was:
+        // a permission is its action in warn and its choices muted; an
+        // approval lists what is approved muted and asks in warn.
+        const ask = notification.params;
+        for (const [index, line] of ask.lines.entries()) {
+          const last = index === ask.lines.length - 1;
+          const tone = ask.kind === "permission" ? (index === 0 ? "warn" : "muted") : last ? "warn" : "muted";
+          transcript.notice(line, tone);
+        }
+        awaiting = { resolve: (value) => void core.answer(ask.id, value), strict: ask.strict };
+        scheduleDraw();
+        return;
+      }
+      case "ask.resolved":
+        awaiting = null;
+        return;
     }
-    draw();
+  });
 
-    const answer = await new Promise<string>((resolve) => {
-      awaiting = { resolve, strict: true };
-    });
-    awaiting = null;
-    if (answer === "y") {
-      writeApproval(question.what, digest);
-      refreshSpec();
-      transcript.notice(approveOutcome(question.what, spec, true).message, "ok");
-    } else {
-      transcript.notice("not yet", "muted");
-    }
-    transcript.endTurn();
-    draw();
-  }
-
-  function refreshChats(): void {
-    if (deps.sessionsRoot === undefined) return;
-    chats = listSessionsSync(deps.sessionsRoot, { cwd: deps.root });
-  }
-
-  function toggleChats(): void {
+  async function toggleChats(): Promise<void> {
     showChats = !showChats;
-    if (showChats) refreshChats();
+    if (showChats) await core.command("chats", "");
     draw();
   }
 
-  /**
-   * Asks before an action, and remembers the answer when told to.
-   *
-   * The remembered rule covers the directory or the command rather than the
-   * one file: a rule that answers only this exact path asks again on the next
-   * file beside it, which teaches the user to stop reading the question.
-   */
-  async function approve(action: {
-    node: string;
-    input: Record<string, unknown>;
-    cwd: string;
-    effect?: "pure" | "write" | "external";
-  }): Promise<"allow" | "deny"> {
-    const verdict = decide(action, policy, deps.root);
-    if (verdict === "allow") return "allow";
-    if (verdict === "deny") {
-      transcript.notice(
-        policy.mode === "plan"
-          ? `${action.node} refused: plan mode changes nothing — shift-tab to leave it`
-          : `refused by policy: ${action.node}`,
-        "warn",
-      );
-      draw();
-      return "deny";
-    }
-
-    const facet = facetOf(action, deps.root) ?? "";
-    const pattern = facet === "" ? "" : suggestPattern(action.node, facet);
-
-    transcript.notice(`${action.node}  ${facet}`, "warn");
-    transcript.notice(
-      pattern === ""
-        ? "[y] allow   [n] refuse"
-        : `[y] allow once   [a] always ${pattern}   [n] refuse`,
-      "muted",
-    );
-    draw();
-
-    const answer = await new Promise<string>((resolve) => {
-      awaiting = { resolve, strict: false };
-    });
-    awaiting = null;
-
-    if (answer === "a" && pattern === "") {
-      transcript.notice("allowed once — there is nothing here to make a rule from", "ok");
-      draw();
-      return "allow";
-    }
-
-    if (answer === "a") {
-      policy = {
-        ...policy,
-        allow: { ...policy.allow, [action.node]: [...(policy.allow[action.node] ?? []), pattern] },
-      };
-      void rememberAllow(deps.root, action.node, pattern).catch(() => {});
-      transcript.notice(`allowed, and remembered: ${pattern}`, "ok");
-      draw();
-      return "allow";
-    }
-    if (answer === "y") {
-      transcript.notice("allowed once", "ok");
-      draw();
-      return "allow";
-    }
-
-    transcript.notice("refused", "warn");
-    draw();
-    return "deny";
-  }
-
-  function specCommand(argument: string): void {
-    const [verb, ...rest] = argument.trim().split(/\s+/);
-    const name = rest.join(" ");
-
-    if (verb === "new") {
-      if (name === "") {
-        transcript.notice("/spec new <name>", "warn");
-        return;
-      }
-      // Creating a spec opens it, which is a switch: see /spec open below.
-      if (spec?.building === true) {
-        transcript.notice(specSwitchBlocked(), "warn");
-        return;
-      }
-      try {
-        const made = createSpec(specs, name);
-        openSpec(made.slug);
-        transcript.notice(`spec ${made.slug}`, "ok");
-      } catch (error) {
-        transcript.notice((error as Error).message, "warn");
-      }
-      return;
-    }
-
-    if (verb === "open") {
-      // The build keeps writing to the spec it was started on — `runBuild`
-      // took the slug by value. What a switch would move is everything
-      // else: the garden, `/approve`, `/classify` and the chat's own `plan`
-      // tool would all point at the new spec while the build's events kept
-      // landing in the old one, and `/build`'s "already running" check,
-      // which reads the open spec, would let a second build start.
-      if (spec?.building === true) {
-        transcript.notice(specSwitchBlocked(), "warn");
-        return;
-      }
-      if (!openSpec(name)) {
-        transcript.notice(`no spec called "${name}" — /spec for the list`, "warn");
-        return;
-      }
-      transcript.notice(`spec ${name}`, "ok");
-      return;
-    }
-
-    const found = listSpecs(specs);
-    if (found.length === 0) {
-      transcript.notice("no specs yet — /spec new <name>", "muted");
-      return;
-    }
-    for (const entry of found) {
-      const here = spec?.id === entry.slug;
-      transcript.notice(`${here ? "* " : "  "}${entry.slug}  ${entry.title}`, here ? "ok" : "muted");
-    }
-    transcript.notice("/spec open <slug>", "muted");
-  }
-
-  /** The last listing, so /resume can take a number rather than an id. */
-  let listed: SessionSummary[] = [];
-
-  async function showHistory(argument: string): Promise<void> {
-    const root = deps.sessionsRoot;
-    if (root === undefined) {
-      transcript.notice("history is not available in this session", "warn");
-      return;
-    }
-
-    const everywhere = argument.trim() === "all";
-    const all = await listSessions(root, everywhere ? {} : { cwd: deps.root });
-    // Resuming the conversation you are already having is not a thing.
-    listed = all.filter((entry) => entry.id !== deps.record?.id);
-
-    if (listed.length === 0) {
-      transcript.notice(
-        everywhere ? "no conversations yet" : "no conversations from this folder — /history all",
-        "muted",
-      );
-      return;
-    }
-
-    transcript.notice(everywhere ? "all folders" : deps.root, "muted");
-    for (const [index, entry] of listed.entries()) {
-      const when = entry.updatedAt.slice(0, 16).replace("T", " ");
-      const cost = entry.costUsd > 0 ? `  $${entry.costUsd.toFixed(2)}` : "";
-      transcript.notice(
-        `${String(index + 1).padStart(2)}  ${when}  ${entry.title}${cost}`,
-        "muted",
-      );
-    }
-    transcript.notice(`/resume <number> to reopen${everywhere ? "" : " · /history all"}`, "muted");
-  }
-
+  /** Reopens a stored conversation, from the list or from a click on it. */
   async function resume(argument: string): Promise<void> {
-    const which = Number.parseInt(argument.trim(), 10);
-    if (Number.isNaN(which) || listed[which - 1] === undefined) {
-      transcript.notice("/resume <number> from the last /history listing", "warn");
-      return;
+    resuming = true;
+    try {
+      await core.command("resume", argument);
+    } finally {
+      resuming = false;
     }
-    await resumeById(listed[which - 1]!.id);
-  }
-
-  /** Reopening by id, whether that came from a listing or from a click. */
-  async function resumeById(id: string): Promise<void> {
-    const root = deps.sessionsRoot;
-    if (root === undefined) {
-      transcript.notice("history is not available in this session", "warn");
-      return;
-    }
-
-    const stored = await readSession(root, id);
-    if (stored === null) {
-      transcript.notice("that conversation is no longer on disk", "warn");
-      return;
-    }
-
-    // Rebuilt rather than summarised: the screen shows what was said, and the
-    // model is seeded with the messages it actually saw.
-    transcript.clear();
-    const messages: AgentMessage[] = [];
-    for (const event of stored.events) {
-      if (event.t === "user") transcript.user(event.text);
-      else if (event.t === "answer") {
-        transcript.delta(event.raw);
-        transcript.endTurn();
-      } else if (event.t === "step") {
-        transcript.step(event.nodeType, event.durationMs, event.detail);
-      } else if (event.t === "messages") messages.push(...event.added);
-    }
-
-    session = newSession(deps, approve, messages, () => spec);
-    scroll = 0;
-    showChats = false;
-    transcript.notice(`resumed · ${stored.summary.title}`, "ok");
     // Called straight from a click as well as from the command loop, so it
     // cannot rely on someone else redrawing afterwards.
     draw();
@@ -679,8 +350,8 @@ export async function runApp(deps: AppDeps, io: AppIo): Promise<number> {
 
     switch (key.type) {
       case "interrupt":
-        if (turn !== null) {
-          turn.abort();
+        if (state.busy) {
+          core.interrupt();
           return;
         }
         if (editor.text !== "") {
@@ -700,7 +371,7 @@ export async function runApp(deps: AppDeps, io: AppIo): Promise<number> {
         return;
 
       case "eof":
-        if (editor.text === "" && turn === null && !leave()) draw();
+        if (editor.text === "" && !state.busy && !leave()) draw();
         return;
 
       case "click": {
@@ -714,7 +385,7 @@ export async function runApp(deps: AppDeps, io: AppIo): Promise<number> {
 
         if (target === undefined) return;
         if (target.startsWith("session:")) {
-          void resumeById(target.slice("session:".length));
+          void resume(target.slice("session:".length));
           return;
         }
         const text = transcript.rawOf(target);
@@ -740,11 +411,11 @@ export async function runApp(deps: AppDeps, io: AppIo): Promise<number> {
       }
 
       case "panel-left":
-        toggleChats();
+        void toggleChats();
         return;
 
       case "cycle-mode": {
-        setMode(nextMode(policy.mode));
+        void core.command("mode", nextMode(state.mode));
         return;
       }
 
@@ -754,7 +425,7 @@ export async function runApp(deps: AppDeps, io: AppIo): Promise<number> {
         return;
 
       case "escape":
-        if (turn !== null) turn.abort();
+        if (state.busy) core.interrupt();
         return;
 
       default: {
@@ -799,19 +470,16 @@ export async function runApp(deps: AppDeps, io: AppIo): Promise<number> {
       const input = parseChatInput(line);
 
       if (input.kind === "blank") continue;
+      // A slash command is control, not conversation: it is quoted back
+      // here, never sent, and so never recorded as what was said.
+      transcript.user(line);
+      draw();
+
       if (input.kind === "unknown") {
-        transcript.user(line);
-        transcript.notice(`unknown command /${input.name} - try /help`, "warn");
-        transcript.endTurn();
+        await core.command(input.name, "");
         draw();
         continue;
       }
-
-      transcript.user(line);
-      // A slash command is control, not conversation: recording it would make
-      // "/history" the title of the session and put it in its own listing.
-      if (input.kind === "message") remember({ t: "user", text: line });
-      draw();
 
       if (input.kind === "command") {
         if (input.name === "exit") {
@@ -820,55 +488,15 @@ export async function runApp(deps: AppDeps, io: AppIo): Promise<number> {
           continue;
         }
 
-        if (input.name === "mode") {
-          const wanted = input.argument.trim();
-          if ((MODES as readonly string[]).includes(wanted)) setMode(wanted as Mode);
-          else transcript.notice(`/mode plan, ask or auto — not "${wanted}"`, "warn");
-          transcript.endTurn();
-          draw();
-          continue;
-        }
-
-        if (input.name === "spec") {
-          specCommand(input.argument);
-          transcript.endTurn();
-          draw();
-          continue;
-        }
-
-        if (input.name === "approve") {
-          const outcome = approveOutcome(input.argument, spec, deps.sink !== undefined);
-          if (outcome.kind === "approved" && deps.sink !== undefined) {
-            writeApproval(outcome.what);
-            refreshSpec();
-            transcript.notice(outcome.message, "ok");
-          } else {
-            transcript.notice(outcome.message, "warn");
-          }
-          transcript.endTurn();
-          draw();
-          continue;
-        }
-
-        if (input.name === "classify") {
-          const outcome = classifyOutcome(input.argument, spec, deps.sink !== undefined);
-          if (outcome.kind === "classified" && deps.sink !== undefined) {
-            deps.sink.emit({ t: "classified", shape: outcome.shape, by: "person" });
-            refreshSpec();
-            transcript.notice(outcome.message, "ok");
-          } else {
-            transcript.notice(outcome.message, "warn");
-          }
-          transcript.endTurn();
-          draw();
-          continue;
-        }
+        // Opening a spec, even one already open and hidden, is asking to see it.
+        if (input.name === "spec" && /^(new|open)(\s|$)/.test(input.argument.trim())) showGarden = true;
 
         if (input.name === "build") {
           // The log may have moved under this chat — a build run and killed
           // in another process — and the lock is read fresh below, so the
           // tree it is judged against has to be fresh too.
-          refreshSpec();
+          core.refreshSpec();
+          const spec = state.spec;
           // This process's own build comes first, from its own flag: the
           // loop checks the checkout before it takes the lock, so for a
           // moment after a launch the log and the lock still read as dead,
@@ -886,7 +514,7 @@ export async function runApp(deps: AppDeps, io: AppIo): Promise<number> {
           // build.stopped, and `onEvent` below prints them as they land.
           let recovery: BuildLoopRequest["recovery"];
           if (input.argument.trim() !== "") {
-            const outcome = recoverOutcome(input.argument, spec, building ? "running" : currentBuildState());
+            const outcome = recoverOutcome(input.argument, spec, building ? "running" : core.currentBuildState());
             if (outcome.kind === "refused") {
               transcript.notice(outcome.message, "warn");
               transcript.endTurn();
@@ -910,7 +538,7 @@ export async function runApp(deps: AppDeps, io: AppIo): Promise<number> {
             recovery = { action: outcome.action, ...(outcome.task !== undefined ? { task: outcome.task } : {}) };
             transcript.notice(outcome.message, "ok");
           } else {
-            const start = buildStart(spec, currentBuildState());
+            const start = buildStart(spec, core.currentBuildState());
             if (start.kind === "refused") {
               transcript.notice(start.message, "warn");
               transcript.endTurn();
@@ -934,6 +562,7 @@ export async function runApp(deps: AppDeps, io: AppIo): Promise<number> {
           // Runs alongside the conversation. Each event redraws the garden and
           // adds a line, so the person watches it happen rather than waiting.
           building = true;
+          core.setBuilding(true);
           buildController = new AbortController();
           void runBuild({
             root: deps.root,
@@ -941,7 +570,7 @@ export async function runApp(deps: AppDeps, io: AppIo): Promise<number> {
             slug: deps.sink.slug!,
             provider: deps.provider,
             registry: deps.registry,
-            policy,
+            policy: core.policy(),
             permit: (type) => permits(deps.config, type),
             ...(deps.notes !== undefined ? { notes: deps.notes } : {}),
             ...(recovery !== undefined ? { recovery } : {}),
@@ -955,22 +584,22 @@ export async function runApp(deps: AppDeps, io: AppIo): Promise<number> {
                 const line = describeEvent(event);
                 if (line !== null) transcript.notice(line, event.t === "build.stopped" ? "warn" : "muted");
               }
-              refreshSpec();
-              draw();
+              core.refreshSpec();
             },
           })
             .then((outcome) => {
               building = false;
+              core.setBuilding(false);
               buildController = null;
               // A stop already reached the transcript as its `build.stopped`
               // event above; only a build that never started has no event
               // to carry its reason.
               if (outcome.status === "could-not-start") transcript.notice(outcome.reason, "warn");
-              refreshSpec();
-              draw();
+              core.refreshSpec();
             })
             .catch((error) => {
               building = false;
+              core.setBuilding(false);
               buildController = null;
               // A build can reject rather than resolve: an ordinary git
               // failure deep inside a worker's own commit throws a plain
@@ -979,98 +608,45 @@ export async function runApp(deps: AppDeps, io: AppIo): Promise<number> {
               // so it lands in the transcript instead, the same way every
               // other fire-and-forget write in this file guards itself.
               transcript.notice(buildFailed(error as Error), "error");
-              refreshSpec();
-              draw();
+              core.refreshSpec();
             });
           continue;
         }
 
+        // The column and the palette are the screen's; the rest is the agent's.
         if (input.name === "chats") {
-          toggleChats();
-          continue;
-        }
-
-        if (input.name === "history") {
-          await showHistory(input.argument);
-          transcript.endTurn();
-          draw();
+          await toggleChats();
           continue;
         }
 
         if (input.name === "resume") {
           await resume(input.argument);
+          continue;
+        }
+
+        if (input.name === "help" || input.name === "cost" || input.name === "theme" || input.name === "copy") {
+          await command(input.name, input.argument, state, transcript, glyphs, copy, theme, applyTheme);
           transcript.endTurn();
           draw();
           continue;
         }
 
-        const modelBefore = (deps.provider as Partial<ProviderHandle>).model;
-        session = await command(
-          input.name,
-          input.argument,
-          deps,
-          session,
-          transcript,
-          glyphs,
-          copy,
-          theme,
-          applyTheme,
-          (messages) => newSession(deps, approve, messages, () => spec),
-        );
-        // The stored conversation records which model answered it, and that
-        // was the startup one for the whole file after a mid-session switch.
-        const modelAfter = (deps.provider as Partial<ProviderHandle>).model;
-        if (modelAfter !== undefined && modelAfter !== modelBefore) {
-          remember({ t: "model", model: modelAfter });
-        }
-        transcript.endTurn();
+        await core.command(input.name, input.argument);
         draw();
         continue;
       }
 
-      busy = true;
-      turn = new AbortController();
+      // The core quotes the message back and says what the model says; the
+      // spinner is the one thing here that is the screen's own.
       const spinner = setInterval(() => {
         tick += 1;
         draw();
       }, 90);
-
-      const before = session.messages.length;
-      // An interrupted turn is a person taking the keyboard back: the second
-      // ctrl-c the hint promises must arm the exit, not answer a question
-      // they did not ask for. The question returns after a completed turn.
-      let interrupted = false;
       try {
-        await runTurn(session, input.text, transcript, turn.signal, draw, remember, refreshSpec);
-      } catch (error) {
-        // An abort is the user's own doing, and reads as a warning. A provider
-        // that fell over is a failure, and gets the colour that says so.
-        const aborted = turn.signal.aborted;
-        interrupted = aborted;
-        transcript.notice(
-          aborted ? "interrupted" : (error as Error).message,
-          aborted ? "warn" : "error",
-        );
+        await core.send(line);
       } finally {
         clearInterval(spinner);
-        turn = null;
-        busy = false;
-
-        const answer = transcript.lastAnswer();
-        if (answer !== undefined) remember({ t: "answer", raw: answer });
-        const added = session.messages.slice(before);
-        if (added.length > 0) remember({ t: "messages", added });
-        remember({
-          t: "usage",
-          inputTokens: session.usage.inputTokens,
-          outputTokens: session.usage.outputTokens,
-          costUsd: session.costUsd,
-        });
-
-        refreshSpec();
-        transcript.endTurn();
         draw();
-        if (!interrupted) await askApproval();
       }
     }
   } finally {
@@ -1079,72 +655,24 @@ export async function runApp(deps: AppDeps, io: AppIo): Promise<number> {
     screen.leave();
     io.setRawMode?.(false);
     submissions.close();
+    await core.close();
     await Promise.race([reading, Promise.resolve()]);
   }
 
   return EXIT.ok;
 }
 
-async function runTurn(
-  session: Session,
-  text: string,
-  transcript: Transcript,
-  signal: AbortSignal,
-  draw: () => void,
-  onRecord: (event: SessionEvent) => void,
-  onSpecChanged: () => void,
-): Promise<void> {
-  let streamed = false;
-  const result = await session.send(text, {
-    signal,
-    onText(delta) {
-      streamed = true;
-      transcript.delta(delta);
-      draw();
-    },
-    onStep(step) {
-      transcript.step(step.nodeType, step.durationMs, detailOf(step.input));
-      onSpecChanged();
-      onRecord({
-        t: "step",
-        nodeType: step.nodeType,
-        durationMs: step.durationMs,
-        ...(detailOf(step.input) ? { detail: detailOf(step.input)! } : {}),
-      });
-      draw();
-    },
-  });
-
-  // A provider that does not stream never called onText.
-  if (!streamed && result.text) transcript.delta(result.text);
-}
-
-/** The one field worth showing next to a step, when there is an obvious one. */
-function detailOf(input: unknown): string | undefined {
-  if (input === null || typeof input !== "object") return undefined;
-  const record = input as Record<string, unknown>;
-  for (const field of ["path", "pattern", "command", "name"]) {
-    const value = record[field];
-    if (typeof value === "string" && value !== "") {
-      return value.length > 48 ? `${value.slice(0, 45)}...` : value;
-    }
-  }
-  return undefined;
-}
-
+/** The commands that are the screen's own: what it shows, and how. */
 async function command(
   name: string,
   argument: string,
-  deps: AppDeps,
-  session: Session,
+  state: State,
   transcript: Transcript,
   glyphs: Glyphs,
   onCopy: (text: string) => Promise<void>,
   theme: Theme,
   setTheme: (name: string) => boolean,
-  makeSession: (messages?: AgentMessage[]) => Session,
-): Promise<Session> {
-
+): Promise<void> {
   if (name === "help") {
     for (const entry of CHAT_COMMANDS) {
       transcript.notice(`${`/${entry.name}`.padEnd(14)} ${entry.help}`, "muted");
@@ -1153,16 +681,16 @@ async function command(
       `shift-up/down or pgup/pgdn scroll ${glyphs.bullet} alt-enter newline ${glyphs.bullet} ctrl-c interrupt`,
       "muted",
     );
-    return session;
+    return;
   }
 
   if (name === "cost") {
-    const { usage } = session;
+    const { usage } = state;
     transcript.notice(
-      `${usage.inputTokens} in ${glyphs.bullet} ${usage.outputTokens} out ${glyphs.bullet} $${session.costUsd.toFixed(4)}`,
+      `${usage.inputTokens} in ${glyphs.bullet} ${usage.outputTokens} out ${glyphs.bullet} $${usage.costUsd.toFixed(4)}`,
       "muted",
     );
-    return session;
+    return;
   }
 
   if (name === "theme") {
@@ -1172,243 +700,30 @@ async function command(
         const mark = available === theme.name ? "  (current)" : "";
         transcript.notice(`${available.padEnd(8)}${mark}`, available === theme.name ? "ok" : "muted");
       }
-      return session;
+      return;
     }
     if (!setTheme(wanted)) {
       transcript.notice(`no theme called "${wanted}" — try /theme for the list`, "warn");
-      return session;
+      return;
     }
     // Rewriting the user's config would cost them their comments and layout.
     transcript.notice(`theme: ${wanted}  (this session; set theme: in the config to keep it)`, "ok");
-    return session;
+    return;
   }
 
   if (name === "copy") {
     const answer = transcript.lastAnswer();
     if (answer === undefined) {
       transcript.notice("nothing to copy yet", "warn");
-      return session;
+      return;
     }
     await onCopy(answer);
-    return session;
   }
-
-  if (name === "clear") {
-    transcript.clear();
-    transcript.notice("new conversation", "muted");
-    return makeSession();
-  }
-
-  if (name === "provider") {
-    // The TUI is always handed a ProviderHandle (see buildContext in
-    // src/cli/context.ts) — the plain Provider in AppDeps is the interface
-    // every other consumer needs, and this is the one place that needs more.
-    const handle = deps.provider as ProviderHandle;
-    const env = deps.env ?? process.env;
-    const wanted = argument.trim();
-
-    if (wanted === "") {
-      for (const line of describeProviders(handle.preset.id, env)) {
-        transcript.notice(line, "muted");
-      }
-      return session;
-    }
-
-    const carried = carryHistory(session.messages);
-    const outcome = switchOutcome(wanted, {
-      pinned: deps.config.pinned,
-      dropped: carried.dropped,
-      active: handle.preset.id,
-    });
-
-    // Named by what may proceed, not by what may not: every branch below this
-    // writes `~/.vesna/settings.yaml`, so a refusal added to `switchOutcome`
-    // later stops here on its own instead of falling through to the write.
-    if (outcome.kind !== "switched" && outcome.kind !== "pinned") {
-      transcript.notice(outcome.message, "warn");
-      return session;
-    }
-
-    const preset = findPreset(wanted)!;
-
-    // The same verdict `vesna auth`, the check before a conversation and
-    // onboarding all use. Without it this command reported success, wrote the
-    // machine default, and left the next bare `vesna` exiting 1 on a
-    // credential that was never there — a CLI disabled from inside a chat.
-    const probe = asPreset(deps.config, preset);
-    const credential = await inspectCredential(probe, env, deps.home ?? homedir());
-    if (!usable(credential)) {
-      const blocked = switchBlocked(preset.id, problem(credential), remedy(probe, credential));
-      transcript.notice(blocked.message, "warn");
-      for (const line of blocked.hints) transcript.notice(line, "muted");
-      return session;
-    }
-
-    const path = settingsPath(env, deps.home ?? homedir());
-    const settings = {
-      provider: preset.id,
-      model: preset.model,
-      ...(preset.baseUrl !== undefined ? { baseUrl: preset.baseUrl } : {}),
-    };
-
-    if (outcome.kind === "pinned") {
-      // Only the machine default moves. The running conversation, and the
-      // provider serving it, are exactly what this project pins them to.
-      writeSettings(path, settings);
-      transcript.notice(outcome.message, "ok");
-      return session;
-    }
-
-    // Build the replacement before writing anything or touching the session:
-    // a host that refuses the connection must leave both exactly as they
-    // were, rather than half-applying a switch that never completed.
-    try {
-      await handle.switch(preset, preset.model, preset.baseUrl);
-    } catch (error) {
-      transcript.notice(switchFailed(preset.id, error as Error), "error");
-      return session;
-    }
-    writeSettings(path, settings);
-    transcript.notice(outcome.message, "ok");
-    return makeSession(carried.messages);
-  }
-
-  if (name === "model") {
-    // Same reasoning as /provider above: AppDeps hands out a plain Provider,
-    // but the TUI always receives the richer handle that can report and
-    // switch model.
-    const handle = deps.provider as ProviderHandle;
-    const wanted = argument.trim();
-
-    if (wanted === "") {
-      // The handle's own baseUrl, not deps.config.baseUrl: after a /provider
-      // switch the two can differ, and the config snapshot is stale.
-      const models = await listModels(handle.preset, handle.baseUrl);
-      for (const line of describeModels(models, handle.model)) {
-        transcript.notice(line, "muted");
-      }
-      return session;
-    }
-
-    const carried = carryHistory(session.messages);
-    const env = deps.env ?? process.env;
-    const path = settingsPath(env, deps.home ?? homedir());
-    const machine = readSettings(path);
-    const outcome = modelSwitchOutcome(wanted, {
-      pinned: deps.config.pinned,
-      dropped: carried.dropped,
-      // The handle, because the roster above came from the handle: whichever
-      // service listed the models is the service the typed name belongs to.
-      active: handle.preset.id,
-      ...(machine.provider !== undefined ? { machineProvider: machine.provider } : {}),
-    });
-
-    // Named by what may proceed, for the same reason /provider is: both
-    // branches below write `~/.vesna/settings.yaml`.
-    if (outcome.kind !== "switched" && outcome.kind !== "pinned") {
-      transcript.notice(outcome.message, "warn");
-      return session;
-    }
-
-    if (outcome.kind === "pinned") {
-      // Only the machine default's model moves, and only that: its provider is
-      // whatever the machine already chose. This project's pin is a fact about
-      // this directory, so writing it into the machine default — which is what
-      // `provider: handle.preset.id` did here — takes the one setting that was
-      // supposed to stay local and makes it global.
-      writeSettings(path, { ...machine, model: wanted });
-      transcript.notice(outcome.message, "ok");
-      return session;
-    }
-
-    // Not pinned: the handle is what is in effect here, so its own service and
-    // address are the tuple worth recording alongside the new model.
-    const settings = {
-      provider: handle.preset.id,
-      model: wanted,
-      ...(handle.baseUrl !== undefined ? { baseUrl: handle.baseUrl } : {}),
-    };
-
-    // Build the replacement before writing anything or touching the session:
-    // a host that refuses the connection must leave both exactly as they
-    // were, rather than half-applying a switch that never completed.
-    try {
-      await handle.switch(handle.preset, wanted, handle.baseUrl);
-    } catch (error) {
-      transcript.notice(switchFailed(wanted, error as Error), "error");
-      return session;
-    }
-    writeSettings(path, settings);
-    transcript.notice(outcome.message, "ok");
-    // Rebuilt through the same path /provider uses: the dialect never
-    // changes here, so carryHistory should never actually drop anything, but
-    // the model the new session is seeded with has to come from newSession
-    // reading the handle, not from the stale snapshot in deps.config.
-    return makeSession(carried.messages);
-  }
-
-  return session;
 }
-
-function newSession(
-  deps: AppDeps,
-  approve: (action: {
-    node: string;
-    input: Record<string, unknown>;
-    cwd: string;
-    effect?: "pure" | "write" | "external";
-  }) => Promise<"allow" | "deny">,
-  resumed?: AgentMessage[],
-  /** Reads the currently open spec. Called fresh on every turn, not just now. */
-  getSpec?: () => SpecTree | null,
-): Session {
-  // After a mid-session /model or /provider switch, the handle is what is
-  // actually current — deps.config.model is only a snapshot of how the
-  // process started. A plain Provider (most tests, and any consumer that
-  // never switches) has no `model` field, hence the fallback.
-  const model = (deps.provider as ProviderHandle).model ?? deps.config.model;
-  return createSession(deps.provider, deps.registry, {
-    cwd: deps.root,
-    model,
-    prices: deps.config.prices,
-    notes: deps.notes,
-
-    permit: (type) => permits(deps.config, type),
-    approve,
-    ...(resumed ? { history: resumed } : {}),
-    // A function, not a value: the stage moves between turns as the person
-    // approves a spec or a plan, and a session built once must not keep
-    // telling the model about the phase it was in at startup.
-    phase: () => {
-      const tree = getSpec?.() ?? null;
-      const slug = deps.sink?.slug;
-      if (tree === null || slug === undefined || slug === null) return undefined;
-      const paths = specPaths(specsRoot(deps.root), slug);
-      // Whether the design has been written is a fact about the file, not
-      // the log; read it here, fresh each turn like the rest.
-      const specWritten = readSpecFile(paths.spec) !== null;
-      return {
-        stage: activeStage(tree, { specWritten }),
-        specPath: paths.spec,
-        planPath: paths.plan,
-        ...(tree.shape !== undefined ? { shape: tree.shape } : {}),
-        planApproved: tree.approved.plan,
-        ...(tree.lastStop !== undefined ? { lastStop: tree.lastStop } : {}),
-      };
-    },
-  });
-}
-
-function header(deps: AppDeps, theme: Theme, glyphs: Glyphs): string {
-  // The live handle, not deps.config: the config is how the process started,
-  // and `/provider` and `/model` move the connection out from under it. A
-  // plain Provider (most tests, and any consumer that never switches) carries
-  // neither field, hence the fallbacks.
-  const handle = deps.provider as Partial<ProviderHandle>;
-  const { model, service } = describeHeader(
-    handle.model ?? deps.config.model,
-    handle.preset ?? deps.config.preset,
-  );
+function header(state: State, theme: Theme, glyphs: Glyphs): string {
+  // The model and the service as the core last reported them: `/provider`
+  // and `/model` move the connection, and the state follows.
+  const { model, service } = state;
   const dot = theme.paint("muted", glyphs.bullet);
   // Every span here paints. A bare one would close the run before it with
   // SGR 39 and then render at the terminal's own default foreground, because
@@ -1422,23 +737,16 @@ function hint(theme: Theme, busy: boolean, confirmExit: boolean, glyphs: Glyphs,
   return theme.paint("muted", hintLine(mode, glyphs.bullet));
 }
 
-function status(
-  theme: Theme,
-  session: Session,
-  busy: boolean,
-  tick: number,
-  glyphs: Glyphs,
-  mode: Mode,
-): string {
-  const { usage } = session;
+function status(theme: Theme, state: State, tick: number, glyphs: Glyphs): string {
+  const { usage, mode } = state;
   const tokens = usage.inputTokens + usage.outputTokens;
-  const cost = `$${session.costUsd.toFixed(4)}`;
+  const cost = `$${usage.costUsd.toFixed(4)}`;
   // The mode decides what the agent may do, so it is never off screen, and
   // painted by its own role so auto is never mistaken for ask.
   const body = `${theme.paint(modeRole(mode), mode)} ${theme.paint("muted", `${glyphs.bullet} ${formatTokens(tokens)} ${glyphs.bullet} ${cost}`)}`;
   // The body is painted in both branches, not just the idle one: after the
   // spinner's own run closes there is no foreground left in force.
-  return busy
+  return state.busy
     ? `${theme.paint("petal", spinnerFrame(tick, glyphs.spinner))} ${body}`
     : body;
 }
@@ -1499,10 +807,3 @@ async function defaultCopy(text: string): Promise<void> {
   if (result === "empty") throw new Error("nothing to copy");
   if (result === "too-large") throw new Error("too large for this terminal");
 }
-
-/** One line each, so the notice says what the mode actually means. */
-const MODE_HELP: Record<Mode, string> = {
-  plan: "look and propose; nothing is changed",
-  ask: "you are asked before anything changes",
-  auto: "changes go ahead, except the irreversible",
-};

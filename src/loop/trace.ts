@@ -8,6 +8,23 @@ export interface TraceStep {
   durationMs: number;
 }
 
+/**
+ * The one field worth showing next to a step, when there is an obvious one.
+ * `detail` comes last: it is what a step replayed from a stored conversation
+ * carries, the record having kept only the label the screen showed.
+ */
+export function detailOf(input: unknown): string | undefined {
+  if (input === null || typeof input !== "object") return undefined;
+  const record = input as Record<string, unknown>;
+  for (const field of ["path", "pattern", "command", "name", "detail"]) {
+    const value = record[field];
+    if (typeof value === "string" && value !== "") {
+      return value.length > 48 ? `${value.slice(0, 45)}...` : value;
+    }
+  }
+  return undefined;
+}
+
 export interface Fingerprint {
   cwd: string;
   gitSha: string | null;
