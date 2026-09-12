@@ -36,12 +36,12 @@ test("events print as one line each, and the ones that are noise print nothing",
 // follow; done and failed say the stage, the code and the time.
 test("the check's events print: silence when declared, the code and the seconds when done, the reason when failed", () => {
   expect(describeEvent({ t: "verify.declared", task: "T1" })).toBeNull();
-  expect(describeEvent({ t: "verify.done", task: "T1", stage: "review", code: 0, ms: 14 })).toBe("T1 verify (review): ok in 0.0s");
-  expect(describeEvent({ t: "verify.done", task: "T1", stage: "merge", code: 0, ms: 61_250 })).toBe("T1 verify (merge): ok in 61.3s");
-  expect(describeEvent({ t: "verify.done", task: "T2", stage: "review", code: 3, ms: 950 })).toBe("T2 verify (review): exit 3 in 1.0s");
-  expect(describeEvent({ t: "verify.failed", task: "T1", stage: "merge", code: null, reason: "timeout" })).toBe("T1 verify (merge): timed out");
-  expect(describeEvent({ t: "verify.failed", task: "T1", stage: "review", code: null, reason: "timeout" })).toBe("T1 verify (review): timed out");
-  expect(describeEvent({ t: "verify.failed", task: "T1", stage: "merge", code: 2 })).toBe("T1 verify (merge): exit 2");
+  expect(describeEvent({ t: "verify.done", task: "T1", stage: "review", code: 0, ms: 14 })).toBe("T1  verify (review): ok in 0.0s");
+  expect(describeEvent({ t: "verify.done", task: "T1", stage: "merge", code: 0, ms: 61_250 })).toBe("T1  verify (merge): ok in 61.3s");
+  expect(describeEvent({ t: "verify.done", task: "T2", stage: "review", code: 3, ms: 950 })).toBe("T2  verify (review): exit 3 in 1.0s");
+  expect(describeEvent({ t: "verify.failed", task: "T1", stage: "merge", code: null, reason: "timeout" })).toBe("T1  verify (merge): timed out");
+  expect(describeEvent({ t: "verify.failed", task: "T1", stage: "review", code: null, reason: "timeout" })).toBe("T1  verify (review): timed out");
+  expect(describeEvent({ t: "verify.failed", task: "T1", stage: "merge", code: 2 })).toBe("T1  verify (merge): exit 2");
 });
 
 import { mkdirSync, mkdtempSync } from "node:fs";

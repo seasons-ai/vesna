@@ -102,9 +102,9 @@ test("a latin name is untouched, because those already read well", () => {
   expect(slugify("Reliable cancellation")).toBe("reliable-cancellation");
 });
 
-import { mkdtempSync, existsSync, writeFileSync } from "node:fs";
+import { mkdtempSync, existsSync, readFileSync, writeFileSync } from "node:fs";
 import { createHash } from "node:crypto";
-import { specPaths, writeSpecFile, readSpecFile, digestOf } from "../../src/spec/store";
+import { specPaths, writeSpecFile, readSpecFile, digestOf, digestOfText } from "../../src/spec/store";
 
 test("a spec's files all live in its own folder", () => {
   const p = specPaths("/repo/.vesna/specs", "cancel");
@@ -132,4 +132,15 @@ test("digestOf is the sha256 of the file's bytes, and null for a file that is no
   writeFileSync(path, "# Plan\n");
   expect(digestOf(path)).toBe(createHash("sha256").update("# Plan\n").digest("hex"));
   expect(digestOf(join(dir, "missing.md"))).toBeNull();
+});
+
+// The chat hashes the plan text it already read for the question, so the
+// yes names those very bytes; the two spellings must agree on a file.
+test("digestOfText of a file's text is digestOf the file", () => {
+  const dir = mkdtempSync(join(tmpdir(), "vesna-digest-text-"));
+  const path = join(dir, "plan.md");
+  const text = "# Plan\n\n### Task 1: First\nverify: bun test\n\nDo it.\n";
+  writeFileSync(path, text);
+  expect(digestOfText(readFileSync(path, "utf8"))).toBe(digestOf(path)!);
+  expect(digestOfText(text)).toBe(createHash("sha256").update(text).digest("hex"));
 });

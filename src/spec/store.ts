@@ -145,9 +145,14 @@ export function readSpec(root: string, slug: string): SpecTree | null {
 }
 
 /** sha256 hex of the file's bytes; null when there is no such file. */
+/** The sha256 hex of a text already in hand — what an approval names. */
+export function digestOfText(text: string): string {
+  return createHash("sha256").update(text).digest("hex");
+}
+
 export function digestOf(path: string): string | null {
   try {
-    return createHash("sha256").update(readFileSync(path)).digest("hex");
+    return digestOfText(readFileSync(path, "utf8"));
   } catch {
     return null;
   }

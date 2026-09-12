@@ -50,10 +50,10 @@ export function describeEvent(event: SpecEvent): string | null {
     case "verify.done": {
       // Rounded in tenths as integers: 950 ms is 1.0 s, which `(0.95).toFixed(1)` would not say.
       const seconds = (Math.round(event.ms / 100) / 10).toFixed(1);
-      return `${event.task} verify (${event.stage}): ${event.code === 0 ? "ok" : `exit ${event.code}`} in ${seconds}s`;
+      return `${event.task}  verify (${event.stage}): ${event.code === 0 ? "ok" : `exit ${event.code}`} in ${seconds}s`;
     }
     case "verify.failed":
-      return `${event.task} verify (${event.stage}): ${event.reason === "timeout" ? "timed out" : `exit ${event.code}`}`;
+      return `${event.task}  verify (${event.stage}): ${event.reason === "timeout" ? "timed out" : `exit ${event.code}`}`;
     default:
       return null;
   }

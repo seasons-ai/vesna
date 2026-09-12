@@ -43,7 +43,7 @@ import { resolveGlyphs, type Glyphs } from "./glyphs";
 import { decodeKeys, type Key } from "./keys";
 import { layout, panelWidths, type Frame, type ViewState } from "./layout";
 import { chatsPane, gardenPane } from "./panes";
-import { createSpec, digestOf, listSpecs, readSpec, readSpecFile, specPaths, specsRoot } from "../spec/store";
+import { createSpec, digestOf, digestOfText, listSpecs, readSpec, readSpecFile, specPaths, specsRoot } from "../spec/store";
 import { activeStage, type Approvable, type SpecTree } from "../spec/project";
 import { splitPlan } from "../sdd/brief";
 import type { SpecSink } from "../spec/sink";
@@ -344,23 +344,24 @@ export async function runApp(deps: AppDeps, io: AppIo): Promise<number> {
     const slug = deps.sink?.slug;
     if (slug == null) return;
     const paths = specPaths(specs, slug);
-    const specWritten = readSpecFile(paths.spec) !== null;
+    const specText = readSpecFile(paths.spec);
+    const planText = readSpecFile(paths.plan);
     const plan = (() => {
-      const text = readSpecFile(paths.plan);
-      if (text === null) return null;
+      if (planText === null) return null;
       try {
-        return splitPlan(text);
+        return splitPlan(planText);
       } catch {
         return null;
       }
     })();
-    const question = approvalQuestion(spec, { specWritten, plan });
+    const question = approvalQuestion(spec, { specWritten: specText !== null, plan });
     if (question === null) return;
-    // Taken as the question goes up, not at y: the tasks listed are this
-    // text's, and an outside edit while the question stands must not be
-    // approved by a yes to a different one. The loop compares the digest
-    // at /build and refuses a plan.md that no longer matches it.
-    const digest = approvalDigest(question.what);
+    // The digest of the text in hand — the one whose tasks are listed — not
+    // of the file at y: an outside edit while the question stands must not
+    // be approved by a yes to a different text. The loop compares the
+    // digest at /build and refuses a plan.md that no longer matches it.
+    const text = question.what === "spec" ? specText : planText;
+    const digest = text === null ? null : digestOfText(text);
 
     for (const [index, line] of question.lines.entries()) {
       transcript.notice(line, index === question.lines.length - 1 ? "warn" : "muted");

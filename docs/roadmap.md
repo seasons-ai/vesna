@@ -62,7 +62,10 @@ Nothing at the moment — see Next.
 **Left over from recoverable builds.** A build the whole-branch review
 stopped can be re-reviewed after a fix without recording a new task (today the
 only route is a new task, and its final review covers the branch only from
-that point); each build carries an id in its events.
+that point); each build carries an id in its events. A spec whose every task
+is done cannot re-check the last task's failed merge-stage verify from
+`/build` — the "every task is merged" refusal comes first — so that re-check
+belongs with the branch review owed after a post-merge stop.
 
 ## Later
 

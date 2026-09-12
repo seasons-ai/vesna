@@ -1877,13 +1877,13 @@ test("/build prints the check's result after the review and after the merge", as
   await until(() => app.screen().includes("spec gate"), "the spec opening");
   app.input.type("/build\r");
   await until(() => readEvents(specs, "gate").at(-1)?.t === "build.done", "the build");
-  await until(() => app.screen().includes("T1 verify (merge): ok in 61.3s"), "the merge-stage line");
+  await until(() => app.screen().includes("T1  verify (merge): ok in 61.3s"), "the merge-stage line");
 
   const screen = app.screen();
   const at = (needle: string) => screen.indexOf(needle);
-  expect(at("T1 verify (review): ok in 0.0s")).toBeGreaterThan(at("T1  review: met, 0 findings"));
-  expect(at("T1 verify (merge): ok in 61.3s")).toBeGreaterThan(at("T1 verify (review): ok in 0.0s"));
-  expect(at("T1  merged")).toBeGreaterThan(at("T1 verify (merge): ok in 61.3s"));
+  expect(at("T1  verify (review): ok in 0.0s")).toBeGreaterThan(at("T1  review: met, 0 findings"));
+  expect(at("T1  verify (merge): ok in 61.3s")).toBeGreaterThan(at("T1  verify (review): ok in 0.0s"));
+  expect(at("T1  merged")).toBeGreaterThan(at("T1  verify (merge): ok in 61.3s"));
   await quit(app);
 });
 
