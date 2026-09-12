@@ -188,7 +188,11 @@ export function recoverOutcome(
   if (word !== "resume" && word !== "retry" && word !== "abort") {
     return { kind: "refused", message: "/build takes nothing, or cancel, resume, retry <task>, abort" };
   }
-  if (tree === null || state !== "dead") return { kind: "refused", message: "nothing to recover — no interrupted build" };
+  // retry is the one word an idle build takes: a stop — cancel, conflict, a
+  // critical, a refusal — keeps the failed task's checkout, and retry is what
+  // removes it and redoes the task. resume and abort need a dead build.
+  const recoverable = word === "retry" ? state !== "running" : state === "dead";
+  if (tree === null || !recoverable) return { kind: "refused", message: "nothing to recover — no interrupted build" };
   const running = tree.tasks.find((t) => t.state === "running")?.id;
   if (word === "resume") {
     return { kind: "recover", action: "resume", ...(running ? { task: running } : {}), message: `resuming ${running ?? "the build"} in its own checkout` };

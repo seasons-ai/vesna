@@ -273,3 +273,33 @@ test("/build retry with nothing open — a dead build finished every task before
     message: "nothing is open to retry — /build resume finishes the build, /build abort abandons it",
   });
 });
+
+// After a clean stop the spec is idle and the failed task keeps its checkout:
+// `/build retry <task>` is the way to redo it, so it is accepted on idle for
+// any task that is not merged. resume and abort stay dead-only.
+const stoppedTree = project([
+  { t: "created", id: "x", title: "X" },
+  { t: "task.added", id: "T1", title: "a" }, { t: "task.added", id: "T2", title: "b" },
+  { t: "approved", what: "spec" }, { t: "approved", what: "plan" },
+  { t: "build.started" }, { t: "task.started", id: "T1" }, { t: "task.done", id: "T1" },
+  { t: "task.started", id: "T2" }, { t: "task.failed", id: "T2", reason: "interrupted" },
+  { t: "build.stopped", reason: "interrupted" },
+]);
+
+test("/build retry <task> after a clean stop is a recovery on an idle build", () => {
+  expect(recoverOutcome("retry T2", stoppedTree, "idle")).toEqual({
+    kind: "recover", action: "retry", task: "T2", message: "retrying T2 from scratch",
+  });
+  expect(recoverOutcome("retry T1", stoppedTree, "idle")).toEqual({
+    kind: "refused", message: "T1 is merged — it cannot be retried",
+  });
+  expect(recoverOutcome("retry", stoppedTree, "idle")).toEqual({
+    kind: "refused", message: "retry which task? T2 is open",
+  });
+});
+
+test("/build resume and /build abort after a clean stop are still refused — nothing is interrupted", () => {
+  expect(recoverOutcome("resume", stoppedTree, "idle")).toEqual({ kind: "refused", message: "nothing to recover — no interrupted build" });
+  expect(recoverOutcome("abort", stoppedTree, "idle")).toEqual({ kind: "refused", message: "nothing to recover — no interrupted build" });
+  expect(recoverOutcome("retry T2", stoppedTree, "running")).toEqual({ kind: "refused", message: "nothing to recover — no interrupted build" });
+});

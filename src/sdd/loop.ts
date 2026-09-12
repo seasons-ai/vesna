@@ -9,7 +9,7 @@ import { appendEvent, readEvents, readSpecFile, specPaths, writeSpecFile } from 
 import { discardBuild, resumeTask, runTask, type BuildResult } from "../work/builder";
 import { mergeAll } from "../work/merge";
 import { CycleError, schedule } from "../work/schedule";
-import { branchName, deleteBranch, isRegistered, removeWorktree, runGit, worktreePath, type GitRunner } from "../work/worktree";
+import { branchExists, branchName, deleteBranch, isRegistered, removeWorktree, runGit, worktreePath, type GitRunner } from "../work/worktree";
 import { splitPlan, writeBriefs } from "./brief";
 import { buildState, inFlightTask, pidAlive, readLockPid } from "./recover";
 import { reviewTask, type ReviewOutcome } from "./review";
@@ -210,9 +210,32 @@ export async function runBuild(request: BuildLoopRequest): Promise<BuildOutcome>
         reason: `a build of "${slug}" was interrupted — /build resume, /build retry <task>, or /build abort`,
       };
     }
+    // A stop — any reason — keeps the in-flight task's checkout, because
+    // it may be the only record of what the worker did. Building that task
+    // again would collide on its branch, and the collision's own message
+    // names two git commands to run by hand; the way forward the spec gives
+    // is `retry`, which discards the checkout itself. Checked only on an
+    // idle build: a dead one was refused above, and a running one's lock
+    // answers for it below.
+    if (state === "idle") {
+      for (const task of tree.tasks) {
+        if (task.state === "done") continue;
+        const checkout = { path: worktreePath(request.root, slug, task.id), branch: branchName(slug, task.id) };
+        if ((await isRegistered(request.root, checkout, git)) || (await branchExists(request.root, checkout.branch, git))) {
+          return {
+            status: "could-not-start",
+            reason: `${task.id} has a checkout left by a stopped build — /build retry ${task.id} redoes it`,
+          };
+        }
+      }
+    }
   } else {
-    if (state !== "dead") return { status: "could-not-start", reason: "nothing to recover — no interrupted build" };
     const { action } = request.recovery;
+    // retry is the one recovery an idle build takes: a stop leaves the
+    // failed task's checkout behind, and retry is what removes it. resume
+    // has nothing to continue on an idle build, abort nothing to abandon.
+    const recoverable = action === "retry" ? state !== "running" : state === "dead";
+    if (!recoverable) return { status: "could-not-start", reason: "nothing to recover — no interrupted build" };
 
     if (action === "resume") {
       // resume has one thing to continue — the task the build left running —

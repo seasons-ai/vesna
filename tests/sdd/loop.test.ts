@@ -1031,3 +1031,114 @@ test("retry rebuilds a task whose worktree path holds a directory that was never
   expect(out).toEqual({ status: "done" });
   expect(f.log).toEqual(["build T2", "review", "merge T2", "review"]);
 });
+
+// After a stop — any reason — the in-flight task's checkout is kept (§4),
+// and the spec is idle again. The way forward is `retry <task>`, which is
+// accepted on an idle build for any task that is not merged; resume and
+// abort stay dead-only. A plain start meanwhile refuses naming retry, rather
+// than colliding on the kept branch with two git commands to run by hand.
+
+const stoppedAtT1: SpecEvent[] = [
+  ...approvedWithTasks,
+  { t: "build.started" },
+  { t: "task.started", id: "T1", agent: "vesna build" },
+  { t: "task.failed", id: "T1", reason: "interrupted" },
+  { t: "build.stopped", reason: "interrupted" },
+];
+
+test("retry after a clean stop discards the failed task's checkout, rebuilds it, then the rest", async () => {
+  const { root, specs } = setup(stoppedAtT1);
+  const f = fakes();
+  const discarded: string[] = [];
+  const out = await runBuild(base(root, specs, f, {
+    recovery: { action: "retry", task: "T1" },
+    discard: async (_repo: string, r: any) => { discarded.push(r.task); },
+  }));
+  expect(out).toEqual({ status: "done" });
+  expect(discarded).toEqual(["T1"]);
+  expect(f.log).toEqual(["build T1", "review", "merge T1", "build T2", "review", "merge T2", "review"]);
+  const events = readEvents(specs, "work");
+  const at = events.findIndex((e) => e.t === "build.recovered");
+  expect(events[at]).toEqual({ t: "build.recovered", action: "retry", task: "T1" });
+  expect(events[at + 1]).toEqual({ t: "build.started" });
+  expect(events.at(-1)).toEqual({ t: "build.done" });
+});
+
+test("resume and abort stay dead-only: after a clean stop both are refused", async () => {
+  const { root, specs } = setup(stoppedAtT1);
+  const before = readEvents(specs, "work").length;
+  expect(await runBuild(base(root, specs, fakes(), { recovery: { action: "resume" } })))
+    .toEqual({ status: "could-not-start", reason: "nothing to recover — no interrupted build" });
+  expect(await runBuild(base(root, specs, fakes(), { recovery: { action: "abort" } })))
+    .toEqual({ status: "could-not-start", reason: "nothing to recover — no interrupted build" });
+  expect(readEvents(specs, "work").length).toBe(before);
+});
+
+test("retry of a merged or unknown task after a clean stop is refused", async () => {
+  const { root, specs } = setup([
+    ...approvedWithTasks,
+    { t: "build.started" },
+    { t: "task.started", id: "T1", agent: "vesna build" },
+    { t: "task.done", id: "T1", commit: "sha-T1" },
+    { t: "task.started", id: "T2", agent: "vesna build" },
+    { t: "task.failed", id: "T2", reason: "interrupted" },
+    { t: "build.stopped", reason: "interrupted" },
+  ]);
+  expect(await runBuild(base(root, specs, fakes(), { recovery: { action: "retry", task: "T1" } })))
+    .toEqual({ status: "could-not-start", reason: "T1 is merged — it cannot be retried" });
+  expect(await runBuild(base(root, specs, fakes(), { recovery: { action: "retry", task: "T9" } })))
+    .toEqual({ status: "could-not-start", reason: "T9 is not a task of this spec" });
+});
+
+test("cancel mid-task keeps its checkout; a plain start then names retry; retry rebuilds it and leaves nothing behind (real git)", async () => {
+  const { root, specs } = await setupReal(oneApproved);
+  const auto = { mode: "auto" as const, allow: {}, deny: {} };
+  const common = { root, specsRoot: specs, slug: "work", registry: registry(), policy: auto };
+  const worktree = worktreePath(root, "work", "T1");
+  const branch = branchName("work", "T1");
+  const branches = async () => (await runGit(["branch", "--list", branch], root)).stdout.trim();
+
+  // The person cancels after the worker committed: the real `runTask` made
+  // the checkout and the commit, then the abort landed.
+  const controller = new AbortController();
+  const cancelled = await runBuild({
+    ...common,
+    provider: writes("b.txt", "one\n"),
+    review: async () => clean,
+    signal: controller.signal,
+    build: async (r) => {
+      await runTask(r);
+      controller.abort();
+      throw Object.assign(new Error("aborted"), { name: "AbortError" });
+    },
+  });
+  expect(cancelled).toEqual({ status: "stopped", reason: "interrupted" });
+  expect(existsSync(worktree)).toBe(true);
+  expect(await branches()).toContain(branch);
+  expect(project(readEvents(specs, "work"))!.building).toBe(false);
+
+  // A plain start would collide on that branch; it refuses naming the way out.
+  const before = readEvents(specs, "work").length;
+  const plain = await runBuild({ ...common, provider: writes("b.txt", "one\n"), review: async () => clean });
+  expect(plain).toEqual({
+    status: "could-not-start",
+    reason: "T1 has a checkout left by a stopped build — /build retry T1 redoes it",
+  });
+  expect(readEvents(specs, "work").length).toBe(before);
+  expect(existsSync(worktree)).toBe(true);
+
+  // retry: the kept checkout goes, T1 is built from scratch, merged, and cleaned up.
+  const retried = await runBuild({
+    ...common,
+    provider: writes("b.txt", "two\n"),
+    review: async () => clean,
+    recovery: { action: "retry", task: "T1" },
+  });
+  expect(retried).toEqual({ status: "done" });
+  expect(existsSync(worktree)).toBe(false);
+  expect(await branches()).toBe("");
+  expect(readFileSync(join(root, "b.txt"), "utf8")).toBe("two\n");
+  const events = readEvents(specs, "work");
+  expect(events.at(-1)).toEqual({ t: "build.done" });
+  expect(events.some((e) => e.t === "build.recovered" && (e as any).action === "retry" && (e as any).task === "T1")).toBe(true);
+});

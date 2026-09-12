@@ -198,6 +198,20 @@ export async function removeWorktree(
 }
 
 /**
+ * Whether a branch exists — with or without a worktree checked out on it.
+ *
+ * Answered from `branch --list`'s own output, matched against the name,
+ * rather than from an exit code: a branch left behind by a stopped build is
+ * a fact about the refs, and the check has to be a positive sighting of the
+ * name, not the absence of an error.
+ */
+export async function branchExists(repo: string, branch: string, git: GitRunner = runGit): Promise<boolean> {
+  const result = await git(["branch", "--list", branch], repo);
+  if (result.code !== 0) return false;
+  return result.stdout.split("\n").some((line) => line.replace(/^[*+]?\s*/, "").trim() === branch);
+}
+
+/**
  * Deletes a branch. Used after its merge went in: the merge is --no-ff, so
  * the merge commit carries the branch's whole history and can be reverted
  * as a unit, and the ref itself is a leftover. A branch that is already
