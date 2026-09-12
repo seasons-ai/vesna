@@ -283,6 +283,16 @@ export async function runBuild(request: BuildLoopRequest): Promise<BuildOutcome>
       const t = tree.tasks.find((x) => x.id === target);
       if (t === undefined) return { status: "could-not-start", reason: `${target} is not a task of this spec` };
       if (t.state === "done") return { status: "could-not-start", reason: `${target} is merged — it cannot be retried` };
+      // On a dead build the task is the one left running. Retrying another
+      // would discard nothing and then rebuild the in-flight one from
+      // scratch, colliding on its kept branch, with a build.recovered in the
+      // log naming a task the failure had nothing to do with.
+      if (state === "dead" && target !== inFlight) {
+        return {
+          status: "could-not-start",
+          reason: `only the interrupted task "${inFlight}" can be retried while it is in flight — /build retry ${inFlight}`,
+        };
+      }
     }
   }
 

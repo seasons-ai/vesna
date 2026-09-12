@@ -198,12 +198,15 @@ export function recoverOutcome(
     return { kind: "recover", action: "resume", ...(running ? { task: running } : {}), message: `resuming ${running ?? "the build"} in its own checkout` };
   }
   if (word === "retry") {
-    const open = tree.tasks.filter((t) => t.state !== "done").map((t) => t.id);
-    // A dead build with nothing in flight — killed between one task's merge
-    // and the next start, or during the whole-branch review — has nothing a
-    // retry could redo, whatever task is named.
-    const nothingOpen = state === "dead" ? running === undefined : open.length === 0;
-    if (nothingOpen) {
+    // On a dead build the only task a retry can redo is the one left in
+    // flight; on an idle one, any task a stop left unmerged. A dead build
+    // with nothing in flight — killed between one task's merge and the next
+    // start, or during the whole-branch review — has nothing a retry could
+    // redo, whatever task is named.
+    const open = state === "dead"
+      ? (running === undefined ? [] : [running])
+      : tree.tasks.filter((t) => t.state !== "done").map((t) => t.id);
+    if (open.length === 0) {
       return {
         kind: "refused",
         message: "nothing is open to retry — /build resume finishes the build, /build abort abandons it",
@@ -215,6 +218,12 @@ export function recoverOutcome(
     const target = tree.tasks.find((t) => t.id === arg);
     if (target === undefined) return { kind: "refused", message: `${arg} is not a task of this spec` };
     if (target.state === "done") return { kind: "refused", message: `${arg} is merged — it cannot be retried` };
+    if (state === "dead" && arg !== running) {
+      return {
+        kind: "refused",
+        message: `only the interrupted task "${running}" can be retried while it is in flight — /build retry ${running}`,
+      };
+    }
     return { kind: "recover", action: "retry", task: arg, message: `retrying ${arg} from scratch` };
   }
   const merged = tree.tasks.filter((t) => t.state === "done").map((t) => t.id);

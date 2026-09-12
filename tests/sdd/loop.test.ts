@@ -1281,3 +1281,30 @@ test("a resumed worker that changes nothing on a branch with nothing on it is st
   const out = await runBuild(base(root, specs, f, { recovery: { action: "resume" }, git, resume }));
   expect(out).toEqual({ status: "stopped", reason: "T2: the worker changed nothing" });
 });
+
+// On a dead build, retry's task is the one the build left running: retrying
+// a todo task instead would leave the in-flight checkout neither discarded
+// nor resumed, and the build would rebuild it from scratch and collide on
+// its branch — with a `build.recovered retry T3` in the log that names a
+// task the failure had nothing to do with.
+test("retry on a dead build must name the in-flight task, not a task still to do", async () => {
+  const { root, specs } = setup([
+    { t: "task.added", id: "T1", title: "First" },
+    { t: "task.added", id: "T2", title: "Second", dependsOn: ["T1"] },
+    { t: "task.added", id: "T3", title: "Third", dependsOn: ["T1"] },
+    { t: "approved", what: "spec" }, { t: "approved", what: "plan" },
+    { t: "build.started" },
+    { t: "task.started", id: "T1", agent: "vesna build" },
+    { t: "task.done", id: "T1", commit: "sha-T1" },
+    { t: "task.started", id: "T2", agent: "vesna build" },
+  ]);
+  const f = fakes();
+  const before = readEvents(specs, "work").length;
+  const out = await runBuild(base(root, specs, f, { recovery: { action: "retry", task: "T3" } }));
+  expect(out).toEqual({
+    status: "could-not-start",
+    reason: 'only the interrupted task "T2" can be retried while it is in flight — /build retry T2',
+  });
+  expect(f.log).toEqual([]);
+  expect(readEvents(specs, "work").length).toBe(before);
+});

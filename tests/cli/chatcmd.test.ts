@@ -332,3 +332,24 @@ test("/build resume on a build killed during the whole-branch review resumes the
     kind: "refused", message: "nothing is open to retry — /build resume finishes the build, /build abort abandons it",
   });
 });
+
+// On a dead build the only task a retry can redo is the one in flight.
+const deadWithTodo = project([
+  { t: "created", id: "x", title: "X" },
+  { t: "task.added", id: "T1", title: "a" }, { t: "task.added", id: "T2", title: "b" }, { t: "task.added", id: "T3", title: "c" },
+  { t: "approved", what: "spec" }, { t: "approved", what: "plan" },
+  { t: "build.started" }, { t: "task.started", id: "T1" }, { t: "task.done", id: "T1" },
+  { t: "task.started", id: "T2" },
+]);
+
+test("/build retry on a dead build names only the in-flight task, and refuses any other", () => {
+  expect(recoverOutcome("retry", deadWithTodo, "dead")).toEqual({
+    kind: "refused", message: "retry which task? T2 is open",
+  });
+  expect(recoverOutcome("retry T3", deadWithTodo, "dead")).toEqual({
+    kind: "refused", message: 'only the interrupted task "T2" can be retried while it is in flight — /build retry T2',
+  });
+  expect(recoverOutcome("retry T2", deadWithTodo, "dead")).toEqual({
+    kind: "recover", action: "retry", task: "T2", message: "retrying T2 from scratch",
+  });
+});
