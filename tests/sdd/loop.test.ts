@@ -1060,7 +1060,7 @@ test("retry after a clean stop discards the failed task's checkout, rebuilds it,
   const events = readEvents(specs, "work");
   const at = events.findIndex((e) => e.t === "build.recovered");
   expect(events[at]).toEqual({ t: "build.recovered", action: "retry", task: "T1" });
-  expect(events[at + 1]).toEqual({ t: "build.started" });
+  expect(events[at + 1]).toEqual({ t: "build.started", base: "start-sha" });
   expect(events.at(-1)).toEqual({ t: "build.done" });
 });
 
@@ -1178,7 +1178,7 @@ test("resume of a build killed during the whole-branch review runs no task, revi
   const events = readEvents(specs, "work");
   const at = events.findIndex((e) => e.t === "build.recovered");
   expect(events[at]).toEqual({ t: "build.recovered", action: "resume" });
-  expect(events[at + 1]).toEqual({ t: "build.started" });
+  expect(events[at + 1]).toEqual({ t: "build.started", base: "start-sha" });
   expect(events.at(-1)).toEqual({ t: "build.done" });
   expect(project(events)!.building).toBe(false);
 });
@@ -1836,7 +1836,7 @@ for (const action of ["resume", "retry"] as const) {
     expect(events.slice(before, before + 3)).toEqual([
       { t: "task.done", id: "T1", commit: head },
       { t: "build.recovered", action, task: "T1" },
-      { t: "build.started" },
+      { t: "build.started", base: expect.any(String) },
     ]);
     expect(since.filter(([t]) => t === "task.started")).toEqual([["task.started", "T2"]]);
     expect(events.slice(before).filter((e: any) => e.t === "verify.done")).toEqual([
@@ -1908,7 +1908,7 @@ test("a plain start on a red main re-runs the failed task's check on the root be
   expect(f.log).toEqual(["verify T1-merge.log root", "build T2", "review", "merge T2", "review"]);
   const events = readEvents(specs, "work");
   expect(events.slice(before, before + 3)).toEqual([
-    { t: "build.started" },
+    { t: "build.started", base: "start-sha" },
     { t: "verify.done", task: "T1", stage: "merge", code: 0, ms: 7 },
     { t: "task.started", id: "T2", agent: "vesna build" },
   ]);
@@ -1927,7 +1927,7 @@ test("a plain start on a main that is still red stops as the merge did, and sche
   expect(outcome).toEqual({ status: "stopped", reason: "T1: verify failed after merge — see verify/T1-merge.log" });
   expect(f.log).toEqual([]);
   expect(readEvents(specs, "work").slice(before)).toEqual([
-    { t: "build.started" },
+    { t: "build.started", base: "start-sha" },
     { t: "verify.failed", task: "T1", stage: "merge", code: 3 },
     { t: "build.stopped", reason: "T1: verify failed after merge — see verify/T1-merge.log" },
   ]);
@@ -1981,7 +1981,7 @@ test("on real sh: a post-merge failure, main fixed by hand, then a plain start r
   expect(await run()).toEqual({ status: "done" });
   const events = readEvents(specs, "work");
   expect(events.slice(before, before + 2)).toEqual([
-    { t: "build.started" },
+    { t: "build.started", base: expect.any(String) },
     { t: "verify.done", task: "T1", stage: "merge", code: 0, ms: expect.any(Number) },
   ]);
   expect(events.at(-1)).toEqual({ t: "build.done" });
@@ -1990,4 +1990,153 @@ test("on real sh: a post-merge failure, main fixed by hand, then a plain start r
   expect(readFileSync(join(repo, "T2.txt"), "utf8")).toBe("T2.txt\n");
   expect(readFileSync(join(verifyLogs(specs), "T1-merge.log"), "utf8")).toContain("exit 0");
   expect((await runGit(["branch", "--list", "vesna/*"], repo)).stdout.trim()).toBe("");
+});
+
+// A build's range is the build's, not one process's. `build.started` names
+// the commit it starts from; a resume or a finishing start reuses the base
+// the first start named, so the whole-branch review at the end reads the
+// whole build. A log from before bases were recorded reviews from the sha
+// read at this start, as it always did.
+test("build.started names the commit the build starts from", async () => {
+  const { root, specs } = setup(approvedWithTasks);
+  const f = fakes();
+  await runBuild(base(root, specs, f));
+  const started = readEvents(specs, "work").find((e) => e.t === "build.started") as any;
+  expect(started.base).toBe("start-sha");
+});
+
+// The T2 checkout a resume needs, faked the way the resume test above does
+// it: a real directory at the worktree path, and a `worktree list` answer
+// that registers it. Every other call falls through to `inner`.
+function withT2Checkout(root: string, inner: (args: string[]) => Promise<{ code: number; stdout: string; stderr: string }>) {
+  const path = worktreePath(root, "work", "T2");
+  mkdirSync(path, { recursive: true });
+  const branch = branchName("work", "T2");
+  return async (args: string[]) => {
+    if (args[0] === "worktree" && args[1] === "list") {
+      return {
+        code: 0,
+        stdout: `worktree ${path}\nHEAD 0000000000000000000000000000000000000000\nbranch refs/heads/${branch}\n\n`,
+        stderr: "",
+      };
+    }
+    return inner(args);
+  };
+}
+
+test("a resumed build reviews the whole branch from the first start, not from the resume point", async () => {
+  // deadAfterT1 plus a base on its build.started; the git seam answers a
+  // DIFFERENT sha now, as a real repository would after T1's merge.
+  const events = deadAfterT1.map((e: any) => (e.t === "build.started" ? { ...e, base: "first-sha" } : e));
+  const { root, specs } = setup(events);
+  const f = fakes();
+  const gitCalls: string[][] = [];
+  const git = withT2Checkout(root, async (args: string[]) => {
+    gitCalls.push(args);
+    if (args[0] === "rev-parse" && args[1] === "--abbrev-ref") return { code: 0, stdout: "main", stderr: "" };
+    if (args[0] === "rev-parse") return { code: 0, stdout: "later-sha", stderr: "" };
+    return { code: 0, stdout: "diff", stderr: "" };
+  });
+  const outcome = await runBuild(base(root, specs, f, { git, recovery: { action: "resume" } }));
+  expect(outcome).toEqual({ status: "done" });
+  expect(gitCalls.some((a) => a[0] === "diff" && a[1] === "first-sha...HEAD")).toBe(true);
+  expect(gitCalls.some((a) => a[0] === "diff" && a[1] === "later-sha...HEAD")).toBe(false);
+  const starts = readEvents(specs, "work").filter((e) => e.t === "build.started") as any[];
+  expect(starts.map((s) => s.base)).toEqual(["first-sha", "first-sha"]);
+});
+
+test("an old log without a base reviews from the loop's own start, as before", async () => {
+  const { root, specs } = setup(deadAfterT1); // no base on build.started
+  const f = fakes();
+  const git = withT2Checkout(root, f.git);
+  const outcome = await runBuild(base(root, specs, f, { git, recovery: { action: "resume" } }));
+  expect(outcome).toEqual({ status: "done" });
+  expect(f.gitCalls.some((a) => a[0] === "diff" && a[1] === "start-sha...HEAD")).toBe(true);
+});
+
+// Every task merged, and the branch review said no: the build stopped with
+// nothing left to build and something left to do — the review. That is a
+// finishing build, and a plain start is how a person asks for it once the
+// branch is fixed. "nothing to build" is for a build that finished.
+const stoppedAtReview: SpecEvent[] = [
+  { t: "task.added", id: "T1", title: "a" }, { t: "task.added", id: "T2", title: "b" },
+  { t: "approved", what: "spec" }, { t: "approved", what: "plan" },
+  { t: "build.started", base: "first-sha" },
+  { t: "task.started", id: "T1" }, { t: "review.done", task: "T1", round: 0, spec: "met", findings: [] }, { t: "task.done", id: "T1" },
+  { t: "task.started", id: "T2" }, { t: "review.done", task: "T2", round: 0, spec: "met", findings: [] }, { t: "task.done", id: "T2" },
+  { t: "review.done", task: "branch", round: 0, spec: "not_met", findings: [] },
+  { t: "build.stopped", reason: "branch review: the brief is not met" },
+];
+
+test("a build the branch review stopped is finished by a plain start: no task runs, the review runs again", async () => {
+  const { root, specs } = setup(stoppedAtReview);
+  const f = fakes();
+  const outcome = await runBuild(base(root, specs, f));
+  expect(outcome).toEqual({ status: "done" });
+  expect(f.log).toEqual(["review"]);
+  const events = readEvents(specs, "work");
+  expect(events.at(-1)!.t).toBe("build.done");
+  expect(events.at(-2)!.t).toBe("review.done");
+  expect((events.filter((e) => e.t === "build.started").at(-1) as any).base).toBe("first-sha");
+  expect(f.gitCalls.some((a) => a[0] === "diff" && a[1] === "first-sha...HEAD")).toBe(true);
+});
+
+test("a finishing build re-checks a red task before reviewing", async () => {
+  // stoppedAtReview, with T1's check declared and red after its merge; the
+  // plan gives T1 a verify: line.
+  const events = [
+    ...stoppedAtReview.slice(0, 5),
+    { t: "verify.declared", task: "T1" },
+    ...stoppedAtReview.slice(5, 8), { t: "verify.failed", task: "T1", stage: "merge", code: 1 },
+    ...stoppedAtReview.slice(8),
+  ] as SpecEvent[];
+  const { root, specs } = setup(events, PLAN_WITH_VERIFY);
+  const f = fakes();
+  const verify = async (r: any) => { f.log.push(`verify ${r.logPath.split("/").pop()}`); return { code: 0, ms: 1, timedOut: false, tail: "" }; };
+  const outcome = await runBuild(base(root, specs, f, { verify }));
+  expect(outcome).toEqual({ status: "done" });
+  expect(f.log).toEqual(["verify T1-merge.log", "review"]);
+});
+
+test("after build.done a plain start is refused as before", async () => {
+  const { root, specs } = setup([...stoppedAtReview.slice(0, -2), { t: "review.done", task: "branch", round: 0, spec: "met", findings: [] }, { t: "build.done" }]);
+  const f = fakes();
+  expect(await runBuild(base(root, specs, f))).toEqual({ status: "could-not-start", reason: "nothing to build — every task is merged" });
+  expect(f.log).toEqual([]);
+});
+
+test("on real git: a build stopped at the branch review, finished by a plain start, reviews both tasks' files", async () => {
+  // The state by hand: a real repository, two task branches really merged
+  // on main, and the log of a build the branch review stopped whose base is
+  // the sha before T1's merge.
+  const { root, specs } = await setupReal(stoppedAtReview.filter((e) => e.t !== "build.started"));
+  const first = (await runGit(["rev-parse", "HEAD"], root)).stdout.trim();
+  for (const id of ["T1", "T2"]) {
+    const tree = await createWorktree(root, "work", id, runGit);
+    writeFileSync(join(tree.path, `${id}.txt`), `${id}\n`);
+    await runGit(["add", "-A"], tree.path);
+    await runGit(["commit", "-qm", `${id}: built`], tree.path);
+    await runGit(["merge", "--no-ff", "-q", "-m", `merge ${id}`, tree.branch], root);
+    await runGit(["worktree", "remove", "--force", tree.path], root);
+    await runGit(["branch", "-D", tree.branch], root);
+  }
+  // The log is rewritten with the base in its place: setupReal appended the
+  // rest already, so the file is rebuilt from scratch in order.
+  rmSync(join(specs, "work"), { recursive: true, force: true });
+  createSpec(specs, "work");
+  for (const e of stoppedAtReview) appendEvent(specs, "work", e.t === "build.started" ? { t: "build.started", base: first } : e);
+  writeSpecFile(specPaths(specs, "work").plan, planFor(stoppedAtReview));
+
+  const diffs: string[] = [];
+  const out = await runBuild({
+    root, specsRoot: specs, slug: "work",
+    provider: {} as any, registry: registry(),
+    policy: { mode: "auto", allow: {}, deny: {} },
+    review: async (r: any) => { diffs.push(r.diff); return clean; },
+  });
+  expect(out).toEqual({ status: "done" });
+  expect(diffs).toHaveLength(1);
+  expect(diffs[0]).toContain("T1.txt");
+  expect(diffs[0]).toContain("T2.txt");
+  expect(readEvents(specs, "work").at(-1)).toEqual({ t: "build.done" });
 });

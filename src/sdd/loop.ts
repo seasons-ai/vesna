@@ -237,7 +237,12 @@ export async function runBuild(request: BuildLoopRequest): Promise<BuildOutcome>
     }
     // A finished spec has no work left: running it again would build nothing
     // and then pay for a review of an empty diff, overwriting the real one.
-    if (tree.tasks.every((task) => task.state === "done")) {
+    // But every task merged is a finished spec only when the build finished:
+    // a build the branch review stopped, or a red merge-stage check on the
+    // last task, has every task done and something left to do — the
+    // re-check and the review. That is a finishing build, and a plain start
+    // is how a person asks for it once the base is fixed.
+    if (tree.tasks.every((task) => task.state === "done") && tree.finished) {
       return { status: "could-not-start", reason: "nothing to build — every task is merged" };
     }
   }
@@ -461,14 +466,23 @@ export async function runBuild(request: BuildLoopRequest): Promise<BuildOutcome>
 
     const briefs = writeBriefs(specsRoot, slug, planTasks);
     const planById = new Map<string, PlanTask>(planTasks.map((t) => [t.id, t]));
-    emit({ t: "build.started" });
 
     // Neither diff range assumes anything about the repository: the base
     // branch is read rather than guessed to be `main`, and the whole-branch
     // diff at the end (below) runs from the commit the build actually
     // started at rather than a fixed point that presumes a branch name.
+    // Both are read before `build.started` is written: the event names the
+    // base, and a git failure here is a Stop like any other — the catch
+    // below records it, and the lock's `finally` releases it.
     const baseBranch = (await runLoopGit(git, ["rev-parse", "--abbrev-ref", "HEAD"], request.root)).stdout.trim();
-    const startSha = (await runLoopGit(git, ["rev-parse", "HEAD"], request.root)).stdout.trim();
+    const headSha = (await runLoopGit(git, ["rev-parse", "HEAD"], request.root)).stdout.trim();
+    // The range the whole-branch review covers is the build's, not this
+    // process's: a resume or a finishing start names the base the first
+    // start named — `tree` was read before this start's own event — so the
+    // review at the end reads the whole build. A log from before bases were
+    // recorded reviews from here, as it always did.
+    const buildBase = tree.buildBase ?? headSha;
+    emit({ t: "build.started", base: buildBase });
 
     // A base branch left red: a merge-stage check that failed stopped the
     // build with the task merged, and the next start would otherwise build
@@ -798,7 +812,7 @@ export async function runBuild(request: BuildLoopRequest): Promise<BuildOutcome>
     // critical stops the build for a person; important and minor are parked
     // on the branch where the person will read them; no verdict gets one
     // retry, as a task review does.
-    const whole = await runLoopGit(git, ["diff", `${startSha}...HEAD`], request.root);
+    const whole = await runLoopGit(git, ["diff", `${buildBase}...HEAD`], request.root);
     const parked = project(readEvents(specsRoot, slug))?.parked ?? [];
     const branchRequest = {
       cwd: request.root,
