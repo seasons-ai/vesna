@@ -1,0 +1,65 @@
+name: release-vscode
+
+# A tag `vscode-vX.Y.Z` is a release of the editor extension — separate
+# from the CLI's own `v*` tags in release.yml, since the extension's
+# version is `vscode/package.json`'s and does not track the CLI's.
+on:
+  push:
+    tags: ["vscode-v*"]
+
+permissions:
+  contents: write   # the GitHub Release
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: The tag names the version vscode/package.json ships
+        run: |
+          tag="${GITHUB_REF#refs/tags/vscode-v}"
+          pkg="$(node -p "require('./vscode/package.json').version")"
+          if [ "$tag" != "$pkg" ]; then
+            echo "tag vscode-v$tag but vscode/package.json says $pkg" >&2
+            exit 1
+          fi
+
+      - name: Install the root
+        # The extension's tests spawn `../bin/vesna serve`, which needs the
+        # root's own dependencies installed, not just vscode/'s.
+        run: bun install --frozen-lockfile
+
+      - name: Install, typecheck, test and build the extension
+        working-directory: vscode
+        run: |
+          bun install --frozen-lockfile
+          bun run typecheck
+          bun test
+          bun run build
+
+      - name: Package
+        working-directory: vscode
+        run: |
+          pkg="$(node -p "require('./package.json').version")"
+          bunx --bun @vscode/vsce package --no-dependencies -o "vesna-$pkg.vsix"
+
+      - name: Publish to the Marketplace
+        working-directory: vscode
+        run: |
+          pkg="$(node -p "require('./package.json').version")"
+          bunx --bun @vscode/vsce publish --no-dependencies -p "${{ secrets.VSCE_PAT }}" --packagePath "vesna-$pkg.vsix"
+
+      - name: GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: vscode/vesna-*.vsix
+          generate_release_notes: true

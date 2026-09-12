@@ -260,10 +260,13 @@ every review it has had. Containment is on the roadmap, not claimed.
 
 ## Clients
 
-One core, three clients. `vesna` is the full-screen chat; `vesna --plain` is
-the same conversation one line at a time, for a dumb terminal; and `vesna
+One core, four clients. `vesna` is the full-screen chat; `vesna --plain` is
+the same conversation one line at a time, for a dumb terminal; `vesna
 serve` is the core with no screen at all — `vesna --help` lists it beside
-the others:
+the others — and a VS Code extension (`vscode/`, on the
+[Marketplace](https://marketplace.visualstudio.com/items?itemName=seasons-ai.vesna)
+as `seasons-ai.vesna`) — the chat, the garden and the findings beside the
+code:
 
 ```text
   vesna serve                             serve the agent over JSON-RPC on stdio (for editors)
@@ -291,8 +294,8 @@ Content-Length: 384
 ```
 
 Both chats hold the core in-process; `tests/core/border.test.ts` is what
-keeps them clients — neither reaches the agent past it. The editor extension
-is next, on this protocol.
+keeps them clients — neither reaches the agent past it. The editor
+extension is the fourth client, built on exactly this protocol.
 
 ## Roadmap
 

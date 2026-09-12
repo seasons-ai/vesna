@@ -82,15 +82,34 @@ is a later spec's.
 
 Every console block in the README is verbatim output.
 
+**The editor extension** (`vscode/`, `0.1.0`). A VS Code extension on
+`vesna serve`: a side-panel chat with streaming markdown, a card per tool
+call from `transcript.step`, and the questions as buttons `y`/`a`/`n`; the
+garden as a tree view; `spec.md` and `plan.md` opened as documents; review
+findings as diagnostics on the lines they name; the mode in the status bar.
+Done when a plan can be approved and a build watched from the editor
+without a terminal — met per `vscode/CHECKLIST.md`'s verified items:
+activation against a real repo, the status bar's mode cycling, restart
+after a killed server, the garden drawn from real server state, and a
+finding surfacing as a diagnostic and a Problems entry. Not yet verified
+live, honestly: `notFound`/`tooOld` end to end, a no-folder or multi-root
+workspace, the 12 s kill path against a genuinely hung server, a real turn
+(a permission question, Always, the approve-the-plan buttons, a queued
+`send`), Cancel replacing Build mid-build, and the running/failed/blocked
+task icons against a live build rather than the pure mapping's unit tests.
+Published on the Marketplace as `seasons-ai.vesna` once `release-vscode.yml`
+runs on its first `vscode-v*` tag.
+
 ## Next
 
-**The editor extension.** A VS Code extension on `vesna serve`: a
-side-panel chat with streaming markdown; a card per tool call, from
-`transcript.step`; the questions as buttons, `y`, `a`, `n`; the garden as a
-tree view; `spec.md` and `plan.md` opened as documents; review findings as
-diagnostics on the lines they name; the mode in the status bar; published to
-the Marketplace. Done when a plan can be approved and a build watched from
-the editor without a terminal.
+**MCP in the core.** An MCP client added to the tool registry — servers
+declared in `.vesna/config.yaml`, their tools reachable under the same
+read-only policy as everything else Vesna calls. The registry itself as an
+MCP server, so another agent can drive Vesna's tools. Then a `claude-code`
+provider on top, driving the `claude` CLI against that server instead of a
+model API directly. Done when a configured MCP server's tools show up
+policy-gated in a turn, and a `claude-code` provider turn calls one through
+the registry's own server.
 
 ## Later
 

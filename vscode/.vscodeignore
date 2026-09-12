@@ -6,3 +6,6 @@ esbuild.mjs
 tsconfig.json
 *.map
 .superpowers/**
+media/shots/**
+bun.lock
+CHECKLIST.md
