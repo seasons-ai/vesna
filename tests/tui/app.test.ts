@@ -2620,6 +2620,25 @@ test("after a turn with an unapproved plan the chat asks, y approves with the pl
   await quit(app);
 });
 
+// Final fix round, item 3: the digest names the text whose tasks were
+// listed, not whatever plan.md holds at the moment of y. An edit between
+// the question and the answer approves the text that was read; the loop's
+// refusal then says the plan changed.
+test("y writes the digest of the plan the question was asked about, not of a plan edited while it was up", async () => {
+  const { app, specs, slug } = await unapprovedPlanApp();
+  const asked = digestOf(specPaths(specs, slug).plan);
+  app.input.type("hello\r");
+  await until(() => app.screen().includes("approve the plan? [y] yes  [n] not yet"), "the question");
+  writeSpecFile(specPaths(specs, slug).plan, "### Task 1: a\nverify: bun test tests/other.test.ts\n\n### Task 2: b\n");
+  const edited = digestOf(specPaths(specs, slug).plan);
+  expect(edited).not.toBe(asked);
+  app.input.type("y");
+  await until(() => app.screen().includes("approved: plan"), "the approval");
+  const approved = readEvents(specs, slug).find((e: any) => e.t === "approved" && e.what === "plan") as any;
+  expect(approved.digest).toBe(asked);
+  await quit(app);
+});
+
 test("n leaves the log alone and the question comes back after the next turn", async () => {
   const { app, specs, slug } = await unapprovedPlanApp();
   app.input.type("hello\r");

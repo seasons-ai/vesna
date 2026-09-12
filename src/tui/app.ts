@@ -318,10 +318,13 @@ export async function runApp(deps: AppDeps, io: AppIo): Promise<number> {
     return digestOf(what === "spec" ? paths.spec : paths.plan);
   }
 
-  /** The one event no tool can emit, written with the digest of what it approves. */
-  function writeApproval(what: Approvable): void {
+  /**
+   * The one event no tool can emit, written with the digest of what it
+   * approves. `/approve` reads the file now; the question passes the digest
+   * it took when it was shown, so a yes names the text that was read.
+   */
+  function writeApproval(what: Approvable, digest: string | null = approvalDigest(what)): void {
     if (deps.sink === undefined) return;
-    const digest = approvalDigest(what);
     deps.sink.emit({ t: "approved", what, ...(digest !== null ? { digest } : {}) });
   }
 
@@ -353,6 +356,11 @@ export async function runApp(deps: AppDeps, io: AppIo): Promise<number> {
     })();
     const question = approvalQuestion(spec, { specWritten, plan });
     if (question === null) return;
+    // Taken as the question goes up, not at y: the tasks listed are this
+    // text's, and an outside edit while the question stands must not be
+    // approved by a yes to a different one. The loop compares the digest
+    // at /build and refuses a plan.md that no longer matches it.
+    const digest = approvalDigest(question.what);
 
     for (const [index, line] of question.lines.entries()) {
       transcript.notice(line, index === question.lines.length - 1 ? "warn" : "muted");
@@ -364,7 +372,7 @@ export async function runApp(deps: AppDeps, io: AppIo): Promise<number> {
     });
     awaiting = null;
     if (answer === "y") {
-      writeApproval(question.what);
+      writeApproval(question.what, digest);
       refreshSpec();
       transcript.notice(approveOutcome(question.what, spec, true).message, "ok");
     } else {
