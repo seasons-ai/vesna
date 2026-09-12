@@ -10,7 +10,7 @@ import { discardBuild, resumeTask, runTask, type BuildResult } from "../work/bui
 import { mergeAll } from "../work/merge";
 import { CycleError, schedule } from "../work/schedule";
 import { branchExists, branchName, deleteBranch, isMerged, isRegistered, removeWorktree, runGit, worktreePath, type GitRunner } from "../work/worktree";
-import { splitPlan, writeBriefs, type PlanTask } from "./brief";
+import { planGoal, splitPlan, writeBriefs, type PlanTask } from "./brief";
 import { buildState, inFlightTask, pidAlive, readLockPid } from "./recover";
 import { reviewTask, type ReviewOutcome } from "./review";
 import { runVerify, VERIFY_CEILING_MS, type VerifyResult } from "./verify";
@@ -821,10 +821,16 @@ export async function runBuild(request: BuildLoopRequest): Promise<BuildOutcome>
     // retry, as a task review does.
     const whole = await runLoopGit(git, ["diff", `${buildBase}...HEAD`], request.root);
     const parked = project(readEvents(specsRoot, slug))?.parked ?? [];
+    // A slug is a filename, not a requirement: a reviewer briefed on nothing
+    // else infers what the branch was supposed to do from it, and two specs
+    // whose slugs read differently but whose plans ask the same thing get
+    // judged differently. The title and the plan's own goal are what the
+    // person actually asked for.
+    const goal = planGoal(planText);
     const branchRequest = {
       cwd: request.root,
       provider: request.provider,
-      brief: `The whole branch for spec "${slug}". Parked findings from the task reviews:\n${renderFindings(parked.map((p) => p.finding)) || "(none)"}`,
+      brief: `The whole branch for "${tree.title}" (spec ${slug}).${goal ? ` Goal: ${goal}.` : ""} Parked findings from the task reviews:\n${renderFindings(parked.map((p) => p.finding)) || "(none)"}`,
       report: "(whole-branch review)",
       diff: whole.stdout,
       ...(request.model ? { model: request.model } : {}),

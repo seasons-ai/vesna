@@ -86,6 +86,20 @@ function setup(events: SpecEvent[], plan = planFor(events)) {
   return { root, specs };
 }
 
+// Same as `setup`, but with a spec title distinct from the slug "work" — for
+// the test that the whole-branch review's brief carries the spec's own
+// title, not the slug the reviewer would otherwise have to guess a
+// requirement from.
+function setupWithTitle(title: string, events: SpecEvent[], plan: string) {
+  const root = mkdtempSync(join(tmpdir(), "vesna-loop-"));
+  const specs = join(root, ".vesna", "specs");
+  mkdirSync(specs, { recursive: true });
+  appendEvent(specs, "work", { t: "created", id: "work", title });
+  for (const e of events) appendEvent(specs, "work", e);
+  writeSpecFile(specPaths(specs, "work").plan, plan);
+  return { root, specs };
+}
+
 // Same as `setup`, but the root is a real repository rather than a bare
 // directory — for the recovery tests that need real `git worktree`/`branch`
 // state (a worktree that was never created, or one whose directory was
@@ -688,6 +702,39 @@ test("a whole-branch review with no verdict gets one retry, then stops the build
   const { root: r2, specs: s2 } = setup(oneApproved);
   const twice = fakes({ reviews: [clean, silent, silent] });
   expect(await runBuild(base(r2, s2, twice))).toEqual({ status: "stopped", reason: "branch review: the reviewer produced no verdict twice" });
+});
+
+// A real run judged the same two NOTES.md tasks "not met" under one slug and
+// "met" under another, because the branch reviewer had nothing to go on but
+// the slug and inferred requirements from it. The brief must instead carry
+// what the spec actually asked for: its title and the plan's stated goal.
+test("the whole-branch review's brief carries the spec's title and the plan's goal, not just the slug", async () => {
+  const plan = [
+    "# Plan",
+    "",
+    "**Goal:** Ship a working FizzBuzz kata with tests.",
+    "",
+    "### Task 1: First",
+    "Do it.",
+    "",
+  ].join("\n");
+  const { root, specs } = setupWithTitle("Fizzbuzz kata", oneApproved, plan);
+  const requests: any[] = [];
+  const f = fakes();
+  const out = await runBuild(base(root, specs, f, {
+    review: async (r: any) => { requests.push(r); return clean; },
+  }));
+  expect(out).toEqual({ status: "done" });
+
+  const branch = requests.find((r) => r.report === "(whole-branch review)");
+  expect(branch?.brief).toContain("Fizzbuzz kata");
+  expect(branch?.brief).toContain("Ship a working FizzBuzz kata with tests.");
+
+  // The per-task brief is unchanged: it is still the task's own text, not
+  // the spec's title or the plan's goal.
+  const task = requests.find((r) => r.report !== "(whole-branch review)");
+  expect(task?.brief).not.toContain("Fizzbuzz kata");
+  expect(task?.brief).not.toContain("Ship a working FizzBuzz kata");
 });
 
 // Two builds of one spec at once would race on the same branches, worktrees

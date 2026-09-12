@@ -18,6 +18,7 @@ export interface PlanTask {
 
 const HEADING = /^### Task (\d+): (.+)$/;
 const VERIFY = /^verify:(.*)$/;
+const GOAL = /^\*\*Goal:\*\*\s*(.+)$/m;
 // A fenced code block opens with 3+ backticks or tildes (up to 3 leading
 // spaces, per CommonMark) and closes with a matching line of the same
 // character, at least as long. A `### Task N:` line inside one is somebody's
@@ -88,6 +89,17 @@ export function splitPlan(markdown: string): PlanTask[] {
   }
   flush();
   return tasks;
+}
+
+/**
+ * The plan's stated goal, if it declared one — the `**Goal:**` line near the
+ * top of plan.md. A plan without one is normal, not malformed, so this
+ * tolerates absence rather than throwing.
+ */
+export function planGoal(markdown: string): string | undefined {
+  const match = markdown.replace(/\r\n?/g, "\n").match(GOAL);
+  const goal = match?.[1]?.trim();
+  return goal !== undefined && goal !== "" ? goal : undefined;
 }
 
 export function writeBriefs(
