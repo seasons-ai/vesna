@@ -132,3 +132,32 @@ function reduceTranscript(model: PanelModel, entry: TranscriptEntry): PanelModel
 function appendEntry(model: PanelModel, make: (id: number) => Entry): PanelModel {
   return { ...model, entries: [...model.entries, make(model.nextId)], nextId: model.nextId + 1 };
 }
+
+/**
+ * The one place the host keeps the model: every event goes through
+ * `reduce`, and every subscriber hears about every reduction (the panel
+ * posts the model, the status bar redraws). No `vscode` here either.
+ */
+export interface Store {
+  readonly model: PanelModel;
+  dispatch(event: Event): void;
+  subscribe(listener: (model: PanelModel) => void): () => void;
+}
+
+export function createStore(model: PanelModel = initialModel()): Store {
+  let current = model;
+  const listeners = new Set<(model: PanelModel) => void>();
+  return {
+    get model() {
+      return current;
+    },
+    dispatch(event) {
+      current = reduce(current, event);
+      for (const listener of listeners) listener(current);
+    },
+    subscribe(listener) {
+      listeners.add(listener);
+      return () => listeners.delete(listener);
+    },
+  };
+}

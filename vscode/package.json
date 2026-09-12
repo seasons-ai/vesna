@@ -10,7 +10,137 @@
   "categories": ["AI", "Programming Languages"],
   "main": "./dist/extension.js",
   "activationEvents": ["onStartupFinished"],
-  "contributes": {},
+  "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "vesna",
+          "title": "Vesna",
+          "icon": "media/mark.svg"
+        }
+      ]
+    },
+    "views": {
+      "vesna": [
+        {
+          "type": "webview",
+          "id": "vesna.chat",
+          "name": "Chat"
+        },
+        {
+          "id": "vesna.garden",
+          "name": "Garden"
+        }
+      ]
+    },
+    "commands": [
+      {
+        "command": "vesna.newSpec",
+        "title": "Vesna: New Spec"
+      },
+      {
+        "command": "vesna.openSpec",
+        "title": "Vesna: Open Spec"
+      },
+      {
+        "command": "vesna.approveSpec",
+        "title": "Vesna: Approve Spec"
+      },
+      {
+        "command": "vesna.approvePlan",
+        "title": "Vesna: Approve Plan"
+      },
+      {
+        "command": "vesna.build",
+        "title": "Vesna: Build",
+        "icon": "$(play)"
+      },
+      {
+        "command": "vesna.cancelBuild",
+        "title": "Vesna: Cancel Build",
+        "icon": "$(debug-stop)"
+      },
+      {
+        "command": "vesna.restart",
+        "title": "Vesna: Restart Server"
+      },
+      {
+        "command": "vesna.openSpecMd",
+        "title": "Vesna: Open spec.md"
+      },
+      {
+        "command": "vesna.openPlanMd",
+        "title": "Vesna: Open plan.md"
+      },
+      {
+        "command": "vesna.showPanel",
+        "title": "Vesna: Show Panel"
+      },
+      {
+        "command": "vesna.refreshGarden",
+        "title": "Vesna: Refresh Garden",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "vesna.retryTask",
+        "title": "Retry"
+      }
+    ],
+    "menus": {
+      "view/title": [
+        {
+          "command": "vesna.build",
+          "when": "view == vesna.garden && !vesna.building",
+          "group": "navigation@1"
+        },
+        {
+          "command": "vesna.cancelBuild",
+          "when": "view == vesna.garden && vesna.building",
+          "group": "navigation@1"
+        },
+        {
+          "command": "vesna.refreshGarden",
+          "when": "view == vesna.garden",
+          "group": "navigation@2"
+        }
+      ],
+      "view/item/context": [
+        {
+          "command": "vesna.retryTask",
+          "when": "view == vesna.garden && viewItem == task-open",
+          "group": "inline"
+        }
+      ],
+      "commandPalette": [
+        {
+          "command": "vesna.refreshGarden",
+          "when": "false"
+        },
+        {
+          "command": "vesna.retryTask",
+          "when": "false"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "Vesna",
+      "properties": {
+        "vesna.command": {
+          "type": "string",
+          "default": "vesna",
+          "description": "The executable that runs `serve` — `vesna` from PATH by default, or an absolute path, or a runtime such as `bun` with the script in `vesna.args`."
+        },
+        "vesna.args": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [],
+          "description": "Arguments placed between the command and `serve`: `<command> <args...> serve`. With `vesna.command` set to `bun`, `[\"/path/to/vesna/bin/vesna\"]` runs a checkout."
+        }
+      }
+    }
+  },
   "scripts": {
     "build": "node esbuild.mjs",
     "watch": "node esbuild.mjs --watch",

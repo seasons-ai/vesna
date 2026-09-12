@@ -257,3 +257,22 @@ test("detailOf caps at 48 chars: 45 kept plus ...", () => {
   expect(result).toBe(`${"x".repeat(45)}...`);
   expect(result?.length).toBe(48);
 });
+
+// ---------------------------------------------------------------------------
+// The store: one model, every reduction announced.
+
+test("the store reduces on dispatch and tells every subscriber, until unsubscribed", async () => {
+  const { createStore } = await import("../src/state");
+  const store = createStore();
+  const seen: number[] = [];
+  const off = store.subscribe((model) => seen.push(model.entries.length));
+  store.dispatch({ kind: "notification", n: { method: "transcript", params: { kind: "user", text: "hi" } } });
+  store.dispatch({ kind: "server", status: { kind: "up" } });
+  expect(store.model.entries).toHaveLength(1);
+  expect(store.model.server).toEqual({ kind: "up" });
+  expect(seen).toEqual([1, 1]);
+  off();
+  store.dispatch({ kind: "note", text: "x" });
+  expect(seen).toEqual([1, 1]);
+  expect(store.model.note).toBe("x");
+});

@@ -24,7 +24,12 @@ export const WORDS = {
     `This Vesna (${server}) is too old for this extension (${extension}).`,
   statusMode: (mode: string) => `vesna: ${mode}`,
   statusBuilding: (task: string | null) => `vesna: building${task === null ? "" : ` ${task}`}`,
+  statusNone: "vesna",
   newSpecPrompt: "Title of the new spec",
+  openSpecPrompt: "Which spec to open",
+  noSpecs: "No specs yet — Vesna: New Spec makes one.",
+  noSpecOpen: "No spec is open.",
+  notRunning: "Vesna is not running — Restart it from the panel.",
 } as const;
 
 export const NEXT_MODE: Record<Mode, Mode> = { plan: "ask", ask: "auto", auto: "plan" };
