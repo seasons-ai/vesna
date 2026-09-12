@@ -3,8 +3,10 @@ import { join } from "node:path";
 import {
   CHAT_COMMANDS,
   approveOutcome,
+  buildBusy,
   buildFailed,
   buildStart,
+  cancelElsewhere,
   classifyOutcome,
   describeHeader,
   describeModels,
@@ -784,12 +786,24 @@ export async function runApp(deps: AppDeps, io: AppIo): Promise<number> {
           // in another process — and the lock is read fresh below, so the
           // tree it is judged against has to be fresh too.
           refreshSpec();
+          // This process's own build comes first, from its own flag: the
+          // loop checks the checkout before it takes the lock, so for a
+          // moment after a launch the log and the lock still read as dead,
+          // and a second `/build resume` typed inside that moment would
+          // launch a second loop — whose losing `.then` would then clear
+          // `building` under the winner. Only cancel gets through.
+          if (building && buildController !== null && input.argument.trim() !== "cancel") {
+            transcript.notice(buildBusy(), "warn");
+            transcript.endTurn();
+            draw();
+            continue;
+          }
           // A word after /build is cancel, or one of the three recoveries.
           // Cancel only aborts: the loop's abort path writes task.failed and
           // build.stopped, and `onEvent` below prints them as they land.
           let recovery: BuildLoopRequest["recovery"];
           if (input.argument.trim() !== "") {
-            const outcome = recoverOutcome(input.argument, spec, currentBuildState());
+            const outcome = recoverOutcome(input.argument, spec, building ? "running" : currentBuildState());
             if (outcome.kind === "refused") {
               transcript.notice(outcome.message, "warn");
               transcript.endTurn();
@@ -801,7 +815,7 @@ export async function runApp(deps: AppDeps, io: AppIo): Promise<number> {
               // process's — `vesna build` in a second terminal. This chat
               // has nothing to abort then, and must not say it did.
               if (buildController === null) {
-                transcript.notice("that build is running in another process — stop it there", "warn");
+                transcript.notice(cancelElsewhere(), "warn");
               } else {
                 buildController.abort();
                 transcript.notice(outcome.message, "ok");

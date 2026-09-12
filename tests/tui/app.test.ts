@@ -2463,3 +2463,75 @@ test("planning opens the column by itself — no command to know first", async (
   expect(app.screen()).toMatch(/plan: Reliable cancellation/);
   await quit(app);
 });
+
+/** The log a killed process left behind, with T2's checkout registered through the git seam. */
+function deadBuildWithCheckout(root: string, specs: string) {
+  createSpec(specs, "work");
+  const deadAfterT1: SpecEvent[] = [
+    { t: "task.added", id: "T1", title: "First" },
+    { t: "task.added", id: "T2", title: "Second", dependsOn: ["T1"] },
+    { t: "approved", what: "plan" },
+    { t: "build.started" },
+    { t: "task.started", id: "T1", agent: "vesna build" },
+    { t: "task.done", id: "T1", commit: "sha-T1" },
+    { t: "task.started", id: "T2", agent: "vesna build" },
+  ];
+  for (const event of deadAfterT1) appendEvent(specs, "work", event);
+  writeSpecFile(specPaths(specs, "work").plan, "# Plan\n\n### Task 1: First\nDo it.\n\n### Task 2: Second\nDo it.\n");
+  const path = worktreePath(root, "work", "T2");
+  mkdirSync(path, { recursive: true });
+  return { path, branch: branchName("work", "T2") };
+}
+
+test("a second /build typed while the first is still before its lock is refused, not launched twice", async () => {
+  const base = await deps(reply("x"));
+  const sink = createSink(specsRoot(base.root));
+  const specs = specsRoot(base.root);
+  const { path, branch } = deadBuildWithCheckout(base.root, specs);
+
+  // The loop checks the checkout before it takes the lock; holding that
+  // answer keeps the first resume in its pre-lock await, where the log and
+  // the lock still read as dead.
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const seams = buildFakes();
+  let resumes = 0;
+  const resume = async (r: { task: string }) => {
+    resumes += 1;
+    return seams.resume(r);
+  };
+  const git = async (args: string[]) => {
+    if (args[0] === "worktree" && args[1] === "list") {
+      await gate;
+      return {
+        code: 0,
+        stdout: `worktree ${path}\nHEAD 0000000000000000000000000000000000000000\nbranch refs/heads/${branch}\n\n`,
+        stderr: "",
+      };
+    }
+    return seams.git(args);
+  };
+
+  const app = await start(reply("x"), { rows: 40, cols: 120 }, { ...base, sink, buildSeams: { ...seams, resume, git } });
+  app.input.type("/spec open work\r");
+  await until(() => app.screen().includes("spec work"), "the spec opening");
+  app.input.type("/build resume\r");
+  await until(() => app.screen().includes("resuming T2"), "the first resume");
+  app.input.type("/build resume\r");
+  await until(() => app.screen().includes("a build is already running"), "the refusal");
+  release();
+  await until(() => /T2\s+merged/.test(app.screen()), "the resumed task merging");
+  await until(() => readEvents(specs, "work").at(-1)?.t === "build.done", "the build");
+
+  const rows = app.screen().split("\n");
+  expect(rows.filter((row) => row.includes("resuming T2")).length).toBe(1);
+  expect(rows.filter((row) => row.includes("a build is already running")).length).toBe(1);
+  expect(app.screen()).not.toContain("already running (pid");
+  expect(resumes).toBe(1);
+  const events = readEvents(specs, "work");
+  expect(events.filter((e) => e.t === "build.recovered").length).toBe(1);
+  expect(events.at(-1)).toEqual({ t: "build.done" });
+  await quit(app);
+});

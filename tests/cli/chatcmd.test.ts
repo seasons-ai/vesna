@@ -2,8 +2,10 @@ import { test, expect } from "bun:test";
 import {
   CHAT_COMMANDS,
   approveOutcome,
+  buildBusy,
   buildFailed,
   buildStart,
+  cancelElsewhere,
   classifyOutcome,
   parseChatInput,
   quitCancelling,
@@ -352,4 +354,13 @@ test("/build retry on a dead build names only the in-flight task, and refuses an
   expect(recoverOutcome("retry T2", deadWithTodo, "dead")).toEqual({
     kind: "recover", action: "retry", task: "T2", message: "retrying T2 from scratch",
   });
+});
+
+test("a /build of any kind while this process holds a build says it is running, in the same words buildStart uses", () => {
+  expect(buildBusy()).toBe("a build is already running");
+  expect(buildStart(deadTree, "running")).toEqual({ kind: "refused", message: buildBusy() });
+});
+
+test("/build cancel on a build another process holds says where to stop it", () => {
+  expect(cancelElsewhere()).toBe("that build is running in another process — stop it there");
 });

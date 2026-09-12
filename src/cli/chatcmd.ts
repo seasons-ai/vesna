@@ -155,7 +155,7 @@ export function buildStart(
   if (state === "dead") {
     return { kind: "refused", message: "a build was interrupted — /build resume, /build retry <task>, or /build abort" };
   }
-  if (state === "running" || tree.building) return { kind: "refused", message: "a build is already running" };
+  if (state === "running" || tree.building) return { kind: "refused", message: buildBusy() };
   if (!tree.approved.plan) return { kind: "refused", message: "the plan is not approved — /approve plan" };
   const n = tree.tasks.length;
   if (n > 0 && tree.tasks.every((task) => task.state === "done")) {
@@ -165,6 +165,26 @@ export function buildStart(
     kind: "start",
     message: `building ${n} task${n === 1 ? "" : "s"} — events appear below and in the garden`,
   };
+}
+
+/**
+ * The answer to any `/build …` while this process already holds a build —
+ * except `cancel`, which is what stops it. The chat has to say this from its
+ * own `building` flag, not from the log and the lock: the loop checks the
+ * checkout before it takes the lock, and a second command typed inside that
+ * await would read the spec as still dead and launch a second loop.
+ */
+export function buildBusy(): string {
+  return "a build is already running";
+}
+
+/**
+ * `/build cancel` when the lock names another process — `vesna build` in a
+ * second terminal. This chat holds no controller for it and must not say it
+ * cancelled anything.
+ */
+export function cancelElsewhere(): string {
+  return "that build is running in another process — stop it there";
 }
 
 /**
