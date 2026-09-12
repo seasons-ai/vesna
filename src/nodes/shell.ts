@@ -1,10 +1,7 @@
 import type { NodeDef } from "../registry/types";
-import { spawnInterruptible } from "./spawn";
+import { spawnInterruptible, type SpawnResult } from "./spawn";
 
-export const shellNode: NodeDef<
-  { command: string },
-  { stdout: string; stderr: string; code: number }
-> = {
+export const shellNode: NodeDef<{ command: string }, SpawnResult> = {
   type: "shell",
   description: "Run a shell command in the working directory",
   inputSchema: { type: "object", properties: { command: { type: "string" } }, required: ["command"] },

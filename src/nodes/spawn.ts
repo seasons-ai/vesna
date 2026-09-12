@@ -83,6 +83,8 @@ export interface SpawnResult {
   stdout: string;
   stderr: string;
   code: number;
+  /** True when the ceiling, not the signal, stopped the child. */
+  timedOut: boolean;
 }
 
 export interface SpawnOptions {
@@ -109,6 +111,7 @@ export async function spawnInterruptible(
   });
 
   let aborted = false;
+  let timedOut = false;
   let killer: ReturnType<typeof setTimeout> | undefined;
 
   const stop = () => {
@@ -135,7 +138,12 @@ export async function spawnInterruptible(
 
   options.signal.addEventListener("abort", stop, { once: true });
   const timer =
-    options.timeoutMs === undefined ? undefined : setTimeout(stop, options.timeoutMs);
+    options.timeoutMs === undefined
+      ? undefined
+      : setTimeout(() => {
+          timedOut = true;
+          stop();
+        }, options.timeoutMs);
 
   try {
     const [stdout, stderr] = await Promise.all([
@@ -144,7 +152,7 @@ export async function spawnInterruptible(
     ]);
     const code = await child.exited;
     if (aborted && options.signal.aborted) throw new AbortedError();
-    return { stdout, stderr, code };
+    return { stdout, stderr, code, timedOut };
   } finally {
     options.signal.removeEventListener("abort", stop);
     if (timer !== undefined) clearTimeout(timer);

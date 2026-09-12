@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { shellNode } from "../../src/nodes/shell";
 import { scriptNode } from "../../src/nodes/script";
+import { spawnInterruptible } from "../../src/nodes/spawn";
 
 /**
  * Interrupting a turn has to reach the process the turn started.
@@ -54,6 +55,17 @@ test("a shell command that finishes normally is untouched by the plumbing", asyn
   );
   expect(result.stdout.trim()).toBe("hello");
   expect(result.code).toBe(0);
+  expect(result.timedOut).toBe(false);
+});
+
+test("a command that outlives its ceiling resolves as timed out, not aborted", async () => {
+  const cwd = await dir();
+  const result = await spawnInterruptible(["sleep", "60"], {
+    cwd,
+    signal: new AbortController().signal,
+    timeoutMs: 300,
+  });
+  expect(result.timedOut).toBe(true);
 });
 
 test("aborting a script stops it too", async () => {
