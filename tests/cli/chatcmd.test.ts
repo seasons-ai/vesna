@@ -473,3 +473,17 @@ test("the mode is painted so auto stands out", () => {
   expect(modeRole("ask")).toBe("text");
   expect(modeRole("auto")).toBe("warn");
 });
+
+test("/build on a build the branch review stopped, from a log with no base, is refused: nothing to finish", () => {
+  const t = project([
+    { t: "created", id: "x", title: "X" },
+    { t: "task.added", id: "T1", title: "a" },
+    { t: "approved", what: "spec" }, { t: "approved", what: "plan" },
+    { t: "build.started" }, { t: "task.started", id: "T1" }, { t: "task.done", id: "T1" },
+    { t: "build.stopped", reason: "branch review: the brief is not met" },
+  ])!;
+  expect(buildStart(t, "idle")).toEqual({
+    kind: "refused",
+    message: "nothing to finish — this build started before Vesna recorded where builds start",
+  });
+});

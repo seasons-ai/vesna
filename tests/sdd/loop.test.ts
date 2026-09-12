@@ -2140,3 +2140,22 @@ test("on real git: a build stopped at the branch review, finished by a plain sta
   expect(diffs[0]).toContain("T2.txt");
   expect(readEvents(specs, "work").at(-1)).toEqual({ t: "build.done" });
 });
+
+// A log from before bases were recorded, stopped at the branch review, has
+// nothing a finishing build could review: the fallback to the sha read now
+// would hand the reviewer `HEAD...HEAD` — nothing — and stamp `build.done`
+// over a branch nobody re-read. That build is refused; the fallback is for
+// a resume, whose range the review at the end of that same process covers.
+test("a finishing start on an old log with no base is refused, not reviewed over an empty range", async () => {
+  const { root, specs } = setup(stoppedAtReview.map((e) => (e.t === "build.started" ? { t: "build.started" } : e)));
+  const f = fakes();
+  const before = readEvents(specs, "work").length;
+  const outcome = await runBuild(base(root, specs, f));
+  expect(outcome).toEqual({
+    status: "could-not-start",
+    reason: "nothing to finish — this build started before Vesna recorded where builds start",
+  });
+  expect(f.log).toEqual([]);
+  expect(readEvents(specs, "work").length).toBe(before);
+  expect(existsSync(join(specs, "work", "build.lock"))).toBe(false);
+});

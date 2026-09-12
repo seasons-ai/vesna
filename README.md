@@ -235,7 +235,7 @@ A build the branch review stopped, or whose last check failed on the base, is
 finished by a plain `/build` once the base is fixed: the red check runs
 again, no task runs, and the branch is reviewed again — from the commit the
 build first started at, whether or not it was resumed along the way. A build
-that already finished refuses instead, same as one never started:
+that already finished refuses instead:
 
 ```console
 $ vesna build demo-notes

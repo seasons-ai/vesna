@@ -201,9 +201,14 @@ export function buildStart(
   if (!tree.approved.plan) return { kind: "refused", message: "the plan is not approved — /approve plan" };
   const n = tree.tasks.length;
   if (n > 0 && tree.tasks.every((task) => task.state === "done")) {
-    return tree.finished
-      ? { kind: "refused", message: "nothing to build — every task is merged" }
-      : { kind: "start", message: "finishing the build — re-checking and reviewing the branch" };
+    if (tree.finished) return { kind: "refused", message: "nothing to build — every task is merged" };
+    // A finishing build reviews `buildBase...HEAD`; a log from before bases
+    // were recorded has no such range, and the loop refuses it with these
+    // same words rather than review nothing and call the build done.
+    if (tree.buildBase === undefined) {
+      return { kind: "refused", message: "nothing to finish — this build started before Vesna recorded where builds start" };
+    }
+    return { kind: "start", message: "finishing the build — re-checking and reviewing the branch" };
   }
   return {
     kind: "start",

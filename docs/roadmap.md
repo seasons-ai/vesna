@@ -62,16 +62,14 @@ task's merge-stage check is still red on the base — is a finishing build: a
 plain `/build` re-runs the red check if there is one, runs no task, reviews
 `buildBase...HEAD` again, and ends `build.done` or `build.stopped` as that
 review decides; a spec whose build did finish keeps the old refusal,
-`nothing to build — every task is merged`. No build id is needed: the range
-`buildBase...HEAD` already names what an id would have named.
+`nothing to build — every task is merged`. An all-done build left dead and
+then aborted keeps its range — only `build.done` closes one — so the next
+plain `/build` finishes it over the original range. No build id is needed:
+the range `buildBase...HEAD` already names what an id would have named.
 
 Every console block in the README is verbatim output.
 
 ## In progress
-
-Nothing at the moment — see Next.
-
-## Next
 
 Nothing at the moment — see Later.
 

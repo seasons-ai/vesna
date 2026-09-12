@@ -242,8 +242,15 @@ export async function runBuild(request: BuildLoopRequest): Promise<BuildOutcome>
     // last task, has every task done and something left to do — the
     // re-check and the review. That is a finishing build, and a plain start
     // is how a person asks for it once the base is fixed.
-    if (tree.tasks.every((task) => task.state === "done") && tree.finished) {
-      return { status: "could-not-start", reason: "nothing to build — every task is merged" };
+    if (tree.tasks.every((task) => task.state === "done")) {
+      if (tree.finished) return { status: "could-not-start", reason: "nothing to build — every task is merged" };
+      // A log from before bases were recorded has no range to finish over:
+      // the fallback to the sha read now (below, for a resume) would hand
+      // the review `HEAD...HEAD` — nothing — and write `build.done` over a
+      // branch nobody re-read. Refused, with the same words the chat uses.
+      if (tree.buildBase === undefined) {
+        return { status: "could-not-start", reason: "nothing to finish — this build started before Vesna recorded where builds start" };
+      }
     }
   }
 
