@@ -57,8 +57,9 @@ export type SpecEvent =
   /**
    * A person's answer to a build a killed process left behind. Written by
    * the command, never by a tool. Resume keeps the in-flight task where it
-   * is; retry and abort send it back to todo, and abort is followed by a
-   * `build.stopped "abandoned"`.
+   * is; retry and abort send it back to todo — unless a `task.done` for it
+   * came first, because git already held the merge — and abort is followed
+   * by a `build.stopped "abandoned"`.
    */
   | { t: "build.recovered"; action: RecoveryAction; task?: string }
   | { t: "build.done" }
@@ -294,6 +295,12 @@ export function project(events: SpecEvent[]): SpecTree | null {
         if (id === undefined) break;
         const task = tasks.get(id);
         if (task === undefined) break;
+        // A merged task is never sent back to todo. The loop refuses to
+        // retry one; and a kill that landed after the merge and before
+        // `task.done` is recovered by writing that `task.done` first, from
+        // what git holds, and only then the recovery — which then has
+        // nothing to undo.
+        if (task.state === "done") break;
         const { agent: _agent, ...rest } = task;
         tasks.set(id, { ...rest, state: "todo" });
         const e = evidence.get(id);

@@ -98,11 +98,15 @@ export async function buildCommand(
   // ctrl-c reaches the build as its own signal, so the log ends with
   // `build.stopped "interrupted"` and the task in flight is marked failed.
   // Killing the process instead leaves `building` true with nothing left to
-  // ever clear it. The handler lives only as long as the build: after it,
-  // ctrl-c ends the process the ordinary way again.
+  // ever clear it — and, on a task whose check runs after the merge, a
+  // merge with no `task.done`. A closed terminal (SIGHUP) and a plain
+  // `kill` (SIGTERM) are the same cancel, not a kill. The handlers live
+  // only as long as the build: after it, each signal ends the process the
+  // ordinary way again.
   const controller = new AbortController();
-  const onSigint = () => controller.abort();
-  process.on("SIGINT", onSigint);
+  const onSignal = () => controller.abort();
+  const signals = ["SIGINT", "SIGTERM", "SIGHUP"] as const;
+  for (const signal of signals) process.on(signal, onSignal);
   let outcome: BuildOutcome;
   try {
     outcome = await runBuild({
@@ -124,7 +128,7 @@ export async function buildCommand(
       },
     });
   } finally {
-    process.off("SIGINT", onSigint);
+    for (const signal of signals) process.off(signal, onSignal);
   }
   if (outcome.status !== "done") {
     console.error(`vesna: ${outcome.reason}`);

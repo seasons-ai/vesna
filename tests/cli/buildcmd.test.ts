@@ -327,3 +327,85 @@ test("a plain vesna build on a task a stop left a checkout for names the flags u
     "  from the shell: vesna build work --resume | --retry <task> | --abort",
   ]);
 });
+
+// Final fix round, item 1: a closed terminal is SIGHUP, `kill` is SIGTERM.
+// Both used to end the process outright, leaving `building` true and — on a
+// verify-bearing task — a merge with no `task.done`. Now each is the same
+// cancel ctrl-c is: the build ends `interrupted` through the log.
+test("the build's cancel handler is registered for SIGINT, SIGTERM and SIGHUP, and removed after", async () => {
+  const root = rootWithSpec();
+  const on = process.on.bind(process);
+  const registered: string[] = [];
+  process.on = ((event: string, listener: (...args: any[]) => void) => {
+    if (event === "SIGINT" || event === "SIGTERM" || event === "SIGHUP") registered.push(event);
+    return on(event as any, listener);
+  }) as typeof process.on;
+  const before = { int: process.listenerCount("SIGINT"), term: process.listenerCount("SIGTERM"), hup: process.listenerCount("SIGHUP") };
+  try {
+    const seen: typeof before[] = [];
+    const build = async (r: { task: string }): Promise<BuildResult> => {
+      seen.push({ int: process.listenerCount("SIGINT"), term: process.listenerCount("SIGTERM"), hup: process.listenerCount("SIGHUP") });
+      return built(r.task);
+    };
+    const code = await quiet(() =>
+      buildCommand("work", root, { ...shellDeps(), seams: { ...seams, build } }),
+    );
+    expect(code).toBe(0);
+    expect(registered.sort()).toEqual(["SIGHUP", "SIGINT", "SIGTERM"]);
+    expect(seen).toEqual([{ int: before.int + 1, term: before.term + 1, hup: before.hup + 1 }]);
+  } finally {
+    process.on = on;
+  }
+  expect({ int: process.listenerCount("SIGINT"), term: process.listenerCount("SIGTERM"), hup: process.listenerCount("SIGHUP") }).toEqual(before);
+});
+
+import { existsSync, writeFileSync } from "node:fs";
+import { runGit } from "../../src/work/worktree";
+
+test("a SIGTERM to vesna build while the check runs ends the log interrupted, not dead (real git + sh)", async () => {
+  const root = mkdtempSync(join(tmpdir(), "vesna-buildcmd-term-"));
+  await runGit(["init", "-q", "-b", "main"], root);
+  await runGit(["config", "user.email", "t@example.com"], root);
+  await runGit(["config", "user.name", "Test"], root);
+  writeFileSync(join(root, "a.txt"), "one\n");
+  await runGit(["add", "-A"], root);
+  await runGit(["commit", "-qm", "first"], root);
+  const specs = join(root, ".vesna", "specs");
+  mkdirSync(specs, { recursive: true });
+  createSpec(specs, "work");
+  appendEvent(specs, "work", { t: "task.added", id: "T1", title: "First" });
+  appendEvent(specs, "work", { t: "approved", what: "spec" });
+  appendEvent(specs, "work", { t: "approved", what: "plan" });
+  const flags = mkdtempSync(join(tmpdir(), "vesna-buildcmd-term-flags-"));
+  const marker = `vesna-verify-term-${process.pid}-${Date.now()}`;
+  writeSpecFile(
+    specPaths(specs, "work").plan,
+    `# Plan\n\n### Task 1: First\nverify: touch ${flags}/running; sleep 30 # ${marker}\n\nWrite T1.txt.\n`,
+  );
+
+  const child = Bun.spawn(["bun", join(import.meta.dir, "..", "fixtures", "build-child.ts"), root, "--command"], {
+    cwd: join(import.meta.dir, "..", ".."),
+    stdout: "ignore",
+    stderr: "pipe",
+  });
+  const deadline = Date.now() + 20_000;
+  while (!existsSync(join(flags, "running"))) {
+    if (Date.now() > deadline || child.exitCode !== null) {
+      throw new Error(`the child never reached the check: ${await new Response(child.stderr).text()}`);
+    }
+    await new Promise((r) => setTimeout(r, 50));
+  }
+  child.kill("SIGTERM");
+  const code = await child.exited;
+  try {
+    expect(code).toBe(1);
+    const events = readEvents(specs, "work");
+    expect(events.at(-1)).toEqual({ t: "build.stopped", reason: "interrupted" });
+    expect(events).toContainEqual({ t: "task.failed", id: "T1", reason: "interrupted" });
+    expect(existsSync(join(specs, "work", "build.lock"))).toBe(false);
+    // The cancel killed the check's process tree; nothing sleeps on.
+    expect(Bun.spawnSync(["pgrep", "-f", marker]).stdout.toString().trim()).toBe("");
+  } finally {
+    Bun.spawnSync(["pkill", "-f", marker]);
+  }
+});

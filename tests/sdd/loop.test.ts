@@ -1740,3 +1740,138 @@ test("the review after a verify failure is fresh; after the reviewer's own findi
   expect(await runBuild(base(afterReviewer.root, afterReviewer.specs, g, { verify: ok, review: scoped }))).toEqual({ status: "done" });
   expect(seen).toEqual([undefined, [wrong], undefined, undefined]);
 });
+
+// Final fix round, item 1: a process that died — not cancelled — after the
+// merge and before `task.done`. The log says T1 is running; git says its
+// branch is already an ancestor of main. A seam cannot reproduce it: the
+// loop's `finally` would still run. So the build runs in a child `bun`
+// that is SIGKILLed while the merge-stage check sleeps on main, and each
+// recovery then runs in this process against what the kill left behind.
+import { writesWhatTheBriefNames } from "../fixtures/build-child";
+
+async function killedDuringMergeCheck() {
+  const repo = await repository();
+  const specs = join(repo, ".vesna", "specs");
+  mkdirSync(specs, { recursive: true });
+  createSpec(specs, "work");
+  for (const e of [
+    { t: "task.added", id: "T1", title: "First" },
+    { t: "task.added", id: "T2", title: "Second", dependsOn: ["T1"] },
+    { t: "approved", what: "spec" }, { t: "approved", what: "plan" },
+  ] as SpecEvent[]) appendEvent(specs, "work", e);
+  // Flags outside the repository: `running` says the check is on main and
+  // asleep, `pass` (written by the test before a recovery) makes the same
+  // command pass on main the next time.
+  const flags = mkdtempSync(join(tmpdir(), "vesna-loop-kill-flags-"));
+  const marker = `vesna-verify-kill-${process.pid}-${Date.now()}`;
+  writeSpecFile(
+    specPaths(specs, "work").plan,
+    [
+      "# Plan", "",
+      "### Task 1: First",
+      `verify: test "$(git rev-parse --abbrev-ref HEAD)" != main || test -f ${flags}/pass || { touch ${flags}/running; sleep 30; } # ${marker}`,
+      "", "Write T1.txt.", "",
+      "### Task 2: Second",
+      "Write T2.txt.", "",
+    ].join("\n"),
+  );
+
+  const child = Bun.spawn(["bun", join(import.meta.dir, "..", "fixtures", "build-child.ts"), repo], {
+    cwd: join(import.meta.dir, "..", ".."),
+    stdout: "ignore",
+    stderr: "pipe",
+  });
+  const deadline = Date.now() + 20_000;
+  while (!existsSync(join(flags, "running"))) {
+    if (Date.now() > deadline || child.exitCode !== null) {
+      throw new Error(`the child never reached the merge-stage check: ${await new Response(child.stderr).text()}`);
+    }
+    await new Promise((r) => setTimeout(r, 50));
+  }
+  child.kill("SIGKILL");
+  await child.exited;
+  // The check's `sh`/`sleep` outlive their parent; nothing waits on them.
+  Bun.spawnSync(["pkill", "-f", marker]);
+
+  // What the kill left: T1 merged on main, running in the log, its checkout
+  // and branch still there, the lock naming a dead pid.
+  const events = readEvents(specs, "work");
+  expect(events.at(-1)).toEqual({ t: "verify.done", task: "T1", stage: "review", code: 0, ms: expect.any(Number) });
+  expect(project(events)!.tasks.find((t) => t.id === "T1")).toMatchObject({ state: "running" });
+  expect((await runGit(["log", "--format=%s", "-1", "main"], repo)).stdout.trim()).toBe("merge T1");
+  expect((await runGit(["branch", "--list", "vesna/work/T1"], repo)).stdout.trim()).not.toBe("");
+  expect(existsSync(worktreePath(repo, "work", "T1"))).toBe(true);
+  const head = (await runGit(["rev-parse", "vesna/work/T1"], repo)).stdout.trim();
+  const before = events.length;
+  writeFileSync(join(flags, "pass"), "");
+  return { repo, specs, head, before };
+}
+
+function recover(repo: string, specs: string, recovery: { action: "resume" | "retry" | "abort"; task?: string }) {
+  return runBuild({
+    root: repo, specsRoot: specs, slug: "work",
+    provider: writesWhatTheBriefNames(), registry: registry(),
+    policy: { mode: "auto", allow: {}, deny: {} },
+    review: async () => clean,
+    recovery,
+  });
+}
+
+async function cleanAfterRecovery(repo: string) {
+  expect((await runGit(["branch", "--list", "vesna/*"], repo)).stdout.trim()).toBe("");
+  expect(existsSync(worktreePath(repo, "work", "T1"))).toBe(false);
+  expect(existsSync(join(repo, ".vesna", "specs", "work", "build.lock"))).toBe(false);
+}
+
+for (const action of ["resume", "retry"] as const) {
+  test(`${action} after a kill during the merge-stage check records the merge, runs the check on main, and builds the rest (real git)`, async () => {
+    const { repo, specs, head, before } = await killedDuringMergeCheck();
+    const out = await recover(repo, specs, action === "retry" ? { action, task: "T1" } : { action });
+    expect(out).toEqual({ status: "done" });
+
+    const events = readEvents(specs, "work");
+    const since = events.slice(before).map((e: any) => [e.t, e.id ?? e.task ?? e.action ?? e.reason ?? null]);
+    // No worker ran for T1: the merge git already holds is recorded first,
+    // then the recovery, then the check on main, then T2 as usual.
+    expect(events.slice(before, before + 3)).toEqual([
+      { t: "task.done", id: "T1", commit: head },
+      { t: "build.recovered", action, task: "T1" },
+      { t: "build.started" },
+    ]);
+    expect(since.filter(([t]) => t === "task.started")).toEqual([["task.started", "T2"]]);
+    expect(events.slice(before).filter((e: any) => e.t === "verify.done")).toEqual([
+      { t: "verify.done", task: "T1", stage: "merge", code: 0, ms: expect.any(Number) },
+    ]);
+    expect(since.filter(([t]) => t === "task.failed" || t === "verify.failed")).toEqual([]);
+    expect(events.at(-1)).toEqual({ t: "build.done" });
+
+    const tree = project(events)!;
+    expect(tree.tasks.find((t) => t.id === "T1")).toMatchObject({ state: "done", commit: head });
+    expect(tree.tasks.find((t) => t.id === "T1")!.evidence).toEqual({ worker: true, reviewer: true, vesna: true });
+    expect(tree.tasks.find((t) => t.id === "T2")).toMatchObject({ state: "done" });
+    expect(readFileSync(join(repo, "T1.txt"), "utf8")).toBe("T1.txt\n");
+    expect(readFileSync(join(repo, "T2.txt"), "utf8")).toBe("T2.txt\n");
+    expect(existsSync(join(verifyLogs(specs), "T1-merge.log"))).toBe(true);
+    await cleanAfterRecovery(repo);
+  });
+}
+
+test("abort after a kill during the merge-stage check records the merge, then abandons the build and cleans up (real git)", async () => {
+  const { repo, specs, head, before } = await killedDuringMergeCheck();
+  const out = await recover(repo, specs, { action: "abort" });
+  expect(out).toEqual({ status: "stopped", reason: "abandoned" });
+
+  const events = readEvents(specs, "work");
+  expect(events.slice(before)).toEqual([
+    { t: "task.done", id: "T1", commit: head },
+    { t: "build.recovered", action: "abort", task: "T1" },
+    { t: "build.stopped", reason: "abandoned" },
+  ]);
+  const tree = project(events)!;
+  expect(tree.tasks.map((t) => [t.id, t.state])).toEqual([["T1", "done"], ["T2", "todo"]]);
+  expect(tree.building).toBe(false);
+  // The merge stands; the check did not run again.
+  expect((await runGit(["log", "--format=%s", "-1", "main"], repo)).stdout.trim()).toBe("merge T1");
+  expect(existsSync(join(verifyLogs(specs), "T1-merge.log"))).toBe(false);
+  await cleanAfterRecovery(repo);
+});

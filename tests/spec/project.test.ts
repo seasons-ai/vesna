@@ -428,6 +428,32 @@ test("an abort recovery returns the in-flight task to todo; the stop that follow
   expect(t.lastStop).toBe("abandoned");
 });
 
+// A kill that landed after the merge and before task.done: the recovery
+// learns from git that the merge is real and writes task.done before its
+// own build.recovered. A merged task is never sent back to todo — not by a
+// retry that names it, not by an abort that finds it — and the evidence the
+// killed run produced stays with it.
+test("a recovery that names an already-merged task leaves it done, evidence and all", () => {
+  const merged: SpecEvent[] = [
+    { t: "task.added", id: "T1", title: "a" },
+    { t: "task.added", id: "T2", title: "b", dependsOn: ["T1"] },
+    { t: "approved", what: "spec" }, { t: "approved", what: "plan" },
+    { t: "build.started" },
+    { t: "verify.declared", task: "T1" },
+    { t: "task.started", id: "T1", agent: "vesna build" },
+    { t: "review.done", task: "T1", round: 0, spec: "met", findings: [] },
+    { t: "verify.done", task: "T1", stage: "review", code: 0, ms: 5 },
+    { t: "task.done", id: "T1", commit: "abc" },
+  ];
+  const aborted = tree([...merged, { t: "build.recovered", action: "abort", task: "T1" }, { t: "build.stopped", reason: "abandoned" }]);
+  expect(aborted.tasks.map((x) => x.state)).toEqual(["done", "todo"]);
+  expect(aborted.tasks[0]!.evidence).toEqual({ worker: true, reviewer: true, vesna: false });
+  expect(aborted.building).toBe(false);
+  const retried = tree([...merged, { t: "build.recovered", action: "retry", task: "T1" }]);
+  expect(retried.tasks[0]!.state).toBe("done");
+  expect(retried.tasks[0]!.evidence).toEqual({ worker: true, reviewer: true, vesna: false });
+});
+
 test("a task's evidence says who produced it: worker, reviewer, vesna", () => {
   const events: SpecEvent[] = [
     { t: "task.added", id: "T1", title: "a" },

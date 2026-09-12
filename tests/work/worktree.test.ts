@@ -7,6 +7,7 @@ import {
   createWorktree,
   deleteBranch,
   hasUncommitted,
+  isMerged,
   listWorktrees,
   removeWorktree,
   runGit,
@@ -177,4 +178,37 @@ test("a merged task's branch can be deleted, and deleting a branch that is gone 
   await deleteBranch(repo, "vesna/s/T9");
   expect((await runGit(["branch", "--list", "vesna/s/T9"], repo)).stdout.trim()).toBe("");
   await deleteBranch(repo, "vesna/s/T9"); // gone already: no throw
+});
+
+// A branch already contained in the base with work of its own on it is a
+// merged one — a --no-ff merge commit on the base carries it as a second
+// parent. A branch that is an ancestor of the base for the other reason —
+// created at HEAD, never committed to — is not merged, it is empty, and the
+// difference decides whether a recovery hands the task to a worker or
+// records it done.
+test("isMerged tells a --no-ff merged branch from an empty one and from unmerged work", async () => {
+  const repo = await repository();
+  const merged = await createWorktree(repo, "s", "T1");
+  await writeFile(join(merged.path, "t1.txt"), "one\n");
+  await runGit(["add", "-A"], merged.path);
+  await runGit(["commit", "-qm", "T1"], merged.path);
+  await runGit(["merge", "--no-ff", "-m", "merge T1", merged.branch], repo);
+  expect(await isMerged(repo, merged.branch, "main")).toBe(true);
+
+  const empty = await createWorktree(repo, "s", "T2");
+  expect(await isMerged(repo, empty.branch, "main")).toBe(false);
+
+  const open = await createWorktree(repo, "s", "T3");
+  await writeFile(join(open.path, "t3.txt"), "three\n");
+  await runGit(["add", "-A"], open.path);
+  await runGit(["commit", "-qm", "T3"], open.path);
+  expect(await isMerged(repo, open.branch, "main")).toBe(false);
+
+  expect(await isMerged(repo, "vesna/s/none", "main")).toBe(false);
+  // Still merged once the base has moved on past the merge commit.
+  await writeFile(join(repo, "b.txt"), "later\n");
+  await runGit(["add", "-A"], repo);
+  await runGit(["commit", "-qm", "later"], repo);
+  expect(await isMerged(repo, merged.branch, "main")).toBe(true);
+  expect(await isMerged(repo, empty.branch, "main")).toBe(false);
 });

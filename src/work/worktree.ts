@@ -212,6 +212,30 @@ export async function branchExists(repo: string, branch: string, git: GitRunner 
 }
 
 /**
+ * Whether a task's branch is already merged into `base` — the state a
+ * process killed after the merge and before `task.done` leaves behind.
+ *
+ * "Merged" is not just "an ancestor of the base": a branch created at HEAD
+ * that nothing was ever committed to is an ancestor too, and it is empty,
+ * not merged. Vesna merges with --no-ff, so a merged branch's head is the
+ * second parent of a merge commit and never on the base's first-parent
+ * line; an empty branch's head always is. The branch has to be sighted
+ * positively first — a name git does not know is not merged, whatever the
+ * exit codes of the questions that follow would say.
+ */
+export async function isMerged(repo: string, branch: string, base: string, git: GitRunner = runGit): Promise<boolean> {
+  if (!(await branchExists(repo, branch, git))) return false;
+  const ancestor = await git(["merge-base", "--is-ancestor", branch, base], repo);
+  if (ancestor.code !== 0) return false;
+  const head = await git(["rev-parse", "--verify", `${branch}^{commit}`], repo);
+  if (head.code !== 0) return false;
+  const line = await git(["rev-list", "--first-parent", base], repo);
+  if (line.code !== 0) return false;
+  const sha = head.stdout.trim();
+  return !line.stdout.split("\n").some((entry) => entry.trim() === sha);
+}
+
+/**
  * Deletes a branch. Used after its merge went in: the merge is --no-ff, so
  * the merge commit carries the branch's whole history and can be reverted
  * as a unit, and the ref itself is a leftover. A branch that is already

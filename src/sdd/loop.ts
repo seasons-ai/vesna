@@ -9,7 +9,7 @@ import { appendEvent, digestOf, readEvents, readSpecFile, specPaths, writeSpecFi
 import { discardBuild, resumeTask, runTask, type BuildResult } from "../work/builder";
 import { mergeAll } from "../work/merge";
 import { CycleError, schedule } from "../work/schedule";
-import { branchExists, branchName, deleteBranch, isRegistered, removeWorktree, runGit, worktreePath, type GitRunner } from "../work/worktree";
+import { branchExists, branchName, deleteBranch, isMerged, isRegistered, removeWorktree, runGit, worktreePath, type GitRunner } from "../work/worktree";
 import { splitPlan, writeBriefs, type PlanTask } from "./brief";
 import { buildState, inFlightTask, pidAlive, readLockPid } from "./recover";
 import { reviewTask, type ReviewOutcome } from "./review";
@@ -340,16 +340,67 @@ export async function runBuild(request: BuildLoopRequest): Promise<BuildOutcome>
     return { status: "could-not-start", reason: `a build of "${slug}" is already running (pid ${lock.pid})` };
   }
 
+  // Tasks merged in this run — and one the last run merged without living
+  // to say so. See `one` below for what the set guards.
+  const done = new Set<string>();
+  // The in-flight task whose branch git already holds: the process died
+  // after the merge and before `task.done`. Its worker is never run again.
+  let merged: { id: string; branch: string; head: string } | undefined;
+
+  // A merged task's leftovers. `removeWorktree` deletes the branch itself
+  // once the checkout is clean, so one call does both. Guarded on the
+  // worktree existing: a seam-based test's fake `build`/`resume` invent a
+  // worktree path that is never actually created, and `removeWorktree`
+  // resolves it with real `fs.realpath` regardless of the injected `git`
+  // seam — calling it on an invented path throws. But a real worktree can
+  // also go missing on disk (an operator's `rm -rf`) while git still
+  // registers the branch; that case must not walk away leaving the branch
+  // behind, so it falls to `deleteBranch`, which touches only refs and
+  // never the path.
+  const cleanupMerged = async (branch: string, path: string) => {
+    if (existsSync(path)) {
+      await removeWorktree(request.root, { path, branch }, { discardChanges: true }, git);
+    } else {
+      await deleteBranch(request.root, branch, git);
+    }
+  };
+
   try {
     if (request.recovery !== undefined) {
       const { action } = request.recovery;
       const target = action === "retry" ? request.recovery.task : inFlight;
+
+      // Before acting on the in-flight task, ask git whether its merge
+      // already happened. A kill during the merge-stage check — a `bun
+      // test` of up to ten minutes, on every verify-bearing task — leaves
+      // the branch merged on the base and the task `running` in the log,
+      // and no worker can move that: its "nothing to change" is a merged
+      // branch's truth, not a failure. The log did not know yet; recording
+      // the merge first, from what git holds, is the honest answer for
+      // every recovery — a `retry` of such a task converges to done rather
+      // than rebuilding on a base that already holds it. `task.done` goes
+      // before `build.recovered` so the reducer, which sends a retried or
+      // aborted task back to todo, finds it done and leaves it alone.
+      if (target !== undefined && target === inFlight) {
+        const branch = branchName(slug, target);
+        const base = (await runLoopGit(git, ["rev-parse", "--abbrev-ref", "HEAD"], request.root)).stdout.trim();
+        if (await isMerged(request.root, branch, base, git)) {
+          const head = (await runLoopGit(git, ["rev-parse", branch], request.root)).stdout.trim();
+          merged = { id: target, branch, head };
+          done.add(target);
+          emit({ t: "task.done", id: target, commit: head });
+        }
+      }
       emit({ t: "build.recovered", action, ...(target !== undefined ? { task: target } : {}) });
 
       // Inside the try, alongside the build it recovers, so that a throw
       // from git here — as unlikely as `isRegistered` now makes it — still
       // runs the `finally` below and never leaves the lock held.
-      if (action !== "resume" && target !== undefined) {
+      //
+      // A merged task's checkout is not discarded: it is a leftover of a
+      // merge, removed the way every merge's is — by the recovered task's
+      // own pass through `attempt`, or right here on an abort.
+      if (action !== "resume" && target !== undefined && merged === undefined) {
         const path = worktreePath(request.root, slug, target);
         const branch = branchName(slug, target);
         const checkout = { path, branch };
@@ -370,6 +421,7 @@ export async function runBuild(request: BuildLoopRequest): Promise<BuildOutcome>
       }
 
       if (action === "abort") {
+        if (merged !== undefined) await cleanupMerged(merged.branch, worktreePath(request.root, slug, merged.id));
         emit({ t: "build.stopped", reason: "abandoned" });
         return { status: "stopped", reason: "abandoned" };
       }
@@ -398,7 +450,6 @@ export async function runBuild(request: BuildLoopRequest): Promise<BuildOutcome>
     // it runs. Writing `task.failed` over that would flip a merged task to
     // failed in the log, and no recovery could move it: retry would find
     // the work already on main. Only the build stops.
-    const done = new Set<string>();
     const one = async (task: Task): Promise<BuildResult> => {
       try {
         return await attempt(task);
@@ -421,8 +472,10 @@ export async function runBuild(request: BuildLoopRequest): Promise<BuildOutcome>
       // the log commits Vesna to running the check before anything the
       // worker does could make skipping it convenient.
       const check = planById.get(task.id)?.verify;
-      if (check !== undefined) emit({ t: "verify.declared", task: task.id });
-      emit({ t: "task.started", id: task.id, agent: "vesna build" });
+      if (merged?.id !== task.id) {
+        if (check !== undefined) emit({ t: "verify.declared", task: task.id });
+        emit({ t: "task.started", id: task.id, agent: "vesna build" });
+      }
 
       // One run of the check, and its record. A timeout is a failure with
       // no code at either stage. After the review a code is `verify.done`
@@ -444,6 +497,68 @@ export async function runBuild(request: BuildLoopRequest): Promise<BuildOutcome>
         }
         return r;
       };
+
+      // Everything after a merge. Merged is merged: the --no-ff commit on
+      // the base branch carries the task's history, and its worktree and
+      // branch are leftovers. A stopped task keeps both, because a person
+      // may want to look — except the stop below, after a merge, which has
+      // nothing to look at in the checkout: the merged tree is what failed.
+      const settle = async (result: BuildResult): Promise<BuildResult> => {
+        const cleanup = () => cleanupMerged(result.branch, result.worktree);
+        // Already written for the task a killed run merged; see `merged`.
+        const taskDone = () => {
+          if (done.has(task.id)) return;
+          done.add(task.id);
+          emit({ t: "task.done", id: task.id, ...(result.commit ? { commit: result.commit } : {}) });
+        };
+
+        if (check === undefined) {
+          taskDone();
+        } else {
+          // The check again, on the base branch this time: what passed in
+          // the checkout may not pass merged. `task.done` is written either
+          // way — the merge happened, and the log says what happened — and on
+          // a failure it comes first, then the failure, then the stop. Nothing
+          // on the base branch moves without a person.
+          let r: VerifyResult;
+          try {
+            r = await runCheck("merge", request.root, `${task.id}-merge.log`);
+          } catch (error) {
+            // A cancel (or anything else) landing inside the check does not
+            // unmerge: the task is done, its leftovers go as after any
+            // merge, and the check itself proved nothing — no verify event.
+            taskDone();
+            await cleanup();
+            throw error;
+          }
+          taskDone();
+          if (r.code !== 0) {
+            emit(
+              r.timedOut
+                ? { t: "verify.failed", task: task.id, stage: "merge", code: null, reason: "timeout" }
+                : { t: "verify.failed", task: task.id, stage: "merge", code: r.code },
+            );
+            await cleanup();
+            throw new Stop(`${task.id}: verify failed after merge — see verify/${task.id}-merge.log`);
+          }
+        }
+
+        await cleanup();
+        return result;
+      };
+
+      // The task the last run merged and died over: `task.done` is already
+      // written (above, before `build.recovered`), the killed run declared
+      // the check and started the task, and the worker and reviewer have
+      // both spoken. What is left is what would have followed the merge —
+      // the check on the base branch, and the cleanup.
+      if (merged?.id === task.id) {
+        return settle({
+          task: task.id, status: "committed", branch: merged.branch,
+          worktree: worktreePath(request.root, slug, task.id), commit: merged.head,
+          refusals: [], costUsd: 0, text: "",
+        });
+      }
 
       const common = {
         repo: request.root,
@@ -614,69 +729,11 @@ export async function runBuild(request: BuildLoopRequest): Promise<BuildOutcome>
         }
       }
 
-      const merged = await merge(request.root, [{ task: task.id, branch: result.branch }], git);
-      if (merged.conflict) throw new Stop(`${task.id}: merge conflict in ${merged.conflict.files.join(", ")}`);
-      if (merged.error) throw new Stop(`${task.id}: ${merged.error.message}`);
+      const outcome = await merge(request.root, [{ task: task.id, branch: result.branch }], git);
+      if (outcome.conflict) throw new Stop(`${task.id}: merge conflict in ${outcome.conflict.files.join(", ")}`);
+      if (outcome.error) throw new Stop(`${task.id}: ${outcome.error.message}`);
 
-      // Merged is merged: the --no-ff commit on the base branch carries the
-      // task's history, and its worktree and branch are leftovers. A stopped
-      // task keeps both, because a person may want to look — except the
-      // stop below, after a merge, which has nothing to look at in the
-      // checkout: the merged tree is what failed. `removeWorktree` deletes
-      // the branch itself once the checkout is clean, so one call does
-      // both. Guarded on the worktree existing: a seam-based test's fake
-      // `build`/`resume` invent a worktree path that is never actually
-      // created, and `removeWorktree` resolves it with real `fs.realpath`
-      // regardless of the injected `git` seam — calling it on an invented
-      // path throws. But a real worktree can also go missing on disk (an
-      // operator's `rm -rf`) while git still registers the branch; that
-      // case must not walk away leaving the branch behind, so it falls to
-      // `deleteBranch`, which touches only refs and never the path.
-      const cleanupAfterMerge = async () => {
-        if (existsSync(result.worktree)) {
-          await removeWorktree(request.root, { path: result.worktree, branch: result.branch }, { discardChanges: true }, git);
-        } else {
-          await deleteBranch(request.root, result.branch, git);
-        }
-      };
-      const taskDone = () => {
-        done.add(task.id);
-        emit({ t: "task.done", id: task.id, ...(result.commit ? { commit: result.commit } : {}) });
-      };
-
-      if (check === undefined) {
-        taskDone();
-      } else {
-        // The check again, on the base branch this time: what passed in
-        // the checkout may not pass merged. `task.done` is written either
-        // way — the merge happened, and the log says what happened — and on
-        // a failure it comes first, then the failure, then the stop. Nothing
-        // on the base branch moves without a person.
-        let r: VerifyResult;
-        try {
-          r = await runCheck("merge", request.root, `${task.id}-merge.log`);
-        } catch (error) {
-          // A cancel (or anything else) landing inside the check does not
-          // unmerge: the task is done, its leftovers go as after any
-          // merge, and the check itself proved nothing — no verify event.
-          taskDone();
-          await cleanupAfterMerge();
-          throw error;
-        }
-        taskDone();
-        if (r.code !== 0) {
-          emit(
-            r.timedOut
-              ? { t: "verify.failed", task: task.id, stage: "merge", code: null, reason: "timeout" }
-              : { t: "verify.failed", task: task.id, stage: "merge", code: r.code },
-          );
-          await cleanupAfterMerge();
-          throw new Stop(`${task.id}: verify failed after merge — see verify/${task.id}-merge.log`);
-        }
-      }
-
-      await cleanupAfterMerge();
-      return result;
+      return settle(result);
     };
 
     const scheduled = await schedule<BuildResult>({
