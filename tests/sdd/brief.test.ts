@@ -137,3 +137,19 @@ test("a verify: inside a fence is somebody's example, not the task's check", () 
   const plan = "### Task 1: A\n\n```\nverify: not this\n```\n";
   expect(splitPlan(plan)[0]!.verify).toBeUndefined();
 });
+
+test("a plan.md saved with CRLF line endings splits into the same tasks as LF", () => {
+  const lf = readFileSync(REAL_PLAN_PATH, "utf8");
+  const crlf = lf.replace(/\n/g, "\r\n");
+  const lfTasks = splitPlan(lf);
+  const crlfTasks = splitPlan(crlf);
+  expect(crlfTasks.length).toBeGreaterThan(0);
+  expect(crlfTasks).toEqual(lfTasks);
+});
+
+test("a verify: line is still recognised when the plan uses CRLF endings", () => {
+  const plan = "### Task 1: A\r\nverify: bun test\r\n\r\ntext\r\n";
+  const tasks = splitPlan(plan);
+  expect(tasks[0]!.verify).toBe("bun test");
+  expect(tasks[0]!.text).not.toContain("\r");
+});

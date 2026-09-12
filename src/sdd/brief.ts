@@ -25,6 +25,11 @@ const VERIFY = /^verify:(.*)$/;
 const FENCE = /^ {0,3}(`{3,}|~{3,})/;
 
 export function splitPlan(markdown: string): PlanTask[] {
+  // A plan.md saved with CRLF (or old-Mac lone-CR) line endings must split
+  // exactly like one saved with LF: every line-ending check below assumes a
+  // bare "\n", and a stray "\r" left on each line would keep `### Task`
+  // headings from ever matching.
+  markdown = markdown.replace(/\r\n?/g, "\n");
   const tasks: PlanTask[] = [];
   let current: PlanTask | null = null;
   const body: string[] = [];
