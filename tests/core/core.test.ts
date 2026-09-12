@@ -73,7 +73,7 @@ test("/mode with a name nobody has is refused, and the mode is left alone", asyn
 test("an unknown command is reported, not sent", async () => {
   const core = createCore(await deps(reply("x")));
   const seen = collect(core);
-  await core.command("nope", "");
+  await core.command("nope", "", { typed: "/nope" });
   expect(transcript(seen)[0]).toEqual({ kind: "user", text: "/nope" });
   expect(transcript(seen)[1]).toEqual({ kind: "notice", text: "unknown command /nope - try /help", level: "warn" });
   await core.close();
@@ -454,9 +454,9 @@ test("a command is quoted back as typed, to every subscriber, before its effect"
   const core = createCore(await deps(reply("x")));
   const first = collect(core);
   const second = collect(core);
-  await core.command("mode", "auto");
-  await core.command("spec", "");
-  await core.command("nope", "with words");
+  await core.command("mode", "auto", { typed: "/mode auto" });
+  await core.command("spec", "", { typed: "/spec" });
+  await core.command("nope", "", { typed: "/nope with words" });
   for (const seen of [first, second]) {
     const entries = transcript(seen) as any[];
     expect(entries[0]).toEqual({ kind: "user", text: "/mode auto" });
@@ -533,7 +533,7 @@ test("a command typed during a turn waits for the turn", async () => {
   const seen = collect(core);
   const turn = core.send("go");
   await until(() => transcript(seen).some((e: any) => e.kind === "delta"), "the turn to start");
-  const listing = core.command("spec", "");
+  const listing = core.command("spec", "", { typed: "/spec" });
   await new Promise((resolve) => setTimeout(resolve, 20));
   expect(transcript(seen).some((e: any) => e.kind === "user" && e.text === "/spec")).toBe(false);
   slow.release();
@@ -550,7 +550,7 @@ test("a mode change applies at once, even during a turn", async () => {
   const seen = collect(core);
   const turn = core.send("go");
   await until(() => transcript(seen).some((e: any) => e.kind === "delta"), "the turn to start");
-  await core.command("mode", "auto");
+  await core.command("mode", "auto", { typed: "/mode auto" });
   expect(core.snapshot().mode).toBe("auto");
   expect(lastState(seen).mode).toBe("auto");
   expect(lastState(seen).busy).toBe(true);
@@ -614,5 +614,22 @@ test("the turn's final usage is in a state before turn-end, and idle comes after
   expect(usageAt).toBeLessThan(turnEndAt);
   expect(turnEndAt).toBeLessThan(idleAt);
   expect(idleAt).toBe(seen.length - 1);
+  await core.close();
+});
+
+// Fix round 2: the echo is of what a person typed.
+
+test("a key-driven mode change is not quoted back; a typed one is, once, as typed", async () => {
+  const core = createCore(await deps(reply("x")));
+  const seen = collect(core);
+  await core.command("mode", "auto");
+  expect(transcript(seen).filter((e: any) => e.kind === "user")).toEqual([]);
+  expect(transcript(seen).some((e: any) => e.kind === "notice" && e.text.startsWith("mode: auto"))).toBe(true);
+  await core.command("mode", "plan", { typed: "/mode   plan" });
+  expect(transcript(seen).filter((e: any) => e.kind === "user")).toEqual([{ kind: "user", text: "/mode   plan" }]);
+  await core.command("spec", "", { typed: "/spec" });
+  expect(transcript(seen).filter((e: any) => e.kind === "user")).toHaveLength(2);
+  await core.command("resume", "some-id");
+  expect(transcript(seen).filter((e: any) => e.kind === "user")).toHaveLength(2);
   await core.close();
 });

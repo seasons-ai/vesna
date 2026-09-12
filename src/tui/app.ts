@@ -183,6 +183,10 @@ export async function runApp(deps: AppDeps, io: AppIo): Promise<number> {
   // question takes only a typed y or n: enter is not a yes for it, because a
   // person leaning on enter to leave must not write a durable event.
   let awaiting: { resolve: (answer: string) => void; strict: boolean } | null = null;
+  // Wakes the input loop once a question is answered, so a line typed ahead
+  // of the answer — a command of the screen's own included — is taken after
+  // it, never under it.
+  let askAnswered: (() => void) | null = null;
 
   // The left column is asked for; the right one shows the work in hand.
   let showChats = false;
@@ -248,6 +252,7 @@ export async function runApp(deps: AppDeps, io: AppIo): Promise<number> {
       }
       case "ask.resolved":
         awaiting = null;
+        askAnswered?.();
         return;
     }
   });
@@ -259,10 +264,10 @@ export async function runApp(deps: AppDeps, io: AppIo): Promise<number> {
   }
 
   /** Reopens a stored conversation, from the list or from a click on it. */
-  async function resume(argument: string): Promise<void> {
+  async function resume(argument: string, typed?: string): Promise<void> {
     resuming = true;
     try {
-      await core.command("resume", argument);
+      await core.command("resume", argument, typed === undefined ? {} : { typed });
     } finally {
       resuming = false;
     }
@@ -463,6 +468,14 @@ export async function runApp(deps: AppDeps, io: AppIo): Promise<number> {
     while (true) {
       const line = await submissions.take();
       if (line === null) break;
+      while (awaiting !== null) {
+        await new Promise<void>((resolve) => {
+          askAnswered = () => {
+            askAnswered = null;
+            resolve();
+          };
+        });
+      }
       // Once quitting has asked the build to stop, the person has said
       // they are leaving: a message typed into the wait must not start a
       // turn that runs, tools and all, behind a frame that no longer draws.
@@ -472,9 +485,7 @@ export async function runApp(deps: AppDeps, io: AppIo): Promise<number> {
       if (input.kind === "blank") continue;
 
       if (input.kind === "unknown") {
-        // The parser keeps only the name of a command it does not know; the
-        // core quotes the whole line back, so it gets the rest as well.
-        await core.command(input.name, line.trim().slice(1 + input.name.length).trim());
+        await core.command(input.name, "", { typed: line });
         draw();
         continue;
       }
@@ -499,7 +510,7 @@ export async function runApp(deps: AppDeps, io: AppIo): Promise<number> {
           // asked to be seen; a refused switch leaves a hidden garden hidden.
           const [verb, ...rest] = input.argument.trim().split(/\s+/);
           const before = state.specSlug;
-          await core.command(input.name, input.argument);
+          await core.command(input.name, input.argument, { typed: line });
           if (verb === "open" && state.specSlug === rest.join(" ")) showGarden = true;
           if (verb === "new" && state.specSlug !== before) showGarden = true;
           draw();
@@ -635,7 +646,7 @@ export async function runApp(deps: AppDeps, io: AppIo): Promise<number> {
         }
 
         if (input.name === "resume") {
-          await resume(input.argument);
+          await resume(input.argument, line);
           continue;
         }
 
@@ -646,7 +657,7 @@ export async function runApp(deps: AppDeps, io: AppIo): Promise<number> {
           continue;
         }
 
-        await core.command(input.name, input.argument);
+        await core.command(input.name, input.argument, { typed: line });
         draw();
         continue;
       }

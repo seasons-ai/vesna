@@ -24,8 +24,12 @@ export function createAsks(emit: (n: Notification) => void) {
       const choice = value.trim().slice(0, 1).toLowerCase();
       if (!(entry.ask.choices as string[]).includes(choice)) return false;
       open.delete(id);
-      emit({ method: "ask.resolved", params: { id } });
+      // The answer first, then the word that the question is gone: what the
+      // answer does (an approval written, an action allowed) is queued ahead
+      // of anything a client does on hearing `ask.resolved` — a line typed
+      // behind the question runs after its consequence, never before.
       entry.resolve(choice as AskChoice);
+      emit({ method: "ask.resolved", params: { id } });
       return true;
     },
     open(): Ask[] {

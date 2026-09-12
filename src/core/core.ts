@@ -770,13 +770,16 @@ export function createCore(deps: CoreDeps): Core & BuildSeam {
     return "deny";
   }
 
-  /** Quoted back as typed, so a second client sees the question as well as the answer. */
-  function quote(name: string, argument: string): void {
-    // The parser already trimmed the argument.
-    entry({ kind: "user", text: `/${name}${argument === "" ? "" : ` ${argument}`}` });
+  /**
+   * Quoted back exactly as typed, so a second client sees the question as
+   * well as the answer. A command that came from a key — shift-tab, a click
+   * on a conversation — was never typed, and nothing is quoted.
+   */
+  function quote(typed: string | undefined): void {
+    if (typed !== undefined) entry({ kind: "user", text: typed });
   }
 
-  function command(name: string, argument: string): Promise<void> {
+  function command(name: string, argument: string, options: { typed?: string } = {}): Promise<void> {
     if (closing) return Promise.resolve();
     // The two that skip the queue — see `free` above.
     if (name === "chats") {
@@ -786,21 +789,21 @@ export function createCore(deps: CoreDeps): Core & BuildSeam {
       return Promise.resolve();
     }
     if (name === "mode") {
-      quote(name, argument);
+      quote(options.typed);
       const wanted = argument.trim();
       if ((MODES as readonly string[]).includes(wanted)) setMode(wanted as Mode);
       else notice(`/mode plan, ask or auto — not "${wanted}"`, "warn");
       entry({ kind: "turn-end" });
       return Promise.resolve();
     }
-    const run = free.then(() => runCommand(name, argument));
+    const run = free.then(() => runCommand(name, argument, options.typed));
     free = run.then(() => {}, () => {});
     return run;
   }
 
-  async function runCommand(name: string, argument: string): Promise<void> {
+  async function runCommand(name: string, argument: string, typed: string | undefined): Promise<void> {
     if (closing) return;
-    quote(name, argument);
+    quote(typed);
 
     if (name === "spec") {
       specCommand(argument);

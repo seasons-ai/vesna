@@ -43,7 +43,8 @@ export type Notification =
 /** The agent minus the screen: a client drives it and renders its notifications. */
 export interface Core {
   send(text: string): Promise<void>;
-  command(name: string, argument: string): Promise<void>;
+  /** `typed` is the line as the person typed it, quoted back; a key-driven command has none. */
+  command(name: string, argument: string, options?: { typed?: string }): Promise<void>;
   answer(id: string, value: string): boolean;   // false when no such ask is open
   interrupt(): void;
   snapshot(): State;

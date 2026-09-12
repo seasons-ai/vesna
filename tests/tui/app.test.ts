@@ -2532,3 +2532,47 @@ test("a refused /spec open leaves a hidden garden hidden", async () => {
   expect(app.screen()).not.toContain("│");
   await quit(app);
 });
+
+// Fix round 2: shift-tab is a key, not a typed line; a typed line waits behind a question.
+
+test("shift-tab changes the mode without quoting a command nobody typed; /mode typed is quoted once", async () => {
+  const app = await start(reply("x"), { rows: 20, cols: 100 });
+  app.input.type("\x1b[Z");
+  await until(() => app.screen().includes("shift-tab: auto → plan"), "auto");
+  const count = (needle: string) => app.screen().split(needle).length - 1;
+  expect(count("› /mode")).toBe(0);
+  expect(count("mode: auto  changes go ahead")).toBe(1);
+  app.input.type("/mode plan\r");
+  await until(() => app.screen().includes("mode: plan"), "plan");
+  expect(count("› /mode plan")).toBe(1);
+  expect(count("› /mode")).toBe(1);
+  await quit(app);
+});
+
+test("/help typed behind the approval question waits for the answer", async () => {
+  const { app } = await unapprovedPlanApp();
+  app.input.type("hello\r/help\r");
+  await until(() => app.screen().includes("approve the plan?"), "the question");
+  await settled();
+  const count = (needle: string) => app.screen().split(needle).length - 1;
+  expect(count("alt-enter newline")).toBe(0);
+  expect(count("approve the plan?")).toBe(1);
+  app.input.type("y");
+  await until(() => app.screen().includes("alt-enter newline"), "the listing");
+  expect(count("approved: plan")).toBe(1);
+  expect(count("alt-enter newline")).toBe(1);
+  // The answer's consequence lands before the line that waited behind it.
+  expect(app.screen().indexOf("approved: plan")).toBeLessThan(app.screen().indexOf("› /help"));
+  await quit(app);
+});
+
+test("/exit typed behind the approval question does not leave while it stands", async () => {
+  const { app, specs, slug } = await unapprovedPlanApp();
+  app.input.type("hello\r/exit\r");
+  await until(() => app.screen().includes("approve the plan?"), "the question");
+  expect(await stillRunning(app)).toBe(true);
+  expect(readEvents(specs, slug).some((e: any) => e.t === "approved" && e.what === "plan")).toBe(false);
+  app.input.type("n");
+  expect(await app.finished).toBe(0);
+  expect(readEvents(specs, slug).some((e: any) => e.t === "approved" && e.what === "plan")).toBe(false);
+});
