@@ -139,11 +139,34 @@ test("two tasks build side by side without seeing each other", async () => {
     runTask({ ...request(repo, writes("two.txt", "2\n")), task: "T2" }),
   ]);
 
-  expect(one.status).toBe("committed");
-  expect(two.status).toBe("committed");
+  // The error text is the evidence when this fails; a bare status is not.
+  expect({ status: one.status, error: one.error }).toEqual({ status: "committed", error: undefined });
+  expect({ status: two.status, error: two.error }).toEqual({ status: "committed", error: undefined });
   await expect(readFile(join(one.worktree, "two.txt"), "utf8")).rejects.toThrow();
   await expect(readFile(join(two.worktree, "one.txt"), "utf8")).rejects.toThrow();
 });
+
+test("eight tasks starting at once all get a checkout — none dies on a sibling's half-written worktree", async () => {
+  // `git worktree add` writes its administrative files one by one, and a
+  // sibling enumerating worktrees in that window used to die with "failed
+  // to read .git/worktrees/<id>/commondir". Repeated, because the window
+  // is narrow and shows up under load rather than every time.
+  for (let round = 0; round < 5; round++) {
+    const repo = await repository();
+    const results = await Promise.all(
+      Array.from({ length: 8 }, (_, n) =>
+        runTask({ ...request(repo, writes(`file${n + 1}.txt`, `${n + 1}\n`)), task: `T${n + 1}` }),
+      ),
+    );
+    for (const result of results) {
+      expect({ task: result.task, status: result.status, error: result.error }).toEqual({
+        task: result.task,
+        status: "committed",
+        error: undefined,
+      });
+    }
+  }
+}, 60_000);
 
 test("a provider that falls over is reported, not thrown at the caller", async () => {
   const repo = await repository();

@@ -3,6 +3,7 @@ import { mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
+  branchExists,
   branchName,
   createWorktree,
   deleteBranch,
@@ -12,6 +13,7 @@ import {
   removeWorktree,
   runGit,
   worktreesRoot,
+  type GitRunner,
 } from "../../src/work/worktree";
 
 /** A real repository with one commit: git behaviour is the thing under test. */
@@ -55,6 +57,32 @@ test("work in one checkout is invisible in another", async () => {
   await writeFile(join(one.path, "a.txt"), "changed by T1\n");
   expect(await readFile(join(two.path, "a.txt"), "utf8")).toBe("one\n");
   expect(await readFile(join(repo, "a.txt"), "utf8")).toBe("one\n");
+});
+
+test("git commands that read the worktree list never overlap one that is writing it", async () => {
+  // A fake git that takes a while over `worktree add` and records how many
+  // list-touching commands are in flight at once. Git dies on a sibling's
+  // half-written worktree entry, so the answer has to be one, every time.
+  let inFlight = 0;
+  let mostAtOnce = 0;
+  const git: GitRunner = async (args) => {
+    const touchesList = args[0] === "worktree" && args[1] !== "prune" || args[0] === "branch";
+    if (!touchesList) return { code: args[0] === "rev-parse" ? 1 : 0, stdout: "", stderr: "" };
+    inFlight += 1;
+    mostAtOnce = Math.max(mostAtOnce, inFlight);
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    inFlight -= 1;
+    return { code: 0, stdout: "", stderr: "" };
+  };
+
+  const repo = await mkdtemp(join(tmpdir(), "vesna-wt-fake-"));
+  await Promise.all([
+    ...Array.from({ length: 4 }, (_, n) => createWorktree(repo, "spec", `T${n + 1}`, git)),
+    listWorktrees(repo, git),
+    branchExists(repo, "vesna/spec/T1", git),
+    deleteBranch(repo, "vesna/spec/T9", git),
+  ]);
+  expect(mostAtOnce).toBe(1);
 });
 
 test("a second attempt on the same task is refused, not quietly merged into the first", async () => {
