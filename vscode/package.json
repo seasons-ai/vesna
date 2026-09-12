@@ -83,7 +83,14 @@
       },
       {
         "command": "vesna.retryTask",
-        "title": "Retry"
+        "title": "Retry",
+        "icon": "$(debug-restart)"
+      }
+    ],
+    "viewsWelcome": [
+      {
+        "view": "vesna.garden",
+        "contents": "No spec is open.\n[Open Spec](command:vesna.openSpec)\n[New Spec](command:vesna.newSpec)"
       }
     ],
     "menus": {

@@ -1,6 +1,6 @@
 import { join } from "node:path";
 import { test, expect } from "bun:test";
-import { diagnostics } from "../src/diagnostics";
+import { diagnostics, groupByFile } from "../src/diagnostics";
 import type { State, SpecTree } from "../src/protocol";
 
 const ROOT = "/repo";
@@ -101,4 +101,26 @@ test("severity maps critical/important/minor to error/warning/information", () =
   });
   const out = diagnostics(makeState(spec));
   expect(out.map((d) => d.severity)).toEqual(["error", "warning", "information"]);
+});
+
+// ---------------------------------------------------------------------------
+// groupByFile — the adapter's grouping, with existence injected.
+
+test("diagnostics are grouped by file, in order, and a file that does not exist is dropped", () => {
+  const diags = [
+    { file: "/repo/a.ts", line: 2, severity: "warning" as const, message: "T1: first" },
+    { file: "/repo/gone.ts", line: 0, severity: "error" as const, message: "T1: nowhere" },
+    { file: "/repo/b.ts", line: 0, severity: "information" as const, message: "T2: other" },
+    { file: "/repo/a.ts", line: 4, severity: "error" as const, message: "T2: second" },
+  ];
+  const seen: string[] = [];
+  const grouped = groupByFile(diags, (file) => {
+    seen.push(file);
+    return file !== "/repo/gone.ts";
+  });
+  expect([...grouped.keys()]).toEqual(["/repo/a.ts", "/repo/b.ts"]);
+  expect(grouped.get("/repo/a.ts")!.map((d) => d.message)).toEqual(["T1: first", "T2: second"]);
+  expect(grouped.get("/repo/b.ts")!.map((d) => d.message)).toEqual(["T2: other"]);
+  // Existence is asked once per file, not once per finding.
+  expect(seen).toEqual(["/repo/a.ts", "/repo/gone.ts", "/repo/b.ts"]);
 });

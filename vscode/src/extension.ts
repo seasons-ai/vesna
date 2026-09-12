@@ -4,12 +4,16 @@
  * `server.ts`, `status.ts`, `settings.ts`); this file is the wiring.
  */
 import { spawn } from "node:child_process";
+import { existsSync } from "node:fs";
 import { readdir } from "node:fs/promises";
 import { join } from "node:path";
 import * as vscode from "vscode";
 import type { Client } from "./client";
+import { diagnostics } from "./diagnostics";
+import { applyDiagnostics } from "./diagnosticsView";
+import { GARDEN_VIEW_ID, GardenProvider } from "./gardenView";
 import { CHAT_VIEW_ID, VesnaPanel } from "./panel";
-import type { Notification } from "./protocol";
+import type { Notification, State } from "./protocol";
 import { startServer, stopServer, type ChildLike, type Spawner } from "./server";
 import { readSettings } from "./settings";
 import { createStore, type Store } from "./state";
@@ -117,7 +121,31 @@ export function activate(context: vscode.ExtensionContext): void {
   const unwire = wireStatusBar(statusItem, store);
   context.subscriptions.push(statusItem, { dispose: unwire });
 
-  registerCommands(context, store, panel, root);
+  // The garden and the findings follow `state` the same way the status bar
+  // does: every `state` notification (the handshake's included, so a restart
+  // redraws too) replaces `model.state`, and each new one is drawn once.
+  const garden = new GardenProvider(vscode);
+  const findings = vscode.languages.createDiagnosticCollection("vesna");
+  const drawEditor = (state: State | null): void => {
+    garden.refresh(state);
+    applyDiagnostics(findings, state === null ? [] : diagnostics(state), existsSync);
+  };
+  let drawn: State | null = store.model.state;
+  drawEditor(drawn);
+  context.subscriptions.push(
+    vscode.window.registerTreeDataProvider(GARDEN_VIEW_ID, garden),
+    garden,
+    findings,
+    {
+      dispose: store.subscribe((model) => {
+        if (model.state === drawn) return;
+        drawn = model.state;
+        drawEditor(drawn);
+      }),
+    },
+  );
+
+  registerCommands(context, store, panel, root, () => drawEditor(store.model.state));
 
   // `when: vesna.building` gates Build against Cancel in the garden's title.
   const building = (value: boolean): void => void vscode.commands.executeCommand("setContext", "vesna.building", value);
@@ -137,7 +165,13 @@ export async function deactivate(): Promise<void> {
 // ---------------------------------------------------------------------------
 // Commands
 
-function registerCommands(context: vscode.ExtensionContext, store: Store, panel: VesnaPanel, root: string | null): void {
+function registerCommands(
+  context: vscode.ExtensionContext,
+  store: Store,
+  panel: VesnaPanel,
+  root: string | null,
+  redrawEditor: () => void,
+): void {
   /** A command line for the server, or a notice in the panel when there is no server to take it. */
   const command = (name: string, argument: string): void => {
     const client = link?.current() ?? null;
@@ -189,9 +223,9 @@ function registerCommands(context: vscode.ExtensionContext, store: Store, panel:
     "vesna.openSpecMd": () => openArtefact("spec.md"),
     "vesna.openPlanMd": () => openArtefact("plan.md"),
     "vesna.showPanel": () => panel.focus(),
-    // Task 7 hooks: Refresh redraws from the model the tree already has; Retry
+    // Refresh redraws the garden and the findings from the last state; Retry
     // runs the `build retry <id>` a task node carries (see `garden.ts` `Node.command`).
-    "vesna.refreshGarden": () => {},
+    "vesna.refreshGarden": () => redrawEditor(),
     "vesna.retryTask": (node) => {
       const carried = (node as { command?: { name: string; argument: string } } | undefined)?.command;
       if (carried !== undefined) command(carried.name, carried.argument);

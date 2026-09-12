@@ -51,3 +51,25 @@ export function diagnostics(state: State): Diag[] {
   }
   return out;
 }
+
+/**
+ * The diagnostics grouped by file, in first-seen order, minus the files
+ * that `exists` denies — asked once per file. The adapter turns each group
+ * into one `collection.set`.
+ */
+export function groupByFile(diags: Diag[], exists: (path: string) => boolean): Map<string, Diag[]> {
+  const grouped = new Map<string, Diag[]>();
+  const missing = new Set<string>();
+  for (const diag of diags) {
+    if (missing.has(diag.file)) continue;
+    const group = grouped.get(diag.file);
+    if (group !== undefined) {
+      group.push(diag);
+    } else if (exists(diag.file)) {
+      grouped.set(diag.file, [diag]);
+    } else {
+      missing.add(diag.file);
+    }
+  }
+  return grouped;
+}
