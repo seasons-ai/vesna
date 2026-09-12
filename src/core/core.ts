@@ -151,7 +151,10 @@ export function createCore(deps: CoreDeps): Core & BuildSeam {
   // One thing at a time, in the order asked: a message or a command that
   // arrives during a turn, or while a question stands, waits its turn — as
   // the chat's own input loop always made it wait. Never rejects: the chain
-  // must outlive any one failure.
+  // must outlive any one failure. Two commands skip the queue because they
+  // need no session and must not wait for one: `chats` is a list refresh
+  // for a column opening mid-turn, and `mode` changes the policy the running
+  // turn's next tool call is judged by — shift-tab has always applied at once.
   let free: Promise<void> = Promise.resolve();
   /** The last /history listing, so /resume can take a number rather than an id. */
   let listed: SessionSummary[] = [];
@@ -767,13 +770,27 @@ export function createCore(deps: CoreDeps): Core & BuildSeam {
     return "deny";
   }
 
+  /** Quoted back as typed, so a second client sees the question as well as the answer. */
+  function quote(name: string, argument: string): void {
+    // The parser already trimmed the argument.
+    entry({ kind: "user", text: `/${name}${argument === "" ? "" : ` ${argument}`}` });
+  }
+
   function command(name: string, argument: string): Promise<void> {
     if (closing) return Promise.resolve();
-    // The list, not a column: whether it is shown is the client's, and a
-    // column opening mid-turn need not wait for the turn.
+    // The two that skip the queue — see `free` above.
     if (name === "chats") {
+      // The list, not a column: whether it is shown is the client's.
       refreshChats();
       changed();
+      return Promise.resolve();
+    }
+    if (name === "mode") {
+      quote(name, argument);
+      const wanted = argument.trim();
+      if ((MODES as readonly string[]).includes(wanted)) setMode(wanted as Mode);
+      else notice(`/mode plan, ask or auto — not "${wanted}"`, "warn");
+      entry({ kind: "turn-end" });
       return Promise.resolve();
     }
     const run = free.then(() => runCommand(name, argument));
@@ -783,17 +800,7 @@ export function createCore(deps: CoreDeps): Core & BuildSeam {
 
   async function runCommand(name: string, argument: string): Promise<void> {
     if (closing) return;
-    // Quoted back as typed, so a second client sees the question as well as
-    // the answer. The parser already trimmed the argument.
-    entry({ kind: "user", text: `/${name}${argument === "" ? "" : ` ${argument}`}` });
-
-    if (name === "mode") {
-      const wanted = argument.trim();
-      if ((MODES as readonly string[]).includes(wanted)) setMode(wanted as Mode);
-      else notice(`/mode plan, ask or auto — not "${wanted}"`, "warn");
-      entry({ kind: "turn-end" });
-      return;
-    }
+    quote(name, argument);
 
     if (name === "spec") {
       specCommand(argument);

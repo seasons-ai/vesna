@@ -533,14 +533,35 @@ test("a command typed during a turn waits for the turn", async () => {
   const seen = collect(core);
   const turn = core.send("go");
   await until(() => transcript(seen).some((e: any) => e.kind === "delta"), "the turn to start");
-  const mode = core.command("mode", "auto");
+  const listing = core.command("spec", "");
   await new Promise((resolve) => setTimeout(resolve, 20));
-  expect(core.snapshot().mode).toBe("ask");
+  expect(transcript(seen).some((e: any) => e.kind === "user" && e.text === "/spec")).toBe(false);
   slow.release();
-  await Promise.all([turn, mode]);
-  expect(core.snapshot().mode).toBe("auto");
+  await Promise.all([turn, listing]);
   const entries = transcript(seen) as any[];
-  expect(entries.findIndex((e) => e.kind === "user" && e.text === "/mode auto")).toBeGreaterThan(entries.findIndex((e) => e.kind === "turn-end"));
+  expect(entries.findIndex((e) => e.kind === "user" && e.text === "/spec")).toBeGreaterThan(entries.findIndex((e) => e.kind === "turn-end"));
+  expect(entries.some((e) => e.kind === "notice" && e.text === "no specs yet — /spec new <name>")).toBe(true);
+  await core.close();
+});
+
+test("a mode change applies at once, even during a turn", async () => {
+  const slow = halfway("work", "ing");
+  const core = createCore(await deps(slow.provider));
+  const seen = collect(core);
+  const turn = core.send("go");
+  await until(() => transcript(seen).some((e: any) => e.kind === "delta"), "the turn to start");
+  await core.command("mode", "auto");
+  expect(core.snapshot().mode).toBe("auto");
+  expect(lastState(seen).mode).toBe("auto");
+  expect(lastState(seen).busy).toBe(true);
+  const entries = transcript(seen) as any[];
+  expect(entries.some((e) => e.kind === "user" && e.text === "/mode auto")).toBe(true);
+  expect(entries.some((e) => e.kind === "notice" && e.text.startsWith("mode: auto"))).toBe(true);
+  // The command's own turn-end is there; the turn's is not, since it has not ended.
+  expect(entries.filter((e) => e.kind === "turn-end")).toHaveLength(1);
+  expect(entries.some((e) => e.kind === "delta" && e.text === "ing")).toBe(false);
+  slow.release();
+  await turn;
   await core.close();
 });
 
