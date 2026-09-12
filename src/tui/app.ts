@@ -470,26 +470,41 @@ export async function runApp(deps: AppDeps, io: AppIo): Promise<number> {
       const input = parseChatInput(line);
 
       if (input.kind === "blank") continue;
-      // A slash command is control, not conversation: it is quoted back
-      // here, never sent, and so never recorded as what was said.
-      transcript.user(line);
-      draw();
 
       if (input.kind === "unknown") {
-        await core.command(input.name, "");
+        // The parser keeps only the name of a command it does not know; the
+        // core quotes the whole line back, so it gets the rest as well.
+        await core.command(input.name, line.trim().slice(1 + input.name.length).trim());
         draw();
         continue;
       }
 
       if (input.kind === "command") {
+        // The core quotes back every command it takes. The ones that never
+        // reach it — the screen's own — are quoted here, the same way.
+        const own = ["exit", "build", "chats", "help", "cost", "theme", "copy"].includes(input.name);
+        if (own) {
+          transcript.user(line);
+          draw();
+        }
+
         if (input.name === "exit") {
           if (leave()) break;
           draw();
           continue;
         }
 
-        // Opening a spec, even one already open and hidden, is asking to see it.
-        if (input.name === "spec" && /^(new|open)(\s|$)/.test(input.argument.trim())) showGarden = true;
+        if (input.name === "spec") {
+          // A spec opened by name — even one already open and hidden — is
+          // asked to be seen; a refused switch leaves a hidden garden hidden.
+          const [verb, ...rest] = input.argument.trim().split(/\s+/);
+          const before = state.specSlug;
+          await core.command(input.name, input.argument);
+          if (verb === "open" && state.specSlug === rest.join(" ")) showGarden = true;
+          if (verb === "new" && state.specSlug !== before) showGarden = true;
+          draw();
+          continue;
+        }
 
         if (input.name === "build") {
           // The log may have moved under this chat — a build run and killed

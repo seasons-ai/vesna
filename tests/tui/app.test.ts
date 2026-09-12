@@ -2488,3 +2488,47 @@ test("the question is not asked after an interrupted turn, and returns after the
   await until(() => app.screen().split("not yet").length === 3, "the answer");
   await quit(app);
 });
+
+// Fix round 1: what the screen shows once, and what it waits for.
+
+test("a sent message is quoted back exactly once", async () => {
+  const app = await start(reply("All done."));
+  app.input.type("do it\r");
+  await until(() => app.screen().includes("All done."), "the answer");
+  const rows = app.screen().split("\n");
+  expect(rows.filter((row) => row.includes("› do it")).length).toBe(1);
+  expect(rows.filter((row) => row.includes("copy")).length).toBe(2);
+  await quit(app);
+});
+
+test("a message typed behind the approval question waits for the answer; the question is asked once", async () => {
+  const { app, specs, slug } = await unapprovedPlanApp();
+  app.input.type("hello\rmore\r");
+  await until(() => app.screen().includes("approve the plan?"), "the question");
+  await settled();
+  const count = (needle: string) => app.screen().split(needle).length - 1;
+  expect(count("approve the plan?")).toBe(1);
+  expect(count("› more")).toBe(0);
+  app.input.type("y");
+  await until(() => app.screen().includes("› more"), "the second turn");
+  await until(() => count("x") >= 2, "the second answer");
+  expect(count("approve the plan?")).toBe(1);
+  expect(count("approved: plan")).toBe(1);
+  expect(count("› hello")).toBe(1);
+  expect(count("› more")).toBe(1);
+  expect(readEvents(specs, slug).filter((e: any) => e.t === "approved" && e.what === "plan")).toHaveLength(1);
+  await quit(app);
+});
+
+test("a refused /spec open leaves a hidden garden hidden", async () => {
+  const app = await start(reply("x"), { rows: 20, cols: 130 });
+  app.input.type("/spec new first thing\r");
+  await until(() => app.screen().includes("done"), "the garden");
+  app.input.type("\x07");
+  await until(() => !app.screen().includes("done"), "the garden hidden");
+  app.input.type("/spec open nothing-here\r");
+  await until(() => app.screen().includes('no spec called "nothing-here"'), "the refusal");
+  expect(app.screen().split("\n").filter((row) => /(^|\s)done\s*$/.test(row)).length).toBe(0);
+  expect(app.screen()).not.toContain("│");
+  await quit(app);
+});

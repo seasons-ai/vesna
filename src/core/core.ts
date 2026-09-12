@@ -148,6 +148,11 @@ export function createCore(deps: CoreDeps): Core & BuildSeam {
   let closing = false;
   let busy = false;
   let turn: AbortController | null = null;
+  // One thing at a time, in the order asked: a message or a command that
+  // arrives during a turn, or while a question stands, waits its turn — as
+  // the chat's own input loop always made it wait. Never rejects: the chain
+  // must outlive any one failure.
+  let free: Promise<void> = Promise.resolve();
   /** The last /history listing, so /resume can take a number rather than an id. */
   let listed: SessionSummary[] = [];
 
@@ -203,9 +208,17 @@ export function createCore(deps: CoreDeps): Core & BuildSeam {
    * it trimmed, as the chat's parser always handed it over. Resolves once the
    * turn has ended and the approval question, if there is one, is up — not
    * once it is answered, or a client awaiting this before answering would
-   * wait forever.
+   * wait forever. The next thing asked of the core does wait for the answer.
    */
-  async function send(text: string): Promise<void> {
+  function send(text: string): Promise<void> {
+    if (closing) return Promise.resolve();
+    const run = free.then(() => runSend(text));
+    free = run.then((question) => question.answered, () => {});
+    return run.then(() => {});
+  }
+
+  async function runSend(text: string): Promise<{ answered: Promise<void> }> {
+    if (closing) return { answered: Promise.resolve() };
     entry({ kind: "user", text });
     remember({ t: "user", text });
 
@@ -230,7 +243,6 @@ export function createCore(deps: CoreDeps): Core & BuildSeam {
       notice(aborted ? "interrupted" : (error as Error).message, aborted ? "warn" : "error");
     } finally {
       turn = null;
-      busy = false;
 
       if (answer !== undefined) remember({ t: "answer", raw: answer });
       const added = session.messages.slice(before);
@@ -242,12 +254,16 @@ export function createCore(deps: CoreDeps): Core & BuildSeam {
         costUsd: session.costUsd,
       });
 
+      // The final tokens while the turn is still on, then the turn's end,
+      // then idle: the order a screen shows them in.
       refreshSpec();
       entry({ kind: "turn-end" });
-      // Not awaited: the question is up before `askApproval` first yields,
-      // and the answer is the client's to give whenever it likes.
-      if (!interrupted) void askApproval();
+      busy = false;
+      changed();
     }
+    // Not awaited: the question is up before `askApproval` first yields,
+    // and the answer is the client's to give whenever it likes.
+    return { answered: interrupted ? Promise.resolve() : askApproval() };
   }
 
   async function runTurn(text: string, signal: AbortSignal): Promise<void> {
@@ -697,6 +713,8 @@ export function createCore(deps: CoreDeps): Core & BuildSeam {
    * file beside it, which teaches the user to stop reading the question.
    */
   async function approve(action: Action): Promise<"allow" | "deny"> {
+    // Nobody is left to ask once the chat is closing.
+    if (closing) return "deny";
     const verdict = decide(action, policy, deps.root);
     if (verdict === "allow") return "allow";
     if (verdict === "deny") {
@@ -749,7 +767,26 @@ export function createCore(deps: CoreDeps): Core & BuildSeam {
     return "deny";
   }
 
-  async function command(name: string, argument: string): Promise<void> {
+  function command(name: string, argument: string): Promise<void> {
+    if (closing) return Promise.resolve();
+    // The list, not a column: whether it is shown is the client's, and a
+    // column opening mid-turn need not wait for the turn.
+    if (name === "chats") {
+      refreshChats();
+      changed();
+      return Promise.resolve();
+    }
+    const run = free.then(() => runCommand(name, argument));
+    free = run.then(() => {}, () => {});
+    return run;
+  }
+
+  async function runCommand(name: string, argument: string): Promise<void> {
+    if (closing) return;
+    // Quoted back as typed, so a second client sees the question as well as
+    // the answer. The parser already trimmed the argument.
+    entry({ kind: "user", text: `/${name}${argument === "" ? "" : ` ${argument}`}` });
+
     if (name === "mode") {
       const wanted = argument.trim();
       if ((MODES as readonly string[]).includes(wanted)) setMode(wanted as Mode);
@@ -788,13 +825,6 @@ export function createCore(deps: CoreDeps): Core & BuildSeam {
         notice(outcome.message, "warn");
       }
       entry({ kind: "turn-end" });
-      return;
-    }
-
-    // The list, not a column: whether it is shown is the client's.
-    if (name === "chats") {
-      refreshChats();
-      changed();
       return;
     }
 
@@ -875,7 +905,7 @@ export function createCore(deps: CoreDeps): Core & BuildSeam {
       listeners.add(listener);
       return () => void listeners.delete(listener);
     },
-    answer: asks.answer,
+    answer: (id: string, value: string): boolean => (closing ? false : asks.answer(id, value)),
     send,
     command,
     interrupt(): void {
@@ -890,10 +920,12 @@ export function createCore(deps: CoreDeps): Core & BuildSeam {
       building = on;
       changed();
     },
-    // As leaving the chat: nothing more is asked, and a turn in flight is
-    // cut short. The build's cancellation joins this once the build moves in.
+    // As leaving the chat: every open question is answered no, a turn in
+    // flight is cut short, and nothing asked afterwards does anything. The
+    // build's cancellation joins this once the build moves in.
     async close(): Promise<void> {
       closing = true;
+      for (const ask of asks.open()) asks.answer(ask.id, "n");
       turn?.abort();
     },
   };

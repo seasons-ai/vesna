@@ -74,7 +74,8 @@ test("an unknown command is reported, not sent", async () => {
   const core = createCore(await deps(reply("x")));
   const seen = collect(core);
   await core.command("nope", "");
-  expect(transcript(seen)[0]).toEqual({ kind: "notice", text: "unknown command /nope - try /help", level: "warn" });
+  expect(transcript(seen)[0]).toEqual({ kind: "user", text: "/nope" });
+  expect(transcript(seen)[1]).toEqual({ kind: "notice", text: "unknown command /nope - try /help", level: "warn" });
   await core.close();
 });
 
@@ -443,5 +444,154 @@ test("a conversation is written down as it happens: the user line, the answer an
   expect(events).toContainEqual({ t: "answer", raw: "an answer" });
   await core.command("mode", "auto");
   expect(events.filter((e) => e.t === "user")).toHaveLength(1);
+  await core.close();
+});
+
+// Fix round 1: what a second client sees, and what the core does with more
+// than one thing at a time.
+
+test("a command is quoted back as typed, to every subscriber, before its effect", async () => {
+  const core = createCore(await deps(reply("x")));
+  const first = collect(core);
+  const second = collect(core);
+  await core.command("mode", "auto");
+  await core.command("spec", "");
+  await core.command("nope", "with words");
+  for (const seen of [first, second]) {
+    const entries = transcript(seen) as any[];
+    expect(entries[0]).toEqual({ kind: "user", text: "/mode auto" });
+    expect(entries[1].kind).toBe("notice");
+    expect(entries[1].text.startsWith("mode: auto")).toBe(true);
+    expect(entries.some((e) => e.kind === "user" && e.text === "/spec")).toBe(true);
+    expect(entries.some((e) => e.kind === "user" && e.text === "/nope with words")).toBe(true);
+    expect(entries.filter((e) => e.kind === "user")).toHaveLength(3);
+  }
+  await core.close();
+});
+
+test("a message is quoted back once", async () => {
+  const core = createCore(await deps(reply("x")));
+  const seen = collect(core);
+  await core.send("do it");
+  expect(transcript(seen).filter((e: any) => e.kind === "user")).toEqual([{ kind: "user", text: "do it" }]);
+  await core.close();
+});
+
+test("two sends run one after the other: deltas never interleave, and idle is only ever between turns", async () => {
+  const slow = halfway("work", "ing");
+  const core = createCore(await deps(slow.provider));
+  const seen = collect(core);
+  const one = core.send("one");
+  const two = core.send("two");
+  await until(() => transcript(seen).some((e: any) => e.kind === "delta"), "the first delta");
+  // The second turn has not started: nothing of it is quoted back yet.
+  expect(transcript(seen).filter((e: any) => e.kind === "user")).toEqual([{ kind: "user", text: "one" }]);
+  slow.release();
+  await Promise.all([one, two]);
+  const kinds = transcript(seen).map((e: any) => (e.kind === "delta" ? `delta:${e.text}` : e.kind === "user" ? `user:${e.text}` : e.kind));
+  expect(kinds).toEqual([
+    "user:one", "delta:work", "delta:ing", "turn-end",
+    "user:two", "delta:work", "delta:ing", "turn-end",
+  ]);
+  // Idle is never reported while a turn is open.
+  let open = false;
+  for (const n of seen) {
+    if (n.method === "transcript" && n.params.kind === "user") open = true;
+    if (n.method === "transcript" && n.params.kind === "turn-end") open = false;
+    if (n.method === "state" && !(n.params as any).busy) expect(open).toBe(false);
+  }
+  expect(lastState(seen).busy).toBe(false);
+  await core.close();
+});
+
+test("a message typed behind the approval question waits for the answer, and the question is asked once", async () => {
+  const { core, seen, specs, slug } = await unapprovedPlan();
+  const hello = core.send("hello");
+  const more = core.send("more");
+  await hello;
+  expect(asks(seen, "approval")).toHaveLength(1);
+  await new Promise((resolve) => setTimeout(resolve, 30));
+  expect(asks(seen, "approval")).toHaveLength(1);
+  expect(transcript(seen).some((e: any) => e.kind === "user" && e.text === "more")).toBe(false);
+  expect(core.answer(asks(seen, "approval")[0].id, "y")).toBe(true);
+  await more;
+  expect(readEvents(specs, slug).some((e: any) => e.t === "approved" && e.what === "plan")).toBe(true);
+  expect(transcript(seen).some((e: any) => e.kind === "user" && e.text === "more")).toBe(true);
+  expect(asks(seen, "approval")).toHaveLength(1);
+  // The approval landed before "more" was quoted back.
+  const entries = transcript(seen) as any[];
+  const approvedAt = entries.findIndex((e) => e.kind === "notice" && /^approved: plan/.test(e.text));
+  const moreAt = entries.findIndex((e) => e.kind === "user" && e.text === "more");
+  expect(approvedAt).toBeGreaterThanOrEqual(0);
+  expect(moreAt).toBeGreaterThan(approvedAt);
+  await core.close();
+});
+
+test("a command typed during a turn waits for the turn", async () => {
+  const slow = halfway("work", "ing");
+  const core = createCore(await deps(slow.provider));
+  const seen = collect(core);
+  const turn = core.send("go");
+  await until(() => transcript(seen).some((e: any) => e.kind === "delta"), "the turn to start");
+  const mode = core.command("mode", "auto");
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  expect(core.snapshot().mode).toBe("ask");
+  slow.release();
+  await Promise.all([turn, mode]);
+  expect(core.snapshot().mode).toBe("auto");
+  const entries = transcript(seen) as any[];
+  expect(entries.findIndex((e) => e.kind === "user" && e.text === "/mode auto")).toBeGreaterThan(entries.findIndex((e) => e.kind === "turn-end"));
+  await core.close();
+});
+
+test("close answers an open permission with no, and the pending send settles", async () => {
+  const { registry, ran } = writing();
+  const caller = toolCaller("put", { path: "src/a.ts" });
+  const core = createCore(await allowing(caller, registry));
+  const seen = collect(core);
+  const turn = core.send("go");
+  await until(() => seen.some((n) => n.method === "ask"), "the question");
+  const ask = seen.find((n) => n.method === "ask")!.params as any;
+  await core.close();
+  await turn;
+  expect(seen.some((n) => n.method === "ask.resolved" && (n.params as any).id === ask.id)).toBe(true);
+  expect(ran).toEqual([]);
+});
+
+test("close answers an open approval with no, and nothing answers after it", async () => {
+  const { core, seen, specs, slug } = await unapprovedPlan();
+  await core.send("hi");
+  const ask = asks(seen, "approval")[0];
+  await core.close();
+  expect(seen.some((n) => n.method === "ask.resolved" && (n.params as any).id === ask.id)).toBe(true);
+  expect(transcript(seen).some((e: any) => e.kind === "notice" && e.text === "not yet")).toBe(true);
+  expect(core.answer(ask.id, "y")).toBe(false);
+  expect(readEvents(specs, slug).some((e: any) => e.t === "approved" && e.what === "plan")).toBe(false);
+});
+
+test("after close, send and command are silent no-ops", async () => {
+  let calls = 0;
+  const core = createCore(await deps({ id: "fake", complete: async () => { calls += 1; return { content: [{ type: "text", text: "x" }], stopReason: "end_turn", model: "m", usage: { inputTokens: 1, outputTokens: 1, cacheReadTokens: 0, cacheWriteTokens: 0 } }; } }));
+  await core.close();
+  const seen = collect(core);
+  await core.send("x");
+  await core.command("mode", "auto");
+  expect(calls).toBe(0);
+  expect(core.snapshot().mode).toBe("ask");
+  expect(seen).toEqual([]);
+});
+
+test("the turn's final usage is in a state before turn-end, and idle comes after it", async () => {
+  const core = createCore(await deps(reply("x")));
+  const seen = collect(core);
+  await core.send("hi");
+  const usageAt = seen.findIndex((n) => n.method === "state" && (n.params as any).usage.inputTokens === 3);
+  const turnEndAt = seen.findIndex((n) => n.method === "transcript" && n.params.kind === "turn-end");
+  const idleAt = seen.findIndex((n) => n.method === "state" && !(n.params as any).busy);
+  expect(usageAt).toBeGreaterThanOrEqual(0);
+  expect((seen[usageAt]!.params as any).busy).toBe(true);
+  expect(usageAt).toBeLessThan(turnEndAt);
+  expect(turnEndAt).toBeLessThan(idleAt);
+  expect(idleAt).toBe(seen.length - 1);
   await core.close();
 });
