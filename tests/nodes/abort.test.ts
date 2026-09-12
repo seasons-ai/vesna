@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { shellNode } from "../../src/nodes/shell";
 import { scriptNode } from "../../src/nodes/script";
-import { spawnInterruptible } from "../../src/nodes/spawn";
+import { AbortedError, spawnInterruptible } from "../../src/nodes/spawn";
 
 /**
  * Interrupting a turn has to reach the process the turn started.
@@ -15,6 +15,11 @@ import { spawnInterruptible } from "../../src/nodes/spawn";
  */
 
 const dir = () => mkdtemp(join(tmpdir(), "vesna-abort-"));
+
+/** Whether any process matching `pattern` is still alive, right now. */
+function isAlive(pattern: string): boolean {
+  return Bun.spawnSync(["pgrep", "-f", pattern]).stdout.toString().trim().length > 0;
+}
 
 test("aborting a shell command stops it rather than letting it finish", async () => {
   const cwd = await dir();
@@ -66,6 +71,31 @@ test("a command that outlives its ceiling resolves as timed out, not aborted", a
     timeoutMs: 300,
   });
   expect(result.timedOut).toBe(true);
+});
+
+test("a ceiling reaps a backgrounded grandchild that has released the pipes", async () => {
+  const cwd = await dir();
+  const result = await spawnInterruptible(["sh", "-c", "sleep 63 >/dev/null 2>&1 & wait"], {
+    cwd,
+    signal: new AbortController().signal,
+    timeoutMs: 300,
+  });
+  expect(result.timedOut).toBe(true);
+  expect(isAlive("sleep 63")).toBe(false);
+});
+
+test("an abort reaps a backgrounded grandchild that has released the pipes", async () => {
+  const cwd = await dir();
+  const controller = new AbortController();
+  const running = spawnInterruptible(["sh", "-c", "sleep 64 >/dev/null 2>&1 & wait"], {
+    cwd,
+    signal: controller.signal,
+  });
+
+  await new Promise((resolve) => setTimeout(resolve, 100));
+  controller.abort();
+  await expect(running).rejects.toBeInstanceOf(AbortedError);
+  expect(isAlive("sleep 64")).toBe(false);
 });
 
 test("aborting a script stops it too", async () => {

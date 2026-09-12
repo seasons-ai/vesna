@@ -4,6 +4,7 @@ import { spawnInterruptible } from "../nodes/spawn";
 
 export const VERIFY_CEILING_MS = 600_000;
 const TAIL_LINES = 100;
+const TAIL_BYTES = 16 * 1024;
 
 export interface VerifyRequest {
   command: string;
@@ -38,6 +39,9 @@ export async function runVerify(request: VerifyRequest): Promise<VerifyResult> {
   });
   const ms = Date.now() - started;
   const code = run.timedOut ? null : run.code;
+  // stdout then stderr, not chronological: the two are read from separate
+  // pipes (`Response.text()` on each) with no shared clock between them, so
+  // there is no way to interleave the bytes in the order they were written.
   const output = `${run.stdout}${run.stdout !== "" && !run.stdout.endsWith("\n") ? "\n" : ""}${run.stderr}`;
   mkdirSync(dirname(request.logPath), { recursive: true });
   writeFileSync(
@@ -45,5 +49,9 @@ export async function runVerify(request: VerifyRequest): Promise<VerifyResult> {
     `$ ${request.command}\n\n${output}\n\nexit ${code === null ? "timeout" : code} after ${ms} ms\n`,
   );
   const lines = output.trimEnd().split("\n");
-  return { code, ms, timedOut: run.timedOut, tail: lines.slice(-TAIL_LINES).join("\n") };
+  // Bounded in lines first (a fix round wants recent lines, not a wall of
+  // early ones), then in bytes — a handful of very long lines (minified
+  // output, `\r` progress bars) could otherwise still hand back megabytes.
+  const tail = lines.slice(-TAIL_LINES).join("\n").slice(-TAIL_BYTES);
+  return { code, ms, timedOut: run.timedOut, tail };
 }

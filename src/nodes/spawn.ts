@@ -113,8 +113,15 @@ export async function spawnInterruptible(
   let aborted = false;
   let timedOut = false;
   let killer: ReturnType<typeof setTimeout> | undefined;
+  // Resolved once the SIGKILL sweep below has actually run. A backgrounded
+  // grandchild that has released the pipes (`cmd >/dev/null 2>&1 & wait`)
+  // lets `child.exited` resolve the moment the root dies from SIGTERM, well
+  // before GRACE_MS is up — so without waiting for this, the `finally` below
+  // would cancel the sweep before it ever fires and the grandchild survives.
+  let swept: Promise<void> | undefined;
 
   const stop = () => {
+    if (aborted) return;
     aborted = true;
     // The tree is captured BEFORE the first signal. Once the shell dies its
     // children are reparented to init and no walk from child.pid finds them.
@@ -128,12 +135,15 @@ export async function spawnInterruptible(
     // be trapped, and the whole point is that nothing outlives the turn — so
     // the kill goes to everything captured, deepest first, plus anything
     // those have spawned since.
-    killer = setTimeout(() => {
-      const now = new Set<number>();
-      for (const pid of tree) for (const kid of descendantsOf(pid)) now.add(kid);
-      for (const pid of tree) now.add(pid);
-      killAll([...now], "SIGKILL");
-    }, GRACE_MS);
+    swept = new Promise((resolve) => {
+      killer = setTimeout(() => {
+        const now = new Set<number>();
+        for (const pid of tree) for (const kid of descendantsOf(pid)) now.add(kid);
+        for (const pid of tree) now.add(pid);
+        killAll([...now], "SIGKILL");
+        resolve();
+      }, GRACE_MS);
+    });
   };
 
   options.signal.addEventListener("abort", stop, { once: true });
@@ -151,11 +161,17 @@ export async function spawnInterruptible(
       new Response(child.stderr).text(),
     ]);
     const code = await child.exited;
+    // The root exiting says nothing about the rest of the tree: a
+    // backgrounded grandchild can outlive it. On the kill path, the promise
+    // must not settle until the sweep has actually run.
+    if (aborted) await swept;
     if (aborted && options.signal.aborted) throw new AbortedError();
     return { stdout, stderr, code, timedOut };
   } finally {
     options.signal.removeEventListener("abort", stop);
     if (timer !== undefined) clearTimeout(timer);
-    if (killer !== undefined) clearTimeout(killer);
+    // Only cancel the sweep on the normal, non-aborted path — once `stop()`
+    // has run, the sweep must complete (awaited above), never be cut short.
+    if (!aborted && killer !== undefined) clearTimeout(killer);
   }
 }

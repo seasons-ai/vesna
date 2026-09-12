@@ -7,6 +7,11 @@ import { AbortedError } from "../../src/nodes/spawn";
 
 const dir = () => mkdtempSync(join(tmpdir(), "vesna-verify-"));
 
+/** Whether any process matching `pattern` is still alive, right now. */
+function isAlive(pattern: string): boolean {
+  return Bun.spawnSync(["pgrep", "-f", pattern]).stdout.toString().trim().length > 0;
+}
+
 test("a check that passes reports 0 and its log holds the output", async () => {
   const d = dir();
   const log = join(d, "verify", "T1-review-r0.log");
@@ -53,4 +58,42 @@ test("an abort during a check is the abort, not a result", async () => {
   setTimeout(() => controller.abort(), 100);
   await expect(pending).rejects.toBeInstanceOf(AbortedError);
   expect(existsSync(join(d, "l.log"))).toBe(false);
+});
+
+test("a ceiling reaps a backgrounded grandchild that has released the pipes", async () => {
+  const d = dir();
+  const r = await runVerify({
+    command: "sleep 63 >/dev/null 2>&1 & wait",
+    cwd: d,
+    logPath: join(d, "l.log"),
+    timeoutMs: 300,
+  });
+  expect(r.timedOut).toBe(true);
+  expect(isAlive("sleep 63")).toBe(false);
+});
+
+test("an abort reaps a backgrounded grandchild that has released the pipes", async () => {
+  const d = dir();
+  const controller = new AbortController();
+  const pending = runVerify({
+    command: "sleep 64 >/dev/null 2>&1 & wait",
+    cwd: d,
+    logPath: join(d, "l.log"),
+    signal: controller.signal,
+  });
+  setTimeout(() => controller.abort(), 100);
+  await expect(pending).rejects.toBeInstanceOf(AbortedError);
+  expect(isAlive("sleep 64")).toBe(false);
+});
+
+test("tail is capped at 16 KiB even for one very long line", async () => {
+  const d = dir();
+  const r = await runVerify({
+    command: "head -c 100000 /dev/zero | tr '\\0' 'a'",
+    cwd: d,
+    logPath: join(d, "l.log"),
+  });
+  expect(r.code).toBe(0);
+  expect(r.tail.length).toBeLessThanOrEqual(16 * 1024);
+  expect(r.tail.endsWith("a".repeat(50))).toBe(true);
 });
