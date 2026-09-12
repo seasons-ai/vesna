@@ -2626,3 +2626,16 @@ test("a core method that rejects on a key path is a notice, and the terminal is 
   expect(await finished).toBe(0);
   expect(writes.join("")).toContain("\x1b[?1049l");
 });
+
+test("the status line's token count is current while a permission question stands", async () => {
+  const { registry } = writing();
+  const caller = toolCaller("put", { path: "src/a.ts" });
+  const app = await start(caller, { rows: 20, cols: 90 }, await allowing(caller, registry));
+  app.input.type("go\r");
+  await until(() => app.screen().includes("[y] allow"), "the question");
+  // The call that asked cost one token in and one out; the status says so now, not after the answer.
+  expect(app.screen().split("\n").filter((row) => /ask · 2 tok/.test(row)).length).toBe(1);
+  app.input.type("y");
+  await until(() => app.screen().includes("finished"), "the turn");
+  await quit(app);
+});

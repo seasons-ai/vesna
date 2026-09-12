@@ -886,3 +886,19 @@ test("a cancel while a build runs here still skips the queue, ahead of a message
   await running;
   await core.close();
 });
+
+test("the state before a permission ask carries the usage of the call that asked", async () => {
+  const { registry } = writing();
+  const caller = toolCaller("put", { path: "src/a.ts" });
+  const core = createCore(await allowing(caller, registry));
+  const seen = collect(core);
+  const turn = core.send("go");
+  await until(() => seen.some((n) => n.method === "ask"), "the question");
+  const askAt = seen.findIndex((n) => n.method === "ask");
+  const before = [...seen.slice(0, askAt)].reverse().find((n) => n.method === "state")!.params as any;
+  expect(before.usage).toEqual({ inputTokens: 1, outputTokens: 1, costUsd: 0 });
+  expect(before.busy).toBe(true);
+  core.answer((seen[askAt]!.params as any).id, "y");
+  await turn;
+  await core.close();
+});

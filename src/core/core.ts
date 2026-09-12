@@ -891,6 +891,9 @@ export function createCore(deps: CoreDeps): Core {
   async function approve(action: Action): Promise<"allow" | "deny"> {
     // Nobody is left to ask once the chat is closing.
     if (closing) return "deny";
+    // The call that is asking has been paid for: the count a client shows
+    // beside the question is the one after it, not the one before the turn.
+    changed();
     const verdict = decide(action, policy, deps.root);
     if (verdict === "allow") return "allow";
     if (verdict === "deny") {
