@@ -102,8 +102,9 @@ test("a latin name is untouched, because those already read well", () => {
   expect(slugify("Reliable cancellation")).toBe("reliable-cancellation");
 });
 
-import { mkdtempSync, existsSync } from "node:fs";
-import { specPaths, writeSpecFile, readSpecFile } from "../../src/spec/store";
+import { mkdtempSync, existsSync, writeFileSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { specPaths, writeSpecFile, readSpecFile, digestOf } from "../../src/spec/store";
 
 test("a spec's files all live in its own folder", () => {
   const p = specPaths("/repo/.vesna/specs", "cancel");
@@ -123,4 +124,12 @@ test("writing a spec file makes its folder, and reading it back is exact", () =>
   writeSpecFile(join(p.briefs, "T1.md"), "# T1\n");
   expect(existsSync(p.briefs)).toBe(true);
   expect(readSpecFile(join(p.briefs, "T1.md"))).toBe("# T1\n");
+});
+
+test("digestOf is the sha256 of the file's bytes, and null for a file that is not there", () => {
+  const dir = mkdtempSync(join(tmpdir(), "vesna-digest-"));
+  const path = join(dir, "plan.md");
+  writeFileSync(path, "# Plan\n");
+  expect(digestOf(path)).toBe(createHash("sha256").update("# Plan\n").digest("hex"));
+  expect(digestOf(join(dir, "missing.md"))).toBeNull();
 });

@@ -427,3 +427,48 @@ test("an abort recovery returns the in-flight task to todo; the stop that follow
   expect(t.building).toBe(false);
   expect(t.lastStop).toBe("abandoned");
 });
+
+test("a task's evidence says who produced it: worker, reviewer, vesna", () => {
+  const events: SpecEvent[] = [
+    { t: "task.added", id: "T1", title: "a" },
+    { t: "task.added", id: "T2", title: "b" },
+    { t: "approved", what: "spec" }, { t: "approved", what: "plan" },
+    { t: "build.started" },
+    { t: "verify.declared", task: "T1" },
+    { t: "task.started", id: "T1" },
+    { t: "review.done", task: "T1", round: 0, spec: "met", findings: [] },
+    { t: "verify.done", task: "T1", stage: "review", code: 0, ms: 12 },
+    { t: "task.done", id: "T1" },
+  ];
+  let t = tree(events)!;
+  expect(t.tasks[0]!.evidence).toEqual({ worker: true, reviewer: true, vesna: false });
+  expect(t.tasks[1]!.evidence).toEqual({ worker: false, reviewer: false, vesna: null });
+  t = tree([...events, { t: "verify.done", task: "T1", stage: "merge", code: 0, ms: 30 }])!;
+  expect(t.tasks[0]!.evidence).toEqual({ worker: true, reviewer: true, vesna: true });
+  t = tree([...events, { t: "verify.failed", task: "T1", stage: "merge", code: 3 }])!;
+  expect(t.tasks[0]!.evidence).toEqual({ worker: true, reviewer: true, vesna: false });
+});
+
+test("a retry clears the task's evidence but remembers that a check was declared", () => {
+  const t = tree([
+    { t: "task.added", id: "T1", title: "a" },
+    { t: "approved", what: "spec" }, { t: "approved", what: "plan" },
+    { t: "build.started" },
+    { t: "verify.declared", task: "T1" },
+    { t: "task.started", id: "T1" },
+    { t: "review.done", task: "T1", round: 0, spec: "met", findings: [] },
+    { t: "build.stopped", reason: "x" },
+    { t: "build.recovered", action: "retry", task: "T1" },
+  ])!;
+  expect(t.tasks[0]!.evidence).toEqual({ worker: false, reviewer: false, vesna: false });
+});
+
+test("the last approval's digest is kept per artefact, and an old log without one is fine", () => {
+  const t = tree([
+    { t: "approved", what: "spec" },
+    { t: "approved", what: "plan", digest: "aaa" },
+    { t: "approved", what: "plan", digest: "bbb" },
+  ])!;
+  expect(t.digests).toEqual({ plan: "bbb" });
+  expect(t.approved).toEqual({ spec: true, plan: true });
+});

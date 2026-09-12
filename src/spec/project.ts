@@ -23,6 +23,7 @@ const HEAVINESS: Record<Shape, number> = { spike: 0, bounded: 1, architectural: 
 export type Approvable = "spec" | "plan";
 export type RecoveryAction = "resume" | "retry" | "abort";
 export type Severity = "critical" | "important" | "minor";
+export type VerifyStage = "review" | "merge";
 
 export interface Finding {
   severity: Severity;
@@ -44,8 +45,13 @@ export type SpecEvent =
   | { t: "task.failed"; id: string; reason?: string }
   /** What shape of work this is. The agent says; a person may overrule. */
   | { t: "classified"; shape: Shape; by: "agent" | "person" }
-  /** Written only by the /approve command, on a keystroke. No tool emits it. */
-  | { t: "approved"; what: Approvable }
+  /**
+   * Written only by the /approve command, on a keystroke. No tool emits it.
+   * `digest` is the sha256 of the text the person read, when the command
+   * could compute one — an old log without it just keeps the last digest
+   * on record rather than clearing it.
+   */
+  | { t: "approved"; what: Approvable; digest?: string }
   | { t: "build.started" }
   | { t: "build.stopped"; reason: string }
   /**
@@ -62,7 +68,13 @@ export type SpecEvent =
   /** Left open at the fix-round cap, on purpose and on the record. */
   | { t: "parked"; task: string; finding: Finding }
   /** A decision the loop made that the plan did not settle. */
-  | { t: "ruling"; text: string; why: string };
+  | { t: "ruling"; text: string; why: string }
+  /** Vesna committed to running the task's `verify:` command. */
+  | { t: "verify.declared"; task: string }
+  /** The command ran to completion — `code` may still be non-zero. */
+  | { t: "verify.done"; task: string; stage: VerifyStage; code: number; ms: number }
+  /** The command could not even be run to completion. */
+  | { t: "verify.failed"; task: string; stage: VerifyStage; code: number | null; reason?: string };
 
 export type StageState = "todo" | "active" | "done";
 export type TaskState = "todo" | "blocked" | "running" | "done" | "failed";
@@ -73,6 +85,20 @@ export interface Criterion {
   evidence?: string;
 }
 
+/**
+ * Who produced the proof that a task is actually finished, kept apart so a
+ * claim in a report is never mistaken for a check that ran.
+ *
+ * `vesna` is `null` until the task declares a `verify:` command, `false`
+ * once it is declared but has not yet passed at merge, and `true` only once
+ * a `verify.done` for the "merge" stage comes back with `code: 0`.
+ */
+export interface Evidence {
+  worker: boolean;
+  reviewer: boolean;
+  vesna: boolean | null;
+}
+
 export interface Task {
   id: string;
   title: string;
@@ -81,6 +107,7 @@ export interface Task {
   agent?: string;
   commit?: string;
   reason?: string;
+  evidence: Evidence;
 }
 
 export interface SpecTree {
@@ -93,6 +120,8 @@ export interface SpecTree {
   progress: { done: number; total: number };
   shape?: Shape;
   approved: { spec: boolean; plan: boolean };
+  /** The sha256 of the text last approved, per artefact — from the last `approved` that carried one. */
+  digests: { spec?: string; plan?: string };
   building: boolean;
   /** Build events that arrived before the plan was approved: ignored, and counted. */
   ignored: number;
@@ -111,7 +140,9 @@ export function project(events: SpecEvent[]): SpecTree | null {
   const stageState = new Map<Stage, StageState>();
   const criteria = new Map<string, Criterion>();
   const tasks = new Map<string, Task>();
+  const evidence = new Map<string, Evidence>();
   const approved = { spec: false, plan: false };
+  const digests: SpecTree["digests"] = {};
   let building = false;
   let ignored = 0;
   let agentShape: Shape | undefined;
@@ -157,7 +188,9 @@ export function project(events: SpecEvent[]): SpecTree | null {
           title: event.title,
           state: "todo",
           dependsOn: event.dependsOn ?? [],
+          evidence: { worker: false, reviewer: false, vesna: null },
         });
+        evidence.set(event.id, { worker: false, reviewer: false, vesna: null });
         // The approval was of the plan as it stood. A plan with a task the
         // person never read is a different plan, and /build must not run
         // it on the strength of the old approval.
@@ -194,6 +227,8 @@ export function project(events: SpecEvent[]): SpecTree | null {
           state: "done",
           ...(event.commit ? { commit: event.commit } : {}),
         });
+        const e = evidence.get(event.id);
+        if (e !== undefined) evidence.set(event.id, { ...e, worker: true });
         break;
       }
 
@@ -220,6 +255,7 @@ export function project(events: SpecEvent[]): SpecTree | null {
 
       case "approved":
         approved[event.what] = true;
+        if (event.digest !== undefined) digests[event.what] = event.digest;
         // Approving is what closes a phase: the spec is done when a person
         // says so, and the next phase opens on the same keystroke.
         stageState.set(event.what, "done");
@@ -260,6 +296,10 @@ export function project(events: SpecEvent[]): SpecTree | null {
         if (task === undefined) break;
         const { agent: _agent, ...rest } = task;
         tasks.set(id, { ...rest, state: "todo" });
+        const e = evidence.get(id);
+        if (e !== undefined) {
+          evidence.set(id, { worker: false, reviewer: false, vesna: e.vesna === null ? null : false });
+        }
         break;
       }
 
@@ -270,13 +310,16 @@ export function project(events: SpecEvent[]): SpecTree | null {
         stageState.set("done", "done");
         break;
 
-      case "review.done":
+      case "review.done": {
         reviews[event.task] = {
           round: event.round,
           spec: event.spec,
           open: event.findings.filter((f) => f.severity !== "minor"),
         };
+        const e = evidence.get(event.task);
+        if (e !== undefined && event.spec === "met") evidence.set(event.task, { ...e, reviewer: true });
         break;
+      }
 
       case "review.failed":
         // Recorded on the task so the panel can say "no verdict" rather
@@ -292,10 +335,33 @@ export function project(events: SpecEvent[]): SpecTree | null {
       case "ruling":
         rulings.push({ text: event.text, why: event.why });
         break;
+
+      case "verify.declared": {
+        const e = evidence.get(event.task);
+        if (e !== undefined && e.vesna === null) evidence.set(event.task, { ...e, vesna: false });
+        break;
+      }
+
+      case "verify.done": {
+        const e = evidence.get(event.task);
+        if (e !== undefined && event.stage === "merge" && event.code === 0) {
+          evidence.set(event.task, { ...e, vesna: true });
+        }
+        break;
+      }
+
+      case "verify.failed":
+        // Recorded for the garden and the tests; it does not change evidence.
+        break;
     }
   }
 
-  const all = [...tasks.values()].map((task) => blockedIfWaiting(task, tasks));
+  const all = [...tasks.values()]
+    .map((task) => blockedIfWaiting(task, tasks))
+    .map((task) => ({
+      ...task,
+      evidence: evidence.get(task.id) ?? { worker: false, reviewer: false, vesna: null },
+    }));
 
   return {
     id: created.id,
@@ -306,6 +372,7 @@ export function project(events: SpecEvent[]): SpecTree | null {
     progress: { done: all.filter((task) => task.state === "done").length, total: all.length },
     ...(personShape ?? agentShape ? { shape: personShape ?? agentShape } : {}),
     approved,
+    digests,
     building,
     ignored,
     reviews,

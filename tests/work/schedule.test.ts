@@ -7,6 +7,7 @@ const task = (id: string, dependsOn: string[] = [], state: Task["state"] = "todo
   title: id,
   state,
   dependsOn,
+  evidence: { worker: false, reviewer: false, vesna: null },
 });
 
 /** Records the order tasks ran in, and how many overlapped. */

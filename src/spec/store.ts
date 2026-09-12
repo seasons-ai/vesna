@@ -141,6 +141,15 @@ export function readSpec(root: string, slug: string): SpecTree | null {
   return project(readEvents(root, slug));
 }
 
+/** sha256 hex of the file's bytes; null when there is no such file. */
+export function digestOf(path: string): string | null {
+  try {
+    return createHash("sha256").update(readFileSync(path)).digest("hex");
+  } catch {
+    return null;
+  }
+}
+
 export function listSpecs(root: string): SpecSummary[] {
   let names: string[];
   try {
