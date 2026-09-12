@@ -133,13 +133,14 @@ export function phaseSection(phase: NonNullable<PromptContext["phase"]>): string
       // An approved plan is still the plan phase until /build runs it, but
       // the instruction changes: nothing to write, and a change withdraws
       // the approval — the log clears it on the next `task.added`.
-      // A build the whole-branch review stopped has merged every task, so
-      // /build would refuse "every task is merged". Sending the person there
-      // is a dead end; say what stopped it and the one route that re-reviews.
+      // A build the whole-branch review stopped has merged every task but
+      // never reached build.done, so a plain /build finishes it — re-checking
+      // what is red, running no task, and reviewing the whole branch again —
+      // rather than refusing. Say that, not the recording-a-new-task route.
       if (phase.planApproved === true && phase.lastStop?.startsWith("branch review:")) {
         return [
           "## Phase: plan",
-          `The last build stopped at the whole-branch review: ${phase.lastStop}. Every task is merged, so \`/build\` will refuse. Help the person fix it in the tree; then a new task recorded with \`plan\` (which withdraws the approval) and \`/approve plan\` runs \`/build\` again, and its final review covers the branch from that point. Do not claim the branch is done.`,
+          `The last build stopped at the whole-branch review: ${phase.lastStop}. Help the person fix it in the tree; then a plain \`/build\` finishes the build — it re-checks what is red, runs no task, and reviews the whole branch again from where the build first started. Do not claim the branch is done.`,
         ].join("\n");
       }
       if (phase.planApproved === true) {

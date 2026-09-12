@@ -17,7 +17,7 @@ import {
   recoverOutcome,
   specSwitchBlocked,
 } from "../../src/cli/chatcmd";
-import { project } from "../../src/spec/project";
+import { project, type SpecEvent } from "../../src/spec/project";
 
 test("plain text is a message, not a command", () => {
   expect(parseChatInput("read src/a.ts")).toEqual({ kind: "message", text: "read src/a.ts" });
@@ -179,6 +179,19 @@ test("/build on a spec whose every task is merged is refused, so no review of an
     { t: "build.done" },
   ]);
   expect(buildStart(t, "idle")).toEqual({ kind: "refused", message: "nothing to build — every task is merged" });
+});
+
+test("/build on a build the branch review stopped finishes it; on a finished one it is refused", () => {
+  const events: SpecEvent[] = [
+    { t: "created", id: "x", title: "X" },
+    { t: "task.added", id: "T1", title: "a" },
+    { t: "approved", what: "spec" }, { t: "approved", what: "plan" },
+    { t: "build.started", base: "s" }, { t: "task.started", id: "T1" }, { t: "task.done", id: "T1" },
+  ];
+  const stopped = project([...events, { t: "build.stopped", reason: "branch review: the brief is not met" }])!;
+  expect(buildStart(stopped, "idle")).toEqual({ kind: "start", message: "finishing the build — re-checking and reviewing the branch" });
+  const finished = project([...events, { t: "build.done" }])!;
+  expect(buildStart(finished, "idle")).toEqual({ kind: "refused", message: "nothing to build — every task is merged" });
 });
 
 test("/build while a build is running is refused", () => {

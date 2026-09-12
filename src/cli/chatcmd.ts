@@ -201,7 +201,9 @@ export function buildStart(
   if (!tree.approved.plan) return { kind: "refused", message: "the plan is not approved — /approve plan" };
   const n = tree.tasks.length;
   if (n > 0 && tree.tasks.every((task) => task.state === "done")) {
-    return { kind: "refused", message: "nothing to build — every task is merged" };
+    return tree.finished
+      ? { kind: "refused", message: "nothing to build — every task is merged" }
+      : { kind: "start", message: "finishing the build — re-checking and reviewing the branch" };
   }
   return {
     kind: "start",

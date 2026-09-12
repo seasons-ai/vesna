@@ -168,12 +168,13 @@ test("with no phase the system prompt has no phase section", () => {
   expect(text).not.toContain("/approve");
 });
 
-test("after the whole-branch review stops a build, the plan prompt does not send the person to a /build that will refuse", () => {
+test("after the whole-branch review stops a build, the plan prompt points at a plain /build that finishes it, not a new task", () => {
   const text = phaseSection({
     stage: "plan", specPath: "/s", planPath: "/p", planApproved: true,
     lastStop: "branch review: a critical finding — a.ts:9 leaks a key",
   });
   expect(text).toContain("leaks a key");
-  expect(text).toContain("will refuse");
+  expect(text).toContain("a plain `/build` finishes the build — it re-checks what is red, runs no task, and reviews the whole branch again from where the build first started");
+  expect(text).not.toContain("will refuse");
   expect(text).not.toContain("`/build` runs it");
 });
