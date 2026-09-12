@@ -67,7 +67,7 @@ then aborted keeps its range — only `build.done` closes one — so the next
 plain `/build` finishes it over the original range. No build id is needed:
 the range `buildBase...HEAD` already names what an id would have named.
 
-**The agent as a server** (unreleased). Done as declared: the TUI is a
+**The agent as a server** (`0.7.0`). Done as declared: the TUI is a
 client of the same core — `src/core/` owns the session and its turns, the
 policy and its questions, the spec and the approval, the build and its
 controller; `src/tui/app.ts` subscribes and draws, and

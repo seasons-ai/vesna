@@ -1,6 +1,6 @@
 {
   "name": "@seasons-ai/vesna",
-  "version": "0.6.0",
+  "version": "0.7.0",
   "description": "A coding agent with spec-driven development built in.",
   "license": "MIT",
   "publishConfig": {
