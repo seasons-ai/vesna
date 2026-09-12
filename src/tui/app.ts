@@ -239,8 +239,10 @@ export async function runApp(deps: AppDeps, io: AppIo): Promise<number> {
   }
 
   // While a question is on screen the next key answers it, rather than being
-  // typed into a box the user cannot see behind the question.
-  let awaiting: ((answer: string) => void) | null = null;
+  // typed into a box the user cannot see behind the question. A `strict`
+  // question takes only a typed y or n: enter is not a yes for it, because a
+  // person leaning on enter to leave must not write a durable event.
+  let awaiting: { resolve: (answer: string) => void; strict: boolean } | null = null;
   let policy: Policy = deps.policy ?? { mode: "ask", allow: {}, deny: {} };
 
   // The left column is asked for; the right one shows the work in hand.
@@ -326,6 +328,10 @@ export async function runApp(deps: AppDeps, io: AppIo): Promise<number> {
    * what Vesna will run, so they are part of the yes. Only y writes anything;
    * n writes nothing and the question returns after the next turn. A plan
    * that does not split is not asked about — /build says why.
+   *
+   * Only a typed y or n answers: enter is what a person presses to send
+   * `/exit`, and an approval is a durable event that unlocks /build, so the
+   * keystroke that writes it has to be the one the question named.
    */
   async function askApproval(): Promise<void> {
     if (turn !== null || leaving || building) return;
@@ -350,24 +356,19 @@ export async function runApp(deps: AppDeps, io: AppIo): Promise<number> {
     }
     draw();
 
-    while (true) {
-      const answer = await new Promise<string>((resolve) => {
-        awaiting = resolve;
-      });
-      awaiting = null;
-      // "always" is a permission's answer; this question has only yes and not yet.
-      if (answer === "a") continue;
-      if (answer === "y") {
-        writeApproval(question.what);
-        refreshSpec();
-        transcript.notice(approveOutcome(question.what, spec, true).message, "ok");
-      } else {
-        transcript.notice("not yet", "muted");
-      }
-      transcript.endTurn();
-      draw();
-      return;
+    const answer = await new Promise<string>((resolve) => {
+      awaiting = { resolve, strict: true };
+    });
+    awaiting = null;
+    if (answer === "y") {
+      writeApproval(question.what);
+      refreshSpec();
+      transcript.notice(approveOutcome(question.what, spec, true).message, "ok");
+    } else {
+      transcript.notice("not yet", "muted");
     }
+    transcript.endTurn();
+    draw();
   }
 
   function refreshChats(): void {
@@ -420,7 +421,7 @@ export async function runApp(deps: AppDeps, io: AppIo): Promise<number> {
     draw();
 
     const answer = await new Promise<string>((resolve) => {
-      awaiting = resolve;
+      awaiting = { resolve, strict: false };
     });
     awaiting = null;
 
@@ -651,14 +652,14 @@ export async function runApp(deps: AppDeps, io: AppIo): Promise<number> {
     if (awaiting !== null) {
       const typed = key.type === "text" ? key.text.trim().slice(0, 1).toLowerCase() : "";
       const answer =
-        typed === "y" || typed === "a" || typed === "n"
+        typed === "y" || typed === "n" || (typed === "a" && !awaiting.strict)
           ? typed
           : key.type === "interrupt" || key.type === "escape"
             ? "n"
-            : key.type === "enter"
+            : key.type === "enter" && !awaiting.strict
               ? "y"
               : "";
-      if (answer !== "") awaiting(answer);
+      if (answer !== "") awaiting.resolve(answer);
       return;
     }
 
@@ -1024,12 +1025,17 @@ export async function runApp(deps: AppDeps, io: AppIo): Promise<number> {
       }, 90);
 
       const before = session.messages.length;
+      // An interrupted turn is a person taking the keyboard back: the second
+      // ctrl-c the hint promises must arm the exit, not answer a question
+      // they did not ask for. The question returns after a completed turn.
+      let interrupted = false;
       try {
         await runTurn(session, input.text, transcript, turn.signal, draw, remember, refreshSpec);
       } catch (error) {
         // An abort is the user's own doing, and reads as a warning. A provider
         // that fell over is a failure, and gets the colour that says so.
         const aborted = turn.signal.aborted;
+        interrupted = aborted;
         transcript.notice(
           aborted ? "interrupted" : (error as Error).message,
           aborted ? "warn" : "error",
@@ -1053,7 +1059,7 @@ export async function runApp(deps: AppDeps, io: AppIo): Promise<number> {
         refreshSpec();
         transcript.endTurn();
         draw();
-        await askApproval();
+        if (!interrupted) await askApproval();
       }
     }
   } finally {

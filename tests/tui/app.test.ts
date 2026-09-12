@@ -1626,7 +1626,10 @@ test("the model is told it is in the spec phase once spec.md exists and nobody h
   expect(systems[1]).toContain("## Phase: spec");
   expect(systems[1]).toContain(specPaths(specsRoot(base.root), sink.slug!).spec);
 
-  app.input.type("/approve spec\r");
+  // A written, unapproved spec is asked about under the answer; y is the
+  // approval, and a typed command would only be swallowed by the question.
+  await until(() => app.screen().includes("approve the spec?"), "the spec question");
+  app.input.type("y");
   await until(() => app.screen().includes("approved: spec"), "the approval");
   app.input.type("third\r");
   await until(() => systems.length === 3, "the third turn");
@@ -2540,8 +2543,8 @@ test("a second /build typed while the first is still before its lock is refused,
  * A spec whose plan is written and waits for a person: the spec approved, two
  * tasks in the log, and a plan.md whose first task declares a check.
  */
-async function unapprovedPlanApp() {
-  const base = await deps(reply("x"));
+async function unapprovedPlanApp(p: Provider = reply("x")) {
+  const base = await deps(p);
   const specs = specsRoot(base.root);
   const sink = createSink(specs);
   const slug = "gate";
@@ -2550,10 +2553,17 @@ async function unapprovedPlanApp() {
   appendEvent(specs, slug, { t: "task.added", id: "T1", title: "a" });
   appendEvent(specs, slug, { t: "task.added", id: "T2", title: "b" });
   writeSpecFile(specPaths(specs, slug).plan, "### Task 1: a\nverify: bun test\n\n### Task 2: b\n");
-  const app = await start(reply("x"), { rows: 40, cols: 120 }, { ...base, sink });
+  const app = await start(p, { rows: 40, cols: 120 }, { ...base, sink });
   app.input.type(`/spec open ${slug}\r`);
   await until(() => app.screen().includes(`spec ${slug}`), "the spec opening");
   return { app, specs, slug };
+}
+
+/** Whether `runApp` has returned, without waiting for it. */
+async function stillRunning(app: { finished: Promise<number> }): Promise<boolean> {
+  const marker = Symbol("running");
+  const raced = await Promise.race([app.finished, new Promise<symbol>((r) => setTimeout(() => r(marker), 100))]);
+  return raced === marker;
 }
 
 test("after a turn with an unapproved plan the chat asks, y approves with the plan's digest, and the question does not return", async () => {
@@ -2593,5 +2603,44 @@ test("/approve plan writes the digest too", async () => {
   await until(() => app.screen().includes("approved: plan"), "the approval");
   const approved = readEvents(specs, slug).find((e: any) => e.t === "approved" && e.what === "plan") as any;
   expect(approved.digest).toBe(digestOf(specPaths(specs, slug).plan));
+  await quit(app);
+});
+
+test("enter is not yes for the approval question: /exit and a bare enter leave it standing, only y approves", async () => {
+  const { app, specs, slug } = await unapprovedPlanApp();
+  app.input.type("hello\r");
+  await until(() => app.screen().includes("approve the plan?"), "the question");
+  app.input.type("/exit\r");
+  expect(await stillRunning(app)).toBe(true);
+  expect(readEvents(specs, slug).some((e: any) => e.t === "approved" && e.what === "plan")).toBe(false);
+  expect(app.screen()).toContain("approve the plan? [y] yes  [n] not yet");
+  expect(app.screen()).not.toContain("approved: plan");
+  app.input.type("\r");
+  expect(await stillRunning(app)).toBe(true);
+  expect(readEvents(specs, slug).some((e: any) => e.t === "approved" && e.what === "plan")).toBe(false);
+  expect(app.screen()).not.toContain("approved: plan");
+  app.input.type("y");
+  await until(() => app.screen().includes("approved: plan"), "the approval");
+  expect(readEvents(specs, slug).some((e: any) => e.t === "approved" && e.what === "plan")).toBe(true);
+  await quit(app);
+});
+
+test("the question is not asked after an interrupted turn, and returns after the next completed one", async () => {
+  const turn = halfway("work", "ing");
+  const { app } = await unapprovedPlanApp(turn.provider);
+  app.input.type("go\r");
+  await until(() => app.screen().includes("work"), "the turn to start");
+  app.input.type("\x03");
+  // The garden shares the row, so match the transcript side of it.
+  await until(
+    () => app.screen().split("\n").some((row) => row.split("│")[0]!.trim() === "interrupted"),
+    "the interruption notice",
+  );
+  expect(app.screen()).not.toContain("approve the plan?");
+  turn.release();
+  app.input.type("again\r");
+  await until(() => app.screen().includes("approve the plan?"), "the question after a completed turn");
+  app.input.type("n");
+  await until(() => app.screen().split("not yet").length === 3, "the answer");
   await quit(app);
 });
