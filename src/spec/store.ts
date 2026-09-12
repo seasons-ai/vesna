@@ -64,6 +64,8 @@ export interface SpecPaths {
   briefs: string;
   reports: string;
   reviews: string;
+  /** One log per check Vesna ran: `<task>-review-r<n>.log`, `<task>-merge.log`. */
+  verify: string;
 }
 
 export function specPaths(root: string, slug: string): SpecPaths {
@@ -76,6 +78,7 @@ export function specPaths(root: string, slug: string): SpecPaths {
     briefs: join(dir, "briefs"),
     reports: join(dir, "reports"),
     reviews: join(dir, "reviews"),
+    verify: join(dir, "verify"),
   };
 }
 

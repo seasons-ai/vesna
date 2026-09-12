@@ -4,15 +4,16 @@ import { join } from "node:path";
 import type { Policy } from "../policy/decide";
 import type { Provider } from "../providers/types";
 import type { Registry } from "../registry/types";
-import { project, type Finding, type RecoveryAction, type SpecEvent, type Task } from "../spec/project";
-import { appendEvent, readEvents, readSpecFile, specPaths, writeSpecFile } from "../spec/store";
+import { project, type Finding, type RecoveryAction, type SpecEvent, type Task, type VerifyStage } from "../spec/project";
+import { appendEvent, digestOf, readEvents, readSpecFile, specPaths, writeSpecFile } from "../spec/store";
 import { discardBuild, resumeTask, runTask, type BuildResult } from "../work/builder";
 import { mergeAll } from "../work/merge";
 import { CycleError, schedule } from "../work/schedule";
 import { branchExists, branchName, deleteBranch, isRegistered, removeWorktree, runGit, worktreePath, type GitRunner } from "../work/worktree";
-import { splitPlan, writeBriefs } from "./brief";
+import { splitPlan, writeBriefs, type PlanTask } from "./brief";
 import { buildState, inFlightTask, pidAlive, readLockPid } from "./recover";
 import { reviewTask, type ReviewOutcome } from "./review";
+import { runVerify, VERIFY_CEILING_MS, type VerifyResult } from "./verify";
 
 /**
  * The loop.
@@ -53,6 +54,10 @@ export interface BuildLoopRequest {
   recovery?: { action: RecoveryAction; task?: string };
   /** Seam for tests; default discardBuild. */
   discard?: typeof discardBuild;
+  /** Seam for tests; default runVerify — the task's `verify:` command, run by Vesna itself. */
+  verify?: typeof runVerify;
+  /** Ceiling for one run of a task's check; default VERIFY_CEILING_MS. */
+  verifyTimeoutMs?: number;
 }
 
 export type BuildOutcome =
@@ -60,8 +65,14 @@ export type BuildOutcome =
   | { status: "stopped"; reason: string }
   | { status: "could-not-start"; reason: string };
 
+/**
+ * `afterDone`: the task this stop ends is already merged and recorded
+ * `task.done` — a check that failed on the base branch. The task wrapper
+ * must not follow it with `task.failed`, which would flip a merged task
+ * to failed in the log over a merge that stands.
+ */
 class Stop extends Error {
-  constructor(readonly reason: string) {
+  constructor(readonly reason: string, readonly afterDone = false) {
     super(reason);
   }
 }
@@ -102,8 +113,13 @@ function releaseLock(path: string): void {
   }
 }
 
+/**
+ * `AbortError` is what `fetch` rejects with; `AbortedError` is what
+ * `spawnInterruptible` — and so `runVerify` — throws when the signal kills
+ * the child. Both are the same cancel.
+ */
 function isAbort(error: Error, signal: AbortSignal | undefined): boolean {
-  return error.name === "AbortError" || signal?.aborted === true;
+  return error.name === "AbortError" || error.name === "AbortedError" || signal?.aborted === true;
 }
 
 /**
@@ -176,6 +192,7 @@ export async function runBuild(request: BuildLoopRequest): Promise<BuildOutcome>
   const resume = request.resume ?? resumeTask;
   const review = request.review ?? reviewTask;
   const merge = request.merge ?? mergeAll;
+  const verify = request.verify ?? runVerify;
   const maxRounds = request.maxRounds ?? 5;
   const paths = specPaths(specsRoot, slug);
 
@@ -191,6 +208,13 @@ export async function runBuild(request: BuildLoopRequest): Promise<BuildOutcome>
   }
   const planText = readSpecFile(paths.plan);
   if (planText === null) return { status: "could-not-start", reason: "there is no plan.md to build" };
+  // The approval named the text the person read. A plan edited since — a
+  // `verify:` line added or removed, a task reworded — is a plan nobody
+  // approved, whatever the log's `approved` flag says. An old log with no
+  // digest has nothing to compare and is taken at its word.
+  if (tree.digests.plan !== undefined && digestOf(paths.plan) !== tree.digests.plan) {
+    return { status: "could-not-start", reason: "plan.md changed after it was approved — approve it again" };
+  }
 
   let planTasks;
   try {
@@ -358,6 +382,7 @@ export async function runBuild(request: BuildLoopRequest): Promise<BuildOutcome>
     }
 
     const briefs = writeBriefs(specsRoot, slug, planTasks);
+    const planById = new Map<string, PlanTask>(planTasks.map((t) => [t.id, t]));
     emit({ t: "build.started" });
 
     // Neither diff range assumes anything about the repository: the base
@@ -378,6 +403,9 @@ export async function runBuild(request: BuildLoopRequest): Promise<BuildOutcome>
         return await attempt(task);
       } catch (error) {
         const err = error as Error;
+        // A stop after the merge leaves the task done: the merge happened,
+        // and the log already says so. Only the build stops.
+        if (err instanceof Stop && err.afterDone) throw error;
         const reason = err instanceof Stop
           ? err.reason.replace(new RegExp(`^${task.id}: `), "")
           : isAbort(err, request.signal)
@@ -390,7 +418,33 @@ export async function runBuild(request: BuildLoopRequest): Promise<BuildOutcome>
 
     const attempt = async (task: Task): Promise<BuildResult> => {
       const brief = readSpecFile(briefs[task.id] ?? "") ?? task.title;
+      // The plan's `verify:` line, if any. Declared before the task starts:
+      // the log commits Vesna to running the check before anything the
+      // worker does could make skipping it convenient.
+      const check = planById.get(task.id)?.verify;
+      if (check !== undefined) emit({ t: "verify.declared", task: task.id });
       emit({ t: "task.started", id: task.id, agent: "vesna build" });
+
+      // One run of the check, and its record. A timeout is a failure with
+      // no code at either stage. After the review a code is `verify.done`
+      // whatever it is — a fix round follows a non-zero one. After the
+      // merge only zero is done; every other outcome is written by the
+      // caller, after `task.done`, in the order the spec fixes.
+      const runCheck = async (stage: VerifyStage, cwd: string, logName: string): Promise<VerifyResult> => {
+        const r = await verify({
+          command: check!,
+          cwd,
+          logPath: join(paths.verify, logName),
+          ...(request.signal ? { signal: request.signal } : {}),
+          timeoutMs: request.verifyTimeoutMs ?? VERIFY_CEILING_MS,
+        });
+        if (r.timedOut) {
+          if (stage === "review") emit({ t: "verify.failed", task: task.id, stage, code: null, reason: "timeout" });
+        } else if (stage === "review" || r.code === 0) {
+          emit({ t: "verify.done", task: task.id, stage, code: r.code!, ms: r.ms });
+        }
+        return r;
+      };
 
       const common = {
         repo: request.root,
@@ -482,9 +536,22 @@ export async function runBuild(request: BuildLoopRequest): Promise<BuildOutcome>
         );
 
         open = verdict.findings.filter(blocking);
-        if (verdict.spec === "met" && open.length === 0) break;
-
-        if (round >= maxRounds) {
+        if (verdict.spec === "met" && open.length === 0) {
+          if (check === undefined) break;
+          // The reviewer is satisfied; now the third witness. Run in the
+          // task's own checkout, on the same fix-round counter as the
+          // review: a check that fails is one more finding for the worker,
+          // with the command and the output's tail, and a check still
+          // failing at the cap stops the build like a brief still not met.
+          const r = await runCheck("review", result.worktree, `${task.id}-review-r${round}.log`);
+          if (r.code === 0) break;
+          open = [{
+            severity: "important",
+            file: "verify",
+            text: `verify failed: \`${check}\` ${r.timedOut ? "timed out" : `exited ${r.code}`}\n${r.tail}`,
+          }];
+          if (round >= maxRounds) throw new Stop(`${task.id}: verify still fails after ${maxRounds} fix rounds`);
+        } else if (round >= maxRounds) {
           const critical = open.find((f) => f.severity === "critical");
           if (critical !== undefined) {
             throw new Stop(
@@ -539,26 +606,51 @@ export async function runBuild(request: BuildLoopRequest): Promise<BuildOutcome>
       if (merged.conflict) throw new Stop(`${task.id}: merge conflict in ${merged.conflict.files.join(", ")}`);
       if (merged.error) throw new Stop(`${task.id}: ${merged.error.message}`);
 
-      emit({ t: "task.done", id: task.id, ...(result.commit ? { commit: result.commit } : {}) });
-
       // Merged is merged: the --no-ff commit on the base branch carries the
       // task's history, and its worktree and branch are leftovers. A stopped
-      // task keeps both, because a person may want to look. `removeWorktree`
-      // deletes the branch itself once the checkout is clean, so one call
-      // does both. Guarded on the worktree existing: a seam-based test's
-      // fake `build`/`resume` invent a worktree path that is never actually
+      // task keeps both, because a person may want to look — except the
+      // stop below, after a merge, which has nothing to look at in the
+      // checkout: the merged tree is what failed. `removeWorktree` deletes
+      // the branch itself once the checkout is clean, so one call does
+      // both. Guarded on the worktree existing: a seam-based test's fake
+      // `build`/`resume` invent a worktree path that is never actually
       // created, and `removeWorktree` resolves it with real `fs.realpath`
       // regardless of the injected `git` seam — calling it on an invented
       // path throws. But a real worktree can also go missing on disk (an
       // operator's `rm -rf`) while git still registers the branch; that
       // case must not walk away leaving the branch behind, so it falls to
       // `deleteBranch`, which touches only refs and never the path.
-      if (existsSync(result.worktree)) {
-        await removeWorktree(request.root, { path: result.worktree, branch: result.branch }, { discardChanges: true }, git);
+      const cleanupAfterMerge = async () => {
+        if (existsSync(result.worktree)) {
+          await removeWorktree(request.root, { path: result.worktree, branch: result.branch }, { discardChanges: true }, git);
+        } else {
+          await deleteBranch(request.root, result.branch, git);
+        }
+      };
+      const done = () => emit({ t: "task.done", id: task.id, ...(result.commit ? { commit: result.commit } : {}) });
+
+      if (check === undefined) {
+        done();
       } else {
-        await deleteBranch(request.root, result.branch, git);
+        // The check again, on the base branch this time: what passed in
+        // the checkout may not pass merged. `task.done` is written either
+        // way — the merge happened, and the log says what happened — and on
+        // a failure it comes first, then the failure, then the stop. Nothing
+        // on the base branch moves without a person.
+        const r = await runCheck("merge", request.root, `${task.id}-merge.log`);
+        done();
+        if (r.code !== 0) {
+          emit(
+            r.timedOut
+              ? { t: "verify.failed", task: task.id, stage: "merge", code: null, reason: "timeout" }
+              : { t: "verify.failed", task: task.id, stage: "merge", code: r.code },
+          );
+          await cleanupAfterMerge();
+          throw new Stop(`${task.id}: verify failed after merge — see verify/${task.id}-merge.log`, true);
+        }
       }
 
+      await cleanupAfterMerge();
       return result;
     };
 
