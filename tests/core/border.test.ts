@@ -57,15 +57,27 @@ function importsOf(relative: string): string[] {
   return lines;
 }
 
-test("the TUI reaches the agent only through the core", () => {
-  const imports = importsOf("../../src/tui/app.ts");
-  for (const bad of FORBIDDEN_IN_TUI) {
-    const offending = imports.filter((line) => line.includes(bad));
-    expect(offending, `app.ts imports ${bad}`).toEqual([]);
-  }
-  for (const typeOnly of TYPE_ONLY_IN_TUI) {
-    const offending = imports.filter((line) => line.includes(typeOnly) && !line.startsWith("import type "));
-    expect(offending, `app.ts imports a value from ${typeOnly}`).toEqual([]);
+// The two clients in this repository. The plain chat sits in `src/cli/`, so
+// its imports of the CLI's own modules are spelled `./config`, not
+// `../cli/config`; the list is matched against both spellings.
+const CLIENTS = ["../../src/tui/app.ts", "../../src/cli/chat.ts"];
+
+function spellings(bad: string): string[] {
+  return bad.startsWith("../cli/") ? [bad, bad.replace("../cli/", "./")] : [bad];
+}
+
+test("a client reaches the agent only through the core", () => {
+  for (const client of CLIENTS) {
+    const name = client.split("/").pop();
+    const imports = importsOf(client);
+    for (const bad of FORBIDDEN_IN_TUI) {
+      const offending = imports.filter((line) => spellings(bad).some((s) => line.includes(s)));
+      expect(offending, `${name} imports ${bad}`).toEqual([]);
+    }
+    for (const typeOnly of TYPE_ONLY_IN_TUI) {
+      const offending = imports.filter((line) => line.includes(typeOnly) && !line.startsWith("import type "));
+      expect(offending, `${name} imports a value from ${typeOnly}`).toEqual([]);
+    }
   }
 });
 

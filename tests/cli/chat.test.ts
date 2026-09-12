@@ -8,6 +8,7 @@ import { findPreset } from "../../src/providers/catalog";
 import type { VesnaConfig } from "../../src/cli/config";
 import type { Provider } from "../../src/providers/types";
 import { resolveTheme } from "../../src/tui/theme";
+import { toolCaller, writing } from "../helpers/chat";
 
 /** Counts every completion, so "did this line reach a model" is answerable. */
 function counting() {
@@ -38,35 +39,45 @@ function scripted(lines: string[]) {
   };
 }
 
-async function chat(provider: Provider, lines: string[]): Promise<string[]> {
+const CONFIG: VesnaConfig = {
+  configured: true,
+  preset: findPreset("codex")!,
+  pinned: false,
+  provider: "openai",
+  auth: "codex",
+  model: "test-model",
+  theme: "mono",
+  prices: {},
+  permissions: { nodes: [] },
+};
+
+/**
+ * Runs the chat over the scripted lines and returns what `console.log`
+ * printed. The answer itself streams through `process.stdout.write`, which
+ * is captured too so the runner's output stays clean.
+ */
+async function chat(provider: Provider, lines: string[], overrides: Partial<ChatDeps> = {}): Promise<string[]> {
   const root = await mkdtemp(join(tmpdir(), "vesna-plain-"));
-  const config: VesnaConfig = {
-    configured: true,
-    preset: findPreset("codex")!,
-    pinned: false,
-    provider: "openai",
-    auth: "codex",
-    model: "test-model",
-    theme: "mono",
-    prices: {},
-    permissions: { nodes: [] },
-  };
   const deps: ChatDeps = {
     registry: createRegistry(),
     provider,
-    config,
+    config: CONFIG,
     theme: resolveTheme("mono", { depth: 0 }),
     root,
     io: scripted(lines),
+    ...overrides,
   };
 
   const printed: string[] = [];
   const real = console.log;
+  const write = process.stdout.write;
   console.log = (...args: unknown[]) => void printed.push(args.join(" "));
+  process.stdout.write = (() => true) as typeof process.stdout.write;
   try {
     await runChat(deps);
   } finally {
     console.log = real;
+    process.stdout.write = write;
   }
   return printed;
 }
@@ -115,4 +126,40 @@ test("an ordinary message still reaches the model", async () => {
   const { state, provider } = counting();
   await chat(provider, ["do the thing"]);
   expect(state.calls).toBe(1);
+});
+
+/**
+ * The plain chat is a client of the same core as the full-screen one, so a
+ * permission is a question here too: its lines are printed, and the next
+ * line typed is the answer — read from the same stdin the loop reads.
+ */
+test("a permission asks on stdout and takes its answer from the next line", async () => {
+  const { registry, ran } = writing();
+  const provider = toolCaller("put", { path: "src/a.ts" });
+  const printed = await chat(provider, ["run it", "y", "/help"], {
+    registry,
+    config: { ...CONFIG, permissions: { nodes: ["put"] } },
+    policy: { mode: "ask", allow: {}, deny: {} },
+  });
+  const text = printed.join("\n");
+
+  expect(text).toMatch(/^ {2}put\s/m);
+  expect(text).toContain("[y] allow once");
+  expect(text).toContain("allowed once");
+  expect(ran).toEqual(["src/a.ts"]);
+  // The line after the answer is the next input, taken after the answer.
+  expect(text.indexOf("allowed once")).toBeLessThan(text.indexOf("/cost"));
+});
+
+test("n refuses, and a line that is not an answer does not decide", async () => {
+  const { registry, ran } = writing();
+  const provider = toolCaller("put", { path: "src/a.ts" });
+  const printed = await chat(provider, ["run it", "what?", "n"], {
+    registry,
+    config: { ...CONFIG, permissions: { nodes: ["put"] } },
+    policy: { mode: "ask", allow: {}, deny: {} },
+  });
+
+  expect(printed.join("\n")).toContain("refused");
+  expect(ran).toEqual([]);
 });

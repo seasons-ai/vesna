@@ -1,10 +1,8 @@
-import { createSession, type Session } from "../loop/session";
-import type { Provider } from "../providers/types";
-import type { Registry } from "../registry/types";
+import { createCore, type CoreDeps } from "../core/core";
+import type { Ask, NoticeLevel } from "../core/types";
 import { createStdioPrompt, isInteractive } from "../tui/stdio";
 import type { Theme } from "../tui/theme";
 import type { PromptIO } from "../tui/prompt";
-import { permits, type VesnaConfig } from "./config";
 import {
   CHAT_COMMANDS,
   PLAIN_CHAT_COMMANDS,
@@ -14,13 +12,8 @@ import {
 } from "./chatcmd";
 import { EXIT } from "./exit";
 
-export interface ChatDeps {
-  registry: Registry;
-  provider: Provider;
-  config: VesnaConfig;
+export interface ChatDeps extends CoreDeps {
   theme: Theme;
-  root: string;
-  notes?: string;
   /**
    * Where the lines come from. Injected so a test can drive this loop without
    * a terminal; production passes nothing and gets the real stdin.
@@ -37,9 +30,10 @@ function banner(deps: ChatDeps): string {
 }
 
 /**
- * The conversation surface. Everything under it already exists — history in a
- * session, deltas from the provider, an abort signal through the loop — so this
- * is the thin part: read a line, stream a turn, keep going.
+ * The conversation surface for a dumb terminal: a client of the same core
+ * the full-screen chat runs on, with stdout for a screen. The core says what
+ * happens — deltas, steps, notices, questions — and this side prints each
+ * line as it arrives and reads the next one from stdin.
  */
 export async function runChat(deps: ChatDeps): Promise<number> {
   if (deps.io === undefined && !isInteractive()) {
@@ -49,14 +43,95 @@ export async function runChat(deps: ChatDeps): Promise<number> {
 
   const { theme } = deps;
   const io = deps.io ?? createStdioPrompt();
-  let session = newSession(deps);
-  let turnAbort: AbortController | null = null;
+  const prompt = `${theme.paint("petal", "›")} `;
+  const core = createCore(deps);
+
+  // True while a message of the person's is with the model: the blank line
+  // under an answer is printed for a turn, not for a command's notices.
+  let sending = false;
+  // True once the answer has started on its own line, so the first delta
+  // opens the line and a notice arriving mid-answer does not land on it.
+  let answering = false;
+  // A question is answered from the same stdin the loop reads, so the loop
+  // waits for the answer before it asks for the next line.
+  let asking: Promise<void> | null = null;
+
+  const say = (level: NoticeLevel, text: string): void => {
+    console.log(theme.paint(level, `${answering ? "\n" : ""}  ${text}`));
+    answering = false;
+  };
+
+  /** The question's lines, then one line from stdin until it is an answer. */
+  async function answerAsk(ask: Ask): Promise<void> {
+    // Painted as the full-screen chat paints them: a permission is its
+    // action in warn and its choices muted; an approval lists what is
+    // approved muted and asks in warn.
+    for (const [index, text] of ask.lines.entries()) {
+      const last = index === ask.lines.length - 1;
+      say(ask.kind === "permission" ? (index === 0 ? "warn" : "muted") : last ? "warn" : "muted", text);
+    }
+    // Only the three answers decide; a strict question ignores enter.
+    while (true) {
+      const typed = (await io.question(prompt)).trim().slice(0, 1).toLowerCase();
+      const answer =
+        typed === "y" || typed === "n" || (typed === "a" && !ask.strict)
+          ? typed
+          : typed === "" && !ask.strict
+            ? "y"
+            : "";
+      if (answer === "") continue;
+      core.answer(ask.id, answer);
+      return;
+    }
+  }
+
+  const unsubscribe = core.on((notification) => {
+    switch (notification.method) {
+      case "transcript": {
+        const entry = notification.params;
+        switch (entry.kind) {
+          case "user":
+            // The person's own line is already on their terminal.
+            break;
+          case "delta":
+            if (!answering) {
+              process.stdout.write("\n");
+              answering = true;
+            }
+            process.stdout.write(entry.text);
+            break;
+          case "step":
+            console.log(
+              `  ${theme.paint("petal", "·")} ${theme.paint("text", entry.step.nodeType.padEnd(8))} ${theme.paint("muted", `${entry.step.durationMs}ms`)}`,
+            );
+            break;
+          case "notice":
+            say(entry.level, entry.text);
+            break;
+          case "turn-end":
+            if (sending) console.log("");
+            answering = false;
+            break;
+          case "clear":
+            break;
+        }
+        return;
+      }
+      case "ask":
+        asking = answerAsk(notification.params).finally(() => {
+          asking = null;
+        });
+        return;
+      case "ask.resolved":
+      case "state":
+        return;
+    }
+  });
 
   // First ctrl-c cancels the turn in progress; a second one, while idle, leaves.
   const onSigint = () => {
-    if (turnAbort !== null) {
-      turnAbort.abort();
-      console.log(theme.paint("warn", "\n  interrupted"));
+    if (core.snapshot().busy) {
+      core.interrupt();
       return;
     }
     console.log("");
@@ -69,7 +144,11 @@ export async function runChat(deps: ChatDeps): Promise<number> {
 
   try {
     while (true) {
-      const line = await io.question(`${theme.paint("petal", "›")} `);
+      // A question up after a turn — the approval — owns stdin until it is
+      // answered; the next line is taken after it, never under it.
+      while (asking !== null) await asking;
+
+      const line = await io.question(prompt);
       const input = parseChatInput(line);
 
       if (input.kind === "blank") continue;
@@ -92,18 +171,17 @@ export async function runChat(deps: ChatDeps): Promise<number> {
           continue;
         }
         if (input.name === "cost") {
-          const { usage } = session;
+          const { usage } = core.snapshot();
           console.log(
             theme.paint(
               "muted",
-              `  ${usage.inputTokens} in · ${usage.outputTokens} out · $${session.costUsd.toFixed(4)}`,
+              `  ${usage.inputTokens} in · ${usage.outputTokens} out · $${usage.costUsd.toFixed(4)}`,
             ),
           );
           continue;
         }
         if (input.name === "clear") {
-          session = newSession(deps);
-          console.log(theme.paint("muted", "  new conversation"));
+          await core.command(input.name, input.argument, { typed: line });
           continue;
         }
 
@@ -114,57 +192,19 @@ export async function runChat(deps: ChatDeps): Promise<number> {
         continue;
       }
 
-      turnAbort = new AbortController();
+      sending = true;
       try {
-        await runTurn(deps, session, input.kind === "message" ? input.text : "", turnAbort.signal);
-      } catch (error) {
-        console.log(theme.paint("warn", `  ${(error as Error).message}`));
+        await core.send(line);
       } finally {
-        turnAbort = null;
+        sending = false;
       }
     }
   } finally {
     process.off("SIGINT", onSigint);
+    // As leaving the full-screen chat: a question still open is answered no,
+    // a turn in flight is cut short, and nothing asked afterwards does anything.
+    await core.close();
+    unsubscribe();
     io.close();
   }
-}
-
-function newSession(deps: ChatDeps): Session {
-  return createSession(deps.provider, deps.registry, {
-    cwd: deps.root,
-    model: deps.config.model,
-    prices: deps.config.prices,
-    notes: deps.notes,
-    permit: (type) => permits(deps.config, type),
-  });
-}
-
-async function runTurn(
-  deps: ChatDeps,
-  session: Session,
-  text: string,
-  signal: AbortSignal,
-): Promise<void> {
-  const { theme } = deps;
-  let wroteText = false;
-
-  const result = await session.send(text, {
-    signal,
-    onText(delta) {
-      if (!wroteText) {
-        process.stdout.write("\n");
-        wroteText = true;
-      }
-      process.stdout.write(delta);
-    },
-    onStep(step) {
-      console.log(
-        `  ${theme.paint("petal", "\u00b7")} ${theme.paint("text", step.nodeType.padEnd(8))} ${theme.paint("muted", `${step.durationMs}ms`)}`,
-      );
-    },
-  });
-
-  // A provider without streaming never called onText, so print the turn now.
-  if (!wroteText && result.text) console.log(`\n${result.text}`);
-  console.log("");
 }
