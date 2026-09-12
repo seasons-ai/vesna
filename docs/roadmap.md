@@ -67,11 +67,30 @@ then aborted keeps its range — only `build.done` closes one — so the next
 plain `/build` finishes it over the original range. No build id is needed:
 the range `buildBase...HEAD` already names what an id would have named.
 
+**The agent as a server** (unreleased). Done as declared: the TUI is a
+client of the same core — `src/core/` owns the session and its turns, the
+policy and its questions, the spec and the approval, the build and its
+controller; `src/tui/app.ts` subscribes and draws, and
+`tests/core/border.test.ts` reads both clients' imports so neither reaches
+the agent past the core. `vesna --plain` is the second client, in-process
+like the first. `vesna serve` is the core over JSON-RPC 2.0 on stdio with
+LSP framing: `initialize`, `send`, `command`, `answer`, `interrupt`,
+`shutdown`, `exit`; notifications `transcript`, `state`, `ask`,
+`ask.resolved`; `capabilities` in the `initialize` result is the version
+handshake. One process and one client at a time, on stdio only: a socket
+is a later spec's.
+
 Every console block in the README is verbatim output.
 
-## In progress
+## Next
 
-Nothing at the moment — see Later.
+**The editor extension.** A VS Code extension on `vesna serve`: a
+side-panel chat with streaming markdown; a card per tool call, from
+`transcript.step`; the questions as buttons, `y`, `a`, `n`; the garden as a
+tree view; `spec.md` and `plan.md` opened as documents; review findings as
+diagnostics on the lines they name; the mode in the status bar; published to
+the Marketplace. Done when a plan can be approved and a build watched from
+the editor without a terminal.
 
 ## Later
 
@@ -87,14 +106,14 @@ container with no network and a read-only mount of the repository, the mode is
 visible in the prompt and the trace, and an uncontained run is never a silent
 fallback.
 
-**The agent as a server.** One protocol, several clients: the terminal first,
-then an editor extension that shows the spec, the plan, the garden and review
-findings as editor objects, then a chat bot that can approve a plan from a
-phone. Done when the TUI is a client of the same core.
-
 **An evaluation suite.** A corpus of small repositories and tasks, run through
 the whole process, measuring task success, false "done", cost, turns, and
 whether the reviewer catches seeded defects.
+
+**More clients.** The protocol `vesna serve` speaks is the one the editor
+extension is built on; after it, a chat bot that can approve a plan from a
+phone. A socket transport and several clients on one session come with the
+first client that needs them.
 
 ## Not planned
 

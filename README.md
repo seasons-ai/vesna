@@ -258,6 +258,41 @@ This is policy, not a sandbox. `shell` and `script` run with your own
 privileges; the classifier that decides what is read-only has needed a fix in
 every review it has had. Containment is on the roadmap, not claimed.
 
+## Clients
+
+One core, three clients. `vesna` is the full-screen chat; `vesna --plain` is
+the same conversation one line at a time, for a dumb terminal; and `vesna
+serve` is the core with no screen at all — `vesna --help` lists it beside
+the others:
+
+```text
+  vesna serve                             serve the agent over JSON-RPC on stdio (for editors)
+```
+
+It speaks JSON-RPC 2.0 on stdio, each message framed by a `Content-Length`
+header the way a language server's are. Requests: `initialize`, `send`,
+`command`, `answer`, `interrupt`, `shutdown`, `exit`. Notifications from the
+server: `transcript` (one line of the conversation at a time), `state` (the
+whole status again on every change), `ask` (a question and its choices) and
+`ask.resolved`. The first exchange, verbatim, from a folder whose config
+names `ollama` — every header line ends in CRLF:
+
+```text
+Content-Length: 109
+
+{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"clientName":"vscode-vesna","clientVersion":"0.1.0"}}
+```
+
+```text
+Content-Length: 379
+
+{"jsonrpc":"2.0","id":1,"result":{"serverVersion":"0.6.0","capabilities":{"transcript":1,"state":1,"ask":1},"state":{"mode":"ask","busy":false,"building":false,"buildState":"idle","model":"llama3.2","service":"ollama","usage":{"inputTokens":0,"outputTokens":0,"costUsd":0},"spec":null,"specSlug":null,"chats":null,"chatId":"20260912-173151-mmkn","root":"/private/tmp/demo/cwd"}}}
+```
+
+Both chats hold the core in-process; `tests/core/border.test.ts` is what
+keeps them clients — neither reaches the agent past it. The editor extension
+is next, on this protocol.
+
 ## Roadmap
 
 **Now — a stable SDD agent, and the automation around it.** Verification in
@@ -265,12 +300,16 @@ the plan has shipped: a task declares its check with `verify:`, Vesna runs it
 after the review and again after the merge, approval is tied to the text it
 approves, and the garden says who produced each task's evidence. A build the
 branch review stopped, or whose last check failed on the base, is finished by
-a plain `/build` once the base is fixed. The SDD line is complete for now;
-next is the editor.
+a plain `/build` once the base is fixed. The agent is now a core with three
+clients — the full-screen chat, `--plain`, and `vesna serve`, JSON-RPC on
+stdio — and a test keeps the border. Next is the editor extension.
 
-**Next — the editor.** The agent as a server, and a VS Code extension that
-shows the spec, the plan, the garden and the review findings as editor
-objects — the process beside the code it is about.
+**Next — the editor extension.** VS Code, on `vesna serve`: a side-panel
+chat with streaming markdown, tool-call cards from `transcript.step`, the
+questions as buttons, the garden as a tree view, `spec.md` and `plan.md` as
+documents, review findings as diagnostics, the mode in the status bar —
+published to the Marketplace. Done when a plan can be approved and a build
+watched from the editor without a terminal.
 
 **Later** — parallel independent tasks, containment for workers and
 reviewers, and an evaluation suite that measures whether the reviewer catches
