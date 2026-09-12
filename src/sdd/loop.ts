@@ -365,6 +365,38 @@ export async function runBuild(request: BuildLoopRequest): Promise<BuildOutcome>
     }
   };
 
+  // One run of a task's check, and its record. A timeout is a failure with
+  // no code at either stage. After the review a code is `verify.done`
+  // whatever it is — a fix round follows a non-zero one. After the merge
+  // only zero is done; every other outcome is written by the caller, after
+  // `task.done`, in the order the spec fixes — `mergeFailure` is that event.
+  const runCheck = async (
+    taskId: string,
+    command: string,
+    stage: VerifyStage,
+    cwd: string,
+    logName: string,
+  ): Promise<VerifyResult> => {
+    const r = await verify({
+      command,
+      cwd,
+      logPath: join(paths.verify, logName),
+      ...(request.signal ? { signal: request.signal } : {}),
+      timeoutMs: request.verifyTimeoutMs ?? VERIFY_CEILING_MS,
+    });
+    if (r.timedOut) {
+      if (stage === "review") emit({ t: "verify.failed", task: taskId, stage, code: null, reason: "timeout" });
+    } else if (stage === "review" || r.code === 0) {
+      emit({ t: "verify.done", task: taskId, stage, code: r.code!, ms: r.ms });
+    }
+    return r;
+  };
+  const mergeFailure = (taskId: string, r: VerifyResult): SpecEvent =>
+    r.timedOut
+      ? { t: "verify.failed", task: taskId, stage: "merge", code: null, reason: "timeout" }
+      : { t: "verify.failed", task: taskId, stage: "merge", code: r.code };
+  const mergeFailed = (taskId: string) => new Stop(`${taskId}: verify failed after merge — see verify/${taskId}-merge.log`);
+
   try {
     if (request.recovery !== undefined) {
       const { action } = request.recovery;
@@ -438,6 +470,29 @@ export async function runBuild(request: BuildLoopRequest): Promise<BuildOutcome>
     const baseBranch = (await runLoopGit(git, ["rev-parse", "--abbrev-ref", "HEAD"], request.root)).stdout.trim();
     const startSha = (await runLoopGit(git, ["rev-parse", "HEAD"], request.root)).stdout.trim();
 
+    // A base branch left red: a merge-stage check that failed stopped the
+    // build with the task merged, and the next start would otherwise build
+    // the remaining tasks on top of it and end "done" over a mark that
+    // still says the check never passed. So a plain start re-runs the
+    // merge-stage check for every done task whose check was declared and
+    // never passed — in task order, on the root, before anything is
+    // scheduled — and stops exactly as the merge did if it is still red.
+    // A person fixing the base by hand is what turns it green; nothing on
+    // it moves here. Recoveries skip this: an in-flight task is what they
+    // are about, and a red base has no build to recover.
+    if (request.recovery === undefined) {
+      for (const task of tree.tasks) {
+        if (task.state !== "done" || task.evidence.vesna !== false) continue;
+        const command = planById.get(task.id)?.verify;
+        if (command === undefined) continue;
+        const r = await runCheck(task.id, command, "merge", request.root, `${task.id}-merge.log`);
+        if (r.code !== 0) {
+          emit(mergeFailure(task.id, r));
+          throw mergeFailed(task.id);
+        }
+      }
+    }
+
     // Whatever ends a task early — a Stop, an interrupt, a plain error from
     // a worker's own commit — the task in flight is recorded as failed
     // before the build is recorded as stopped. Without that the log keeps
@@ -477,26 +532,8 @@ export async function runBuild(request: BuildLoopRequest): Promise<BuildOutcome>
         emit({ t: "task.started", id: task.id, agent: "vesna build" });
       }
 
-      // One run of the check, and its record. A timeout is a failure with
-      // no code at either stage. After the review a code is `verify.done`
-      // whatever it is — a fix round follows a non-zero one. After the
-      // merge only zero is done; every other outcome is written by the
-      // caller, after `task.done`, in the order the spec fixes.
-      const runCheck = async (stage: VerifyStage, cwd: string, logName: string): Promise<VerifyResult> => {
-        const r = await verify({
-          command: check!,
-          cwd,
-          logPath: join(paths.verify, logName),
-          ...(request.signal ? { signal: request.signal } : {}),
-          timeoutMs: request.verifyTimeoutMs ?? VERIFY_CEILING_MS,
-        });
-        if (r.timedOut) {
-          if (stage === "review") emit({ t: "verify.failed", task: task.id, stage, code: null, reason: "timeout" });
-        } else if (stage === "review" || r.code === 0) {
-          emit({ t: "verify.done", task: task.id, stage, code: r.code!, ms: r.ms });
-        }
-        return r;
-      };
+      // This task's check, at either stage.
+      const checkAt = (stage: VerifyStage, cwd: string, logName: string) => runCheck(task.id, check!, stage, cwd, logName);
 
       // Everything after a merge. Merged is merged: the --no-ff commit on
       // the base branch carries the task's history, and its worktree and
@@ -522,7 +559,7 @@ export async function runBuild(request: BuildLoopRequest): Promise<BuildOutcome>
           // on the base branch moves without a person.
           let r: VerifyResult;
           try {
-            r = await runCheck("merge", request.root, `${task.id}-merge.log`);
+            r = await checkAt("merge", request.root, `${task.id}-merge.log`);
           } catch (error) {
             // A cancel (or anything else) landing inside the check does not
             // unmerge: the task is done, its leftovers go as after any
@@ -533,13 +570,9 @@ export async function runBuild(request: BuildLoopRequest): Promise<BuildOutcome>
           }
           taskDone();
           if (r.code !== 0) {
-            emit(
-              r.timedOut
-                ? { t: "verify.failed", task: task.id, stage: "merge", code: null, reason: "timeout" }
-                : { t: "verify.failed", task: task.id, stage: "merge", code: r.code },
-            );
+            emit(mergeFailure(task.id, r));
             await cleanup();
-            throw new Stop(`${task.id}: verify failed after merge — see verify/${task.id}-merge.log`);
+            throw mergeFailed(task.id);
           }
         }
 
@@ -684,7 +717,7 @@ export async function runBuild(request: BuildLoopRequest): Promise<BuildOutcome>
           // worker, with the command and the output's tail, and a check
           // still failing at the cap stops the build like a brief still
           // not met.
-          const r = await runCheck("review", result.worktree, `${task.id}-review-r${round}.log`);
+          const r = await checkAt("review", result.worktree, `${task.id}-review-r${round}.log`);
           if (r.code === 0) break;
           open = [{
             severity: "important",

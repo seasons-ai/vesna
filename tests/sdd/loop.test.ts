@@ -1875,3 +1875,119 @@ test("abort after a kill during the merge-stage check records the merge, then ab
   expect(existsSync(join(verifyLogs(specs), "T1-merge.log"))).toBe(false);
   await cleanAfterRecovery(repo);
 });
+
+// Final fix round, item 4: after a post-merge failure the base branch is
+// red, and the next plain start used to build the remaining tasks on it
+// and end `build.done` with the failed task's mark still standing. Now a
+// plain start re-runs the merge-stage check for every done task whose
+// check was declared and never passed — in task order, on the root, before
+// anything is scheduled — and stops the same way the merge did if it is
+// still red.
+const redMain: SpecEvent[] = [
+  ...approvedWithTasks,
+  { t: "build.started" },
+  { t: "verify.declared", task: "T1" },
+  { t: "task.started", id: "T1", agent: "vesna build" },
+  { t: "review.done", task: "T1", round: 0, spec: "met", findings: [] },
+  { t: "verify.done", task: "T1", stage: "review", code: 0, ms: 1 },
+  { t: "task.done", id: "T1", commit: "sha-T1-1" },
+  { t: "verify.failed", task: "T1", stage: "merge", code: 2 },
+  { t: "build.stopped", reason: "T1: verify failed after merge — see verify/T1-merge.log" },
+];
+
+test("a plain start on a red main re-runs the failed task's check on the root before building anything", async () => {
+  const { root, specs } = setup(redMain, PLAN_WITH_VERIFY);
+  const f = fakes();
+  const verify = async (r: any) => {
+    f.log.push(`verify ${r.logPath.split("/").pop()} ${r.cwd === root ? "root" : "worktree"}`);
+    return { code: 0, ms: 7, timedOut: false, tail: "" };
+  };
+  const before = readEvents(specs, "work").length;
+  const outcome = await runBuild(base(root, specs, f, { verify }));
+  expect(outcome).toEqual({ status: "done" });
+  expect(f.log).toEqual(["verify T1-merge.log root", "build T2", "review", "merge T2", "review"]);
+  const events = readEvents(specs, "work");
+  expect(events.slice(before, before + 3)).toEqual([
+    { t: "build.started" },
+    { t: "verify.done", task: "T1", stage: "merge", code: 0, ms: 7 },
+    { t: "task.started", id: "T2", agent: "vesna build" },
+  ]);
+  expect(events.at(-1)).toEqual({ t: "build.done" });
+  const tree = project(events)!;
+  expect(tree.tasks.find((t) => t.id === "T1")!.evidence).toEqual({ worker: true, reviewer: true, vesna: true });
+  expect(tree.tasks.find((t) => t.id === "T2")).toMatchObject({ state: "done" });
+});
+
+test("a plain start on a main that is still red stops as the merge did, and schedules nothing", async () => {
+  const { root, specs } = setup(redMain, PLAN_WITH_VERIFY);
+  const f = fakes();
+  const verify = async () => ({ code: 3, ms: 1, timedOut: false, tail: "still no" });
+  const before = readEvents(specs, "work").length;
+  const outcome = await runBuild(base(root, specs, f, { verify }));
+  expect(outcome).toEqual({ status: "stopped", reason: "T1: verify failed after merge — see verify/T1-merge.log" });
+  expect(f.log).toEqual([]);
+  expect(readEvents(specs, "work").slice(before)).toEqual([
+    { t: "build.started" },
+    { t: "verify.failed", task: "T1", stage: "merge", code: 3 },
+    { t: "build.stopped", reason: "T1: verify failed after merge — see verify/T1-merge.log" },
+  ]);
+  expect(existsSync(join(specs, "work", "build.lock"))).toBe(false);
+
+  const again = setup(redMain, PLAN_WITH_VERIFY);
+  const g = fakes();
+  const slow = async () => ({ code: null, ms: 300, timedOut: true, tail: "" });
+  const stopped = await runBuild(base(again.root, again.specs, g, { verify: slow }));
+  expect(stopped).toEqual({ status: "stopped", reason: "T1: verify failed after merge — see verify/T1-merge.log" });
+  expect(g.log).toEqual([]);
+  expect(readEvents(again.specs, "work").at(-2)).toEqual({ t: "verify.failed", task: "T1", stage: "merge", code: null, reason: "timeout" });
+});
+
+test("on real sh: a post-merge failure, main fixed by hand, then a plain start re-checks, builds the rest, and T1 is vesna's", async () => {
+  const repo = await repository();
+  const specs = join(repo, ".vesna", "specs");
+  mkdirSync(specs, { recursive: true });
+  createSpec(specs, "work");
+  for (const e of approvedWithTasks) appendEvent(specs, "work", e);
+  // Passes in the checkout (its branch is not main); on main only once
+  // NOTES.md is there — which the worker never writes.
+  writeSpecFile(
+    specPaths(specs, "work").plan,
+    [
+      "# Plan", "",
+      "### Task 1: First",
+      'verify: test "$(git rev-parse --abbrev-ref HEAD)" != main || test -f NOTES.md',
+      "", "Write T1.txt.", "",
+      "### Task 2: Second",
+      "Write T2.txt.", "",
+    ].join("\n"),
+  );
+  const run = () => runBuild({
+    root: repo, specsRoot: specs, slug: "work",
+    provider: writesWhatTheBriefNames(), registry: registry(),
+    policy: { mode: "auto", allow: {}, deny: {} },
+    review: async () => clean,
+  });
+
+  expect(await run()).toEqual({ status: "stopped", reason: "T1: verify failed after merge — see verify/T1-merge.log" });
+  let tree = project(readEvents(specs, "work"))!;
+  expect(tree.tasks.map((t) => [t.id, t.state, t.evidence.vesna])).toEqual([["T1", "done", false], ["T2", "todo", null]]);
+
+  // The person fixes main by hand.
+  writeFileSync(join(repo, "NOTES.md"), "how to run it\n");
+  await runGit(["add", "-A"], repo);
+  await runGit(["commit", "-qm", "notes"], repo);
+
+  const before = readEvents(specs, "work").length;
+  expect(await run()).toEqual({ status: "done" });
+  const events = readEvents(specs, "work");
+  expect(events.slice(before, before + 2)).toEqual([
+    { t: "build.started" },
+    { t: "verify.done", task: "T1", stage: "merge", code: 0, ms: expect.any(Number) },
+  ]);
+  expect(events.at(-1)).toEqual({ t: "build.done" });
+  tree = project(events)!;
+  expect(tree.tasks.map((t) => [t.id, t.state, t.evidence.vesna])).toEqual([["T1", "done", true], ["T2", "done", null]]);
+  expect(readFileSync(join(repo, "T2.txt"), "utf8")).toBe("T2.txt\n");
+  expect(readFileSync(join(verifyLogs(specs), "T1-merge.log"), "utf8")).toContain("exit 0");
+  expect((await runGit(["branch", "--list", "vesna/*"], repo)).stdout.trim()).toBe("");
+});
