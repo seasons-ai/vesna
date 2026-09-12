@@ -52,7 +52,7 @@ export type SpecEvent =
    * on record rather than clearing it.
    */
   | { t: "approved"; what: Approvable; digest?: string }
-  | { t: "build.started" }
+  | { t: "build.started"; base?: string }
   | { t: "build.stopped"; reason: string }
   /**
    * A person's answer to a build a killed process left behind. Written by
@@ -132,6 +132,10 @@ export interface SpecTree {
   rulings: { text: string; why: string }[];
   /** Why the last build stopped, until the next one starts. */
   lastStop?: string;
+  /** The commit the current build range started from, until `build.done` closes it. */
+  buildBase?: string;
+  /** A `build.done` has been reduced and no `build.started` has been reduced since. */
+  finished: boolean;
 }
 
 export function project(events: SpecEvent[]): SpecTree | null {
@@ -154,6 +158,8 @@ export function project(events: SpecEvent[]): SpecTree | null {
   const parked: SpecTree["parked"] = [];
   const rulings: SpecTree["rulings"] = [];
   let lastStop: string | undefined;
+  let buildBase: string | undefined;
+  let finished = false;
 
   for (const event of events) {
     switch (event.t) {
@@ -280,6 +286,8 @@ export function project(events: SpecEvent[]): SpecTree | null {
         }
         building = true;
         lastStop = undefined;
+        finished = false;
+        if (buildBase === undefined && event.base !== undefined) buildBase = event.base;
         stageState.set("plan", "done");
         stageState.set("build", "active");
         break;
@@ -314,6 +322,8 @@ export function project(events: SpecEvent[]): SpecTree | null {
       case "build.done":
         building = false;
         lastStop = undefined;
+        finished = true;
+        buildBase = undefined;
         stageState.set("build", "done");
         stageState.set("done", "done");
         break;
@@ -387,6 +397,8 @@ export function project(events: SpecEvent[]): SpecTree | null {
     parked,
     rulings,
     ...(lastStop !== undefined ? { lastStop } : {}),
+    ...(buildBase !== undefined ? { buildBase } : {}),
+    finished,
   };
 }
 

@@ -498,3 +498,38 @@ test("the last approval's digest is kept per artefact, and an old log without on
   expect(t.digests).toEqual({ plan: "bbb" });
   expect(t.approved).toEqual({ spec: true, plan: true });
 });
+
+const ready: SpecEvent[] = [
+  { t: "task.added", id: "T1", title: "a" },
+  { t: "approved", what: "spec" }, { t: "approved", what: "plan" },
+];
+
+test("the build's base is the first start's, and later starts of the same build do not move it", () => {
+  let t = tree([...ready, { t: "build.started", base: "aaa" }])!;
+  expect(t.buildBase).toBe("aaa");
+  expect(t.finished).toBe(false);
+  t = tree([...ready, { t: "build.started", base: "aaa" }, { t: "build.stopped", reason: "x" }, { t: "build.started", base: "bbb" }])!;
+  expect(t.buildBase).toBe("aaa");
+  expect(t.finished).toBe(false);
+});
+
+test("build.done closes the range: the next start opens a new one", () => {
+  const t = tree([
+    ...ready,
+    { t: "build.started", base: "aaa" }, { t: "task.started", id: "T1" }, { t: "task.done", id: "T1" }, { t: "build.done" },
+    { t: "build.started", base: "ccc" },
+  ])!;
+  expect(t.buildBase).toBe("ccc");
+  expect(t.finished).toBe(false);
+});
+
+test("finished is a build.done with no start after it; a stop is not finished", () => {
+  expect(tree([...ready, { t: "build.started", base: "a" }, { t: "build.done" }])!.finished).toBe(true);
+  expect(tree([...ready, { t: "build.started", base: "a" }, { t: "build.stopped", reason: "x" }])!.finished).toBe(false);
+  expect(tree(ready)!.finished).toBe(false);
+});
+
+test("a start without a base (an old log) leaves buildBase unset", () => {
+  const t = tree([...ready, { t: "build.started" }])!;
+  expect(t.buildBase).toBeUndefined();
+});
