@@ -1609,3 +1609,134 @@ test("on real sh: a cancel during the check ends the build interrupted and leave
   const left = Bun.spawnSync(["pgrep", "-f", marker]);
   expect(left.stdout.toString().trim()).toBe("");
 });
+
+// Fix round 1: once the merge succeeded the task is done whatever the check
+// does next — an interrupt inside the merge-stage check included. Before
+// this, that window recorded the merged task as failed, and no recovery
+// could move it: retry found the work already on main.
+test("a cancel during the merge-stage check still records task.done, and the build ends interrupted", async () => {
+  const { root, specs } = setup(approvedWithTasks, PLAN_WITH_VERIFY);
+  const controller = new AbortController();
+  const f = fakes();
+  const verify = async (r: any) => {
+    if (r.cwd !== root) return { code: 0, ms: 1, timedOut: false, tail: "" };
+    controller.abort();
+    throw Object.assign(new Error("interrupted"), { name: "AbortedError" });
+  };
+  const outcome = await runBuild(base(root, specs, f, { verify, signal: controller.signal }));
+  expect(outcome).toEqual({ status: "stopped", reason: "interrupted" });
+  const events = readEvents(specs, "work");
+  expect(events.slice(-3)).toEqual([
+    { t: "verify.done", task: "T1", stage: "review", code: 0, ms: 1 },
+    { t: "task.done", id: "T1", commit: "sha-T1-1" },
+    { t: "build.stopped", reason: "interrupted" },
+  ]);
+  expect(events.some((e) => e.t === "task.failed")).toBe(false);
+  expect(events.filter((e: any) => e.t === "verify.failed" || (e.t === "verify.done" && e.stage === "merge"))).toEqual([]);
+  const tree = project(events)!;
+  expect(tree.tasks.find((t) => t.id === "T1")).toMatchObject({ state: "done" });
+  expect(tree.building).toBe(false);
+  expect(existsSync(join(specs, "work", "build.lock"))).toBe(false);
+});
+
+test("on real sh: a cancel during the merge-stage check keeps the merge, records task.done, and cleans up", async () => {
+  const repo = await repository();
+  const specs = join(repo, ".vesna", "specs");
+  mkdirSync(specs, { recursive: true });
+  createSpec(specs, "work");
+  for (const e of [
+    { t: "task.added", id: "T1", title: "First" },
+    { t: "approved", what: "spec" }, { t: "approved", what: "plan" },
+  ] as SpecEvent[]) appendEvent(specs, "work", e);
+  const marker = `vesna-verify-merge-cancel-${process.pid}`;
+  // Passes in the task's checkout (its branch is not main); on main it
+  // sleeps, and that is where the person cancels.
+  writeSpecFile(
+    specPaths(specs, "work").plan,
+    `# Plan\n\n### Task 1: First\nverify: test "$(git rev-parse --abbrev-ref HEAD)" != main || sleep 30 # ${marker}\n\nWrite T1.txt.\n`,
+  );
+
+  const controller = new AbortController();
+  const out = await runBuild({
+    root: repo, specsRoot: specs, slug: "work",
+    provider: writes("T1.txt", "one\n"), registry: registry(),
+    policy: { mode: "auto", allow: {}, deny: {} },
+    review: async () => clean,
+    signal: controller.signal,
+    onEvent: (e) => {
+      if (e.t === "verify.done" && e.stage === "review") setTimeout(() => controller.abort(), 300);
+    },
+  });
+  expect(out).toEqual({ status: "stopped", reason: "interrupted" });
+  const events = readEvents(specs, "work");
+  expect(events.slice(-3).map((e: any) => [e.t, e.stage ?? e.reason ?? e.id])).toEqual([
+    ["verify.done", "review"], ["task.done", "T1"], ["build.stopped", "interrupted"],
+  ]);
+  expect(events.some((e) => e.t === "task.failed")).toBe(false);
+  const tree = project(events)!;
+  expect(tree.tasks.find((t) => t.id === "T1")).toMatchObject({ state: "done" });
+  expect(tree.building).toBe(false);
+  // The merge stands on main; the checkout and branch are gone as after any merge.
+  expect(readFileSync(join(repo, "T1.txt"), "utf8")).toBe("one\n");
+  expect(existsSync(join(repo, ".vesna", "worktrees", "work-T1"))).toBe(false);
+  expect((await runGit(["branch", "--list", "vesna/work/T1"], repo)).stdout.trim()).toBe("");
+  expect(existsSync(join(specs, "work", "build.lock"))).toBe(false);
+  expect(Bun.spawnSync(["pgrep", "-f", marker]).stdout.toString().trim()).toBe("");
+  // A killed check proved nothing and writes no log; the review-stage one did.
+  expect(existsSync(join(verifyLogs(specs), "T1-review-r0.log"))).toBe(true);
+  expect(existsSync(join(verifyLogs(specs), "T1-merge.log"))).toBe(false);
+});
+
+// Fix round 1: the review-stage check runs on every path that leads to the
+// merge — the parked path at the cap included, not only "met with nothing
+// open".
+test("the parked path at the cap still runs the check before the merge, and a failure there stops the build", async () => {
+  const important: Finding = { severity: "important", file: "a.ts", text: "could be tighter" };
+  const metWithOne: ReviewOutcome = { kind: "verdict", verdict: { spec: "met", findings: [important], summary: "fine" }, costUsd: 0 };
+
+  const passing = setup(approvedWithTasks, PLAN_WITH_VERIFY);
+  const f = fakes();
+  const verify = async (r: any) => { f.log.push(`verify ${r.logPath.split("/").pop()}`); return { code: 0, ms: 1, timedOut: false, tail: "" }; };
+  const outcome = await runBuild(base(passing.root, passing.specs, f, { verify, maxRounds: 1, review: async () => { f.log.push("review"); return metWithOne; } }));
+  expect(outcome).toEqual({ status: "done" });
+  expect(f.log.slice(0, 6)).toEqual(["build T1", "review", "resume T1", "review", "verify T1-review-r1.log", "merge T1"]);
+  expect(readEvents(passing.specs, "work").filter((e: any) => e.t === "parked" && e.task === "T1")).toHaveLength(1);
+
+  const failing = setup(approvedWithTasks, PLAN_WITH_VERIFY);
+  const g = fakes();
+  const fails = async () => ({ code: 1, ms: 1, timedOut: false, tail: "no" });
+  const stopped = await runBuild(base(failing.root, failing.specs, g, { verify: fails, maxRounds: 1, review: async () => metWithOne }));
+  expect(stopped).toEqual({ status: "stopped", reason: "T1: verify still fails after 1 fix rounds" });
+  expect(g.log).not.toContain("merge T1");
+});
+
+// Fix round 1: the reviewer never runs the command, so it cannot judge
+// whether a verify failure was addressed. The review after a verify failure
+// is a fresh one; after the reviewer's own findings it stays scoped to them.
+test("the review after a verify failure is fresh; after the reviewer's own findings it is scoped to them", async () => {
+  const seen: (Finding[] | undefined)[] = [];
+  const reviewing = async (r: any) => { seen.push(r.findings); return clean; };
+
+  const afterVerify = setup(approvedWithTasks, PLAN_WITH_VERIFY);
+  const f = fakes();
+  let calls = 0;
+  const verify = async () =>
+    ++calls === 1 ? { code: 3, ms: 1, timedOut: false, tail: "boom" } : { code: 0, ms: 1, timedOut: false, tail: "" };
+  expect(await runBuild(base(afterVerify.root, afterVerify.specs, f, { verify, review: reviewing }))).toEqual({ status: "done" });
+  expect(seen).toEqual([undefined, undefined, undefined, undefined]);
+  expect(f.log.filter((l) => l.startsWith("resume"))).toEqual(["resume T1"]);
+
+  seen.length = 0;
+  const afterReviewer = setup(approvedWithTasks, PLAN_WITH_VERIFY);
+  const g = fakes();
+  const wrong: Finding = { severity: "important", file: "a.ts", line: 2, text: "wrong" };
+  let round = 0;
+  const scoped = async (r: any) => {
+    seen.push(r.findings);
+    round += 1;
+    return round === 1 ? { kind: "verdict", verdict: { spec: "met", findings: [wrong], summary: "one" }, costUsd: 0 } as ReviewOutcome : clean;
+  };
+  const ok = async () => ({ code: 0, ms: 1, timedOut: false, tail: "" });
+  expect(await runBuild(base(afterReviewer.root, afterReviewer.specs, g, { verify: ok, review: scoped }))).toEqual({ status: "done" });
+  expect(seen).toEqual([undefined, [wrong], undefined, undefined]);
+});
