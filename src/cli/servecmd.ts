@@ -32,11 +32,16 @@ export async function serveCommand(root: string): Promise<number> {
   });
 
   let code: number = EXIT.ok;
+  // A client that died takes its read end with it: a write then throws
+  // EPIPE, or stdout reports it as an event. Either is the client gone —
+  // the server leaves as it does when stdin ends, not as a crash.
+  const lost = new Promise<void>((resolve) => process.stdout.on("error", () => resolve()));
   await serve(
     core,
     {
       input: Bun.stdin.stream() as unknown as AsyncIterable<Uint8Array>,
       write: (bytes) => void process.stdout.write(bytes),
+      lost,
       exit: (c) => {
         code = c;
         process.exitCode = c;

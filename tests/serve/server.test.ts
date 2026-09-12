@@ -321,6 +321,72 @@ test("a response from the client is ignored", async () => {
   await s.running;
 });
 
+/**
+ * A write that fails is the client gone — the same event as stdin ending,
+ * and it must end the same way: the core closed once, exit 0, no more frames
+ * attempted, and `serve()` itself resolving rather than rejecting.
+ */
+test("a write that throws is the client gone: close once, exit 0, nothing more written", async () => {
+  const fake = fakeCore();
+  const h = harness();
+  let attempts = 0;
+  const io = {
+    ...h.io,
+    write: (bytes: Uint8Array) => {
+      attempts += 1;
+      if (attempts >= 2) throw Object.assign(new Error("EPIPE: broken pipe"), { code: "EPIPE" });
+      h.io.write(bytes);
+    },
+  };
+  const running = serve(fake.core, io, { serverVersion: "9.9.9" });
+  h.request(1, "initialize", { clientName: "t", clientVersion: "0" });
+  await until(() => h.response(1) !== undefined, "initialize");
+  // The second frame is a notification; its write throws.
+  fake.emit({ method: "state", params: STATE });
+  await running;
+  expect(fake.closedCount()).toBe(1);
+  expect(h.exits).toEqual([0]);
+  // Nothing after the failure reaches the output, whatever the core or the client does.
+  fake.emit({ method: "state", params: STATE });
+  h.request(2, "interrupt", {});
+  await new Promise((r) => setTimeout(r, 20));
+  expect(attempts).toBe(2);
+  expect(fake.calls).not.toContainEqual(["interrupt"]);
+  h.end();
+});
+
+test("output reported lost while input is open ends the same way, once", async () => {
+  const fake = fakeCore();
+  const h = harness();
+  let lost!: () => void;
+  const io = { ...h.io, lost: new Promise<void>((resolve) => { lost = resolve; }) };
+  const running = serve(fake.core, io, { serverVersion: "9.9.9" });
+  h.request(1, "initialize", { clientName: "t", clientVersion: "0" });
+  await until(() => h.response(1) !== undefined, "initialize");
+  lost();
+  await running;
+  expect(fake.closedCount()).toBe(1);
+  expect(h.exits).toEqual([0]);
+  h.end();
+  await new Promise((r) => setTimeout(r, 20));
+  expect(h.exits).toEqual([0]);
+});
+
+test("a core method that throws is -32603 and the server keeps going", async () => {
+  const fake = fakeCore();
+  fake.core.interrupt = () => { throw new Error("boom"); };
+  const h = harness();
+  const running = serve(fake.core, h.io, { serverVersion: "9.9.9" });
+  h.request(1, "initialize", { clientName: "t", clientVersion: "0" });
+  h.request(2, "interrupt", {});
+  h.request(3, "answer", { id: "open", value: "y" });
+  await until(() => h.response(3) !== undefined, "the request after the throw");
+  expect(h.response(2).error).toMatchObject({ code: -32603, message: "boom" });
+  expect(h.response(3).result).toEqual({});
+  h.end();
+  await running;
+});
+
 // ---------------------------------------------------------------------------
 // (b) over a real pipe
 
@@ -458,3 +524,32 @@ test("over a pipe: a startup problem is reported on stderr with exit 2, and stdo
   expect(s.out).toEqual([]);
   expect(await s.stderr()).toContain("vesna: custom has no address of its own");
 }, 30_000);
+
+/**
+ * The reviewer's reproduction: a client that crashes — its stdin closed and
+ * its stdout reader gone in the same tick — while notifications are still
+ * flowing. EPIPE on a write is the client gone, not a crash of the server:
+ * exit 0, no stack on stderr. Ten runs, since the race is timing-dependent.
+ */
+test("over a pipe: a client that dies mid-burst leaves the server exiting 0 without a stack", async () => {
+  const where = await sandbox();
+  for (let run = 0; run < 10; run += 1) {
+    const child = Bun.spawn(["bun", BIN, "serve"], {
+      cwd: where.cwd,
+      env: { ...process.env, VESNA_HOME: join(where.home, ".vesna") },
+      stdin: "pipe", stdout: "pipe", stderr: "pipe",
+    });
+    const reader = child.stdout.getReader();
+    const write = (m: RpcMessage) => { child.stdin.write(frame(m)); child.stdin.flush(); };
+    write({ jsonrpc: "2.0", id: 1, method: "initialize", params: { clientName: "t", clientVersion: "0" } });
+    await reader.read();
+    for (let i = 0; i < 30; i += 1) {
+      write({ jsonrpc: "2.0", id: 10 + i, method: "command", params: { name: "mode", argument: i % 2 ? "auto" : "plan" } });
+    }
+    child.stdin.end();
+    await reader.cancel();
+    const code = await child.exited;
+    const stderr = await new Response(child.stderr).text();
+    expect({ run, code, stderr }).toEqual({ run, code: 0, stderr: "" });
+  }
+}, 60_000);

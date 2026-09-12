@@ -22,8 +22,11 @@ const CAPABILITIES = { transcript: 1, state: 1, ask: 1 } as const;
 
 export interface ServeIo {
   input: AsyncIterable<Uint8Array>;
+  /** May throw (EPIPE) once the client's read end is gone; the server treats that as the client leaving. */
   write: (bytes: Uint8Array) => void;
   exit: (code: number) => void;
+  /** Resolves when the output is known to be gone without a write to say so (stdout's `error` event). */
+  lost?: Promise<void>;
 }
 
 type Params = Record<string, unknown>;
@@ -46,9 +49,29 @@ function strings(params: unknown, required: string[], optional: string[] = []): 
  * resolves, and other requests are answered meanwhile; the core's own queue
  * is the only ordering. Input ending is `shutdown` then `exit`: the core is
  * closed (a build cancelled, ceiling included) and the process leaves with 0.
+ * A write that fails is the same event — the client is gone — and ends the
+ * same way, once; nothing more is written after it.
  */
 export async function serve(core: Core, io: ServeIo, meta: { serverVersion: string }): Promise<void> {
-  const write = (message: RpcMessage): void => io.write(frame(message));
+  // Set when the output is gone: every later frame is dropped, the reading
+  // stops, and the leave below runs exactly as it does for input ending.
+  let gone = false;
+  let leave!: () => void;
+  const left = new Promise<void>((resolve) => { leave = resolve; });
+  const lost = (): void => {
+    if (gone) return;
+    gone = true;
+    leave();
+  };
+  void io.lost?.then(lost);
+  const write = (message: RpcMessage): void => {
+    if (gone) return;
+    try {
+      io.write(frame(message));
+    } catch {
+      lost();
+    }
+  };
   let initialized = false;
   // Held in an object: TypeScript cannot see the assignment inside `handle`.
   const subscription: { off: (() => void) | null } = { off: null };
@@ -106,24 +129,36 @@ export async function serve(core: Core, io: ServeIo, meta: { serverVersion: stri
   // the exit code reports — after the core is closed all the same, so no
   // build is left running behind a client that is gone.
   let exit: number | null = null;
-  reading: for await (const chunk of io.input) {
-    for (const item of decoder.push(chunk)) {
-      if (item.kind === "error") {
-        write(errorResponse(item.id, item.code, item.message));
-        continue;
+  const reading = (async () => {
+    reading: for await (const chunk of io.input) {
+      for (const item of decoder.push(chunk)) {
+        if (gone) break reading;
+        if (item.kind === "error") {
+          write(errorResponse(item.id, item.code, item.message));
+          continue;
+        }
+        const message = item.message;
+        // The server sends no requests, so a response has nothing to correlate.
+        if (!("method" in message)) continue;
+        if (message.method === "exit" && !isRequest(message)) {
+          exit = shutdown === null ? 1 : 0;
+          break reading;
+        }
+        // No request may take the loop down: a method that throws is that
+        // request's failure, reported to it when it can be.
+        try {
+          handle(message);
+        } catch (error) {
+          if (isRequest(message)) write(errorResponse(message.id, INTERNAL_ERROR, (error as Error)?.message ?? String(error)));
+        }
       }
-      const message = item.message;
-      // The server sends no requests, so a response has nothing to correlate.
-      if (!("method" in message)) continue;
-      if (message.method === "exit" && !isRequest(message)) {
-        exit = shutdown === null ? 1 : 0;
-        break reading;
-      }
-      handle(message);
     }
-  }
+  })();
+  // Whichever comes first: the input ending (or `exit`), or the output gone.
+  await Promise.race([reading, left]);
 
   // Input ending without `exit` is the client dying: shutdown then exit, 0.
+  // The output gone is the same client, the same leave.
   await (shutdown ?? core.close());
   subscription.off?.();
   io.exit(exit ?? 0);
