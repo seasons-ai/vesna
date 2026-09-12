@@ -8,7 +8,7 @@ import { appendEvent, readEvents, readSpecFile, specPaths, writeSpecFile } from 
 import { discardBuild, resumeTask, runTask, type BuildResult } from "../work/builder";
 import { mergeAll } from "../work/merge";
 import { CycleError, schedule } from "../work/schedule";
-import { branchName, deleteBranch, removeWorktree, runGit, worktreesRoot, type GitRunner } from "../work/worktree";
+import { branchName, deleteBranch, listWorktrees, removeWorktree, runGit, worktreePath, type GitRunner } from "../work/worktree";
 import { splitPlan, writeBriefs } from "./brief";
 import { buildState, inFlightTask, pidAlive, readLockPid } from "./recover";
 import { reviewTask, type ReviewOutcome } from "./review";
@@ -99,11 +99,6 @@ function releaseLock(path: string): void {
   } catch {
     // Already gone is the state we wanted.
   }
-}
-
-/** Where a task's own checkout lives — confirmed against `createWorktree`. */
-function worktreePathFor(root: string, spec: string, task: string): string {
-  return join(worktreesRoot(root), `${spec}-${task}`);
 }
 
 function isAbort(error: Error, signal: AbortSignal | undefined): boolean {
@@ -205,7 +200,7 @@ export async function runBuild(request: BuildLoopRequest): Promise<BuildOutcome>
   const lockPath = join(paths.dir, "build.lock");
   const holder = readLockPid(lockPath);
   const state = buildState(tree, holder !== null && pidAlive(holder));
-  const discard = request.discard ?? discardBuild;
+  const inFlight = inFlightTask(tree);
 
   if (request.recovery === undefined) {
     if (state === "dead") {
@@ -216,9 +211,36 @@ export async function runBuild(request: BuildLoopRequest): Promise<BuildOutcome>
     }
   } else {
     if (state !== "dead") return { status: "could-not-start", reason: "nothing to recover — no interrupted build" };
-    const running = inFlightTask(tree);
     const { action } = request.recovery;
-    const target = action === "retry" ? request.recovery.task : running;
+
+    if (action === "resume") {
+      // resume has one thing to continue — the task the build left running —
+      // and nowhere to put an explicit name that disagrees with it.
+      if (request.recovery.task !== undefined && request.recovery.task !== inFlight) {
+        return { status: "could-not-start", reason: `only the interrupted task "${inFlight}" can be resumed` };
+      }
+      // Before writing anything: a checkout that is not actually there — the
+      // process died before `git worktree add` ran, or a person removed the
+      // directory by hand — is nothing to resume into. Handing `resumeTask`
+      // an unverified path would run the worker in a plain directory whose
+      // nearest `.git` is the main repository, and its commit would land on
+      // the base branch instead of a branch of its own.
+      if (inFlight !== undefined) {
+        const path = worktreePath(request.root, slug, inFlight);
+        const branch = branchName(slug, inFlight);
+        const registered = (await listWorktrees(request.root, git)).some(
+          (w) => w.path === path && w.branch === branch,
+        );
+        if (!existsSync(path) || !registered) {
+          return {
+            status: "could-not-start",
+            reason: `the checkout of "${inFlight}" is gone — /build retry ${inFlight} or /build abort`,
+          };
+        }
+      }
+    }
+
+    const target = action === "retry" ? request.recovery.task : inFlight;
     if (action === "retry") {
       if (target === undefined) return { status: "could-not-start", reason: "retry needs a task — /build retry <task>" };
       const t = tree.tasks.find((x) => x.id === target);
@@ -226,17 +248,26 @@ export async function runBuild(request: BuildLoopRequest): Promise<BuildOutcome>
       if (t.state === "done") return { status: "could-not-start", reason: `${target} is merged — it cannot be retried` };
     }
     emit({ t: "build.recovered", action, ...(target !== undefined ? { task: target } : {}) });
+
     if (action !== "resume" && target !== undefined) {
-      await discard(
-        request.root,
-        {
-          task: target,
-          worktree: worktreePathFor(request.root, slug, target),
-          branch: branchName(slug, target),
-        } as BuildResult,
-        git,
-      );
+      // A missing checkout here is a state, not an error: retry and abort
+      // both tolerate it. A checkout still on disk is removed the usual way;
+      // one that never made it that far — or whose directory is gone while
+      // git still remembers it — has nothing left to discard but git's own
+      // bookkeeping, which `deleteBranch` already prunes and clears,
+      // tolerating a branch that was never created.
+      const path = worktreePath(request.root, slug, target);
+      const branch = branchName(slug, target);
+      const result = { task: target, worktree: path, branch } as BuildResult;
+      if (request.discard !== undefined) {
+        await request.discard(request.root, result, git);
+      } else if (existsSync(path)) {
+        await discardBuild(request.root, result, git);
+      } else {
+        await deleteBranch(request.root, branch, git);
+      }
     }
+
     if (action === "abort") {
       releaseLock(lockPath);
       emit({ t: "build.stopped", reason: "abandoned" });
@@ -284,8 +315,6 @@ export async function runBuild(request: BuildLoopRequest): Promise<BuildOutcome>
       }
     };
 
-    const inFlight = inFlightTask(tree);
-
     const attempt = async (task: Task): Promise<BuildResult> => {
       const brief = readSpecFile(briefs[task.id] ?? "") ?? task.title;
       emit({ t: "task.started", id: task.id, agent: "vesna build" });
@@ -304,13 +333,11 @@ export async function runBuild(request: BuildLoopRequest): Promise<BuildOutcome>
         git,
       };
 
-      const resuming = request.recovery?.action === "resume" && request.recovery.task === undefined
-        ? inFlight === task.id
-        : request.recovery?.action === "resume" && request.recovery.task === task.id;
+      const resuming = request.recovery?.action === "resume" && inFlight === task.id;
       let result = resuming
         ? await resume({
             ...common,
-            worktree: { path: worktreePathFor(request.root, slug, task.id), branch: branchName(slug, task.id) },
+            worktree: { path: worktreePath(request.root, slug, task.id), branch: branchName(slug, task.id) },
             message: brief,
           })
         : await build({ ...common, spec: slug, objective: brief });

@@ -41,6 +41,11 @@ export function branchName(spec: string, task: string): string {
   return `vesna/${spec}/${task}`;
 }
 
+/** Where a specific task's own checkout lives — the one formula every caller shares. */
+export function worktreePath(repo: string, spec: string, task: string): string {
+  return join(worktreesRoot(repo), `${spec}-${task}`);
+}
+
 export class WorktreeError extends Error {
   constructor(message: string) {
     super(message);
@@ -55,7 +60,7 @@ export async function createWorktree(
   git: GitRunner = runGit,
 ): Promise<Worktree> {
   const branch = branchName(spec, task);
-  const path = join(worktreesRoot(repo), `${spec}-${task}`);
+  const path = worktreePath(repo, spec, task);
 
   // A branch that already exists means a previous attempt is still around, and
   // reusing it silently would mix two attempts into one history. The message

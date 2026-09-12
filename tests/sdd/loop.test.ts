@@ -11,7 +11,7 @@ import type { MergeReport } from "../../src/work/merge";
 import { createRegistry } from "../../src/registry/registry";
 import { writeNode } from "../../src/nodes/write";
 import { readNode } from "../../src/nodes/read";
-import { runGit } from "../../src/work/worktree";
+import { branchName, createWorktree, runGit, worktreePath } from "../../src/work/worktree";
 import type { CompletionResult, Provider } from "../../src/providers/types";
 
 // Copied from tests/work/builder.test.ts: a real repository and a provider
@@ -78,6 +78,20 @@ function planFor(events: SpecEvent[]): string {
 
 function setup(events: SpecEvent[]) {
   const root = mkdtempSync(join(tmpdir(), "vesna-loop-"));
+  const specs = join(root, ".vesna", "specs");
+  mkdirSync(specs, { recursive: true });
+  createSpec(specs, "work");
+  for (const e of events) appendEvent(specs, "work", e);
+  writeSpecFile(specPaths(specs, "work").plan, planFor(events));
+  return { root, specs };
+}
+
+// Same as `setup`, but the root is a real repository rather than a bare
+// directory — for the recovery tests that need real `git worktree`/`branch`
+// state (a worktree that was never created, or one whose directory was
+// removed by hand while git still remembers it) rather than the seams.
+async function setupReal(events: SpecEvent[]) {
+  const root = await repository();
   const specs = join(root, ".vesna", "specs");
   mkdirSync(specs, { recursive: true });
   createSpec(specs, "work");
@@ -795,7 +809,24 @@ test("a plain start on a dead build refuses and names the three actions", async 
 test("resume continues the in-flight task in its own worktree, then the rest", async () => {
   const { root, specs } = setup(deadAfterT1);
   const f = fakes();
-  const out = await runBuild(base(root, specs, f, { recovery: { action: "resume" } }));
+  // Resume now refuses when the in-flight task's checkout is not actually
+  // there (see the "checkout is gone" tests below) — a plain `fakes()` never
+  // creates one, so this test gives T2 a real directory registered as a real
+  // worktree, the way a genuine resume candidate looks.
+  const path = worktreePath(root, "work", "T2");
+  mkdirSync(path, { recursive: true });
+  const branch = branchName("work", "T2");
+  const git = async (args: string[]) => {
+    if (args[0] === "worktree" && args[1] === "list") {
+      return {
+        code: 0,
+        stdout: `worktree ${path}\nHEAD 0000000000000000000000000000000000000000\nbranch refs/heads/${branch}\n\n`,
+        stderr: "",
+      };
+    }
+    return f.git(args);
+  };
+  const out = await runBuild(base(root, specs, f, { recovery: { action: "resume" }, git }));
   expect(out).toEqual({ status: "done" });
   // T1 is done and not rebuilt; T2 goes through resume, not build.
   expect(f.log).toEqual(["resume T2", "review", "merge T2", "review"]);
@@ -844,4 +875,109 @@ test("a recovery on a build that is not dead is refused", async () => {
   const { root, specs } = setup(approvedWithTasks);
   const out = await runBuild(base(root, specs, fakes(), { recovery: { action: "resume" } }));
   expect(out).toEqual({ status: "could-not-start", reason: "nothing to recover — no interrupted build" });
+});
+
+// A missing checkout is a state, not an error: the process may have died
+// before `git worktree add` ever ran, or a person may have removed the
+// directory by hand. retry and abort tolerate it and proceed; resume, which
+// has nowhere to continue, refuses instead of silently building in the wrong
+// place.
+
+test("abort discards an in-flight checkout that never existed on disk and still ends the build as abandoned", async () => {
+  const { root, specs } = setup(deadAfterT1);
+  const f = fakes();
+  const out = await runBuild(base(root, specs, f, { recovery: { action: "abort" } }));
+  expect(out).toEqual({ status: "stopped", reason: "abandoned" });
+  expect(f.log).toEqual([]);
+  const events = readEvents(specs, "work");
+  expect(events.filter((e) => e.t === "build.recovered").length).toBe(1);
+  expect(events.filter((e) => e.t === "build.stopped").length).toBe(1);
+  expect(events.at(-1)).toEqual({ t: "build.stopped", reason: "abandoned" });
+  expect(events.at(-2)).toEqual({ t: "build.recovered", action: "abort", task: "T2" });
+});
+
+test("retry rebuilds a task whose checkout never existed on disk", async () => {
+  const { root, specs } = setup(deadAfterT1);
+  const f = fakes();
+  const out = await runBuild(base(root, specs, f, { recovery: { action: "retry", task: "T2" } }));
+  expect(out).toEqual({ status: "done" });
+  expect(f.log).toEqual(["build T2", "review", "merge T2", "review"]);
+});
+
+test("resume refuses when the in-flight task's checkout is gone", async () => {
+  const { root, specs } = setup(deadAfterT1);
+  const before = readEvents(specs, "work").length;
+  const out = await runBuild(base(root, specs, fakes(), { recovery: { action: "resume" } }));
+  expect(out).toEqual({
+    status: "could-not-start",
+    reason: 'the checkout of "T2" is gone — /build retry T2 or /build abort',
+  });
+  expect(readEvents(specs, "work").length).toBe(before);
+});
+
+test("resume refuses an explicit task that is not the in-flight one", async () => {
+  const { root, specs } = setup(deadAfterT1);
+  const out = await runBuild(base(root, specs, fakes(), { recovery: { action: "resume", task: "T1" } }));
+  expect(out).toEqual({ status: "could-not-start", reason: 'only the interrupted task "T2" can be resumed' });
+});
+
+// The two seam-based tests above against real git, mirroring the review's own
+// reproductions: a worktree that was never created at all, and one whose
+// directory was removed by hand while git's own bookkeeping still names it.
+
+test("retry rebuilds a task whose branch and worktree were never created (real git)", async () => {
+  const { root, specs } = await setupReal(deadAfterT1);
+  const out = await runBuild({
+    root, specsRoot: specs, slug: "work",
+    provider: writes("b.txt", "one\n"), registry: registry(),
+    policy: { mode: "auto", allow: {}, deny: {} },
+    review: async () => clean,
+    recovery: { action: "retry", task: "T2" },
+  });
+  expect(out).toEqual({ status: "done" });
+  expect(readFileSync(join(root, "b.txt"), "utf8")).toBe("one\n");
+  expect((await runGit(["branch", "--list", "vesna/work/T2"], root)).stdout.trim()).toBe("");
+});
+
+test("retry rebuilds a task whose directory was removed by hand while its branch stayed registered (real git)", async () => {
+  const { root, specs } = await setupReal(deadAfterT1);
+  const stale = await createWorktree(root, "work", "T2", runGit);
+  rmSync(stale.path, { recursive: true, force: true });
+  const out = await runBuild({
+    root, specsRoot: specs, slug: "work",
+    provider: writes("b.txt", "one\n"), registry: registry(),
+    policy: { mode: "auto", allow: {}, deny: {} },
+    review: async () => clean,
+    recovery: { action: "retry", task: "T2" },
+  });
+  expect(out).toEqual({ status: "done" });
+  expect(readFileSync(join(root, "b.txt"), "utf8")).toBe("one\n");
+});
+
+test("abort discards a checkout whose branch and worktree were never created and ends the build as abandoned (real git)", async () => {
+  const { root, specs } = await setupReal(deadAfterT1);
+  const out = await runBuild({
+    root, specsRoot: specs, slug: "work",
+    provider: {} as any, registry: registry(),
+    policy: { mode: "auto", allow: {}, deny: {} },
+    recovery: { action: "abort" },
+  });
+  expect(out).toEqual({ status: "stopped", reason: "abandoned" });
+  const events = readEvents(specs, "work");
+  expect(events.at(-1)).toEqual({ t: "build.stopped", reason: "abandoned" });
+  expect(events.at(-2)).toEqual({ t: "build.recovered", action: "abort", task: "T2" });
+});
+
+test("abort discards a checkout whose directory was removed by hand while its branch stayed registered (real git)", async () => {
+  const { root, specs } = await setupReal(deadAfterT1);
+  const stale = await createWorktree(root, "work", "T2", runGit);
+  rmSync(stale.path, { recursive: true, force: true });
+  const out = await runBuild({
+    root, specsRoot: specs, slug: "work",
+    provider: {} as any, registry: registry(),
+    policy: { mode: "auto", allow: {}, deny: {} },
+    recovery: { action: "abort" },
+  });
+  expect(out).toEqual({ status: "stopped", reason: "abandoned" });
+  expect((await runGit(["branch", "--list", "vesna/work/T2"], root)).stdout.trim()).toBe("");
 });

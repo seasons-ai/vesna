@@ -181,7 +181,7 @@ async function commit(tree: Worktree, message: string, git: GitRunner): Promise<
   return sha.stdout.trim();
 }
 
-/** Discards a build's checkout. The branch survives when there is a commit on it. */
+/** Removes a build's checkout — worktree and branch both — discarding whatever changes it holds. */
 export async function discardBuild(
   repo: string,
   result: BuildResult,
