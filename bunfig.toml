@@ -1,0 +1,4 @@
+[test]
+# vscode/ is its own package with its own test suite; without this, `bun
+# test` at the root recurses into vscode/test and inflates the root count.
+pathIgnorePatterns = ["vscode/**"]

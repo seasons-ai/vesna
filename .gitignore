@@ -12,3 +12,7 @@ dist/
 
 # npm pack output
 *.tgz
+
+vscode/dist/
+vscode/node_modules/
+*.vsix
