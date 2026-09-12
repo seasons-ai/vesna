@@ -1,5 +1,5 @@
 import { test, expect } from "bun:test";
-import { needsProvider, route } from "../../src/cli/main";
+import { needsProvider, route, USAGE } from "../../src/cli/main";
 
 test("bare vesna opens the chat when there is something to work with", () => {
   expect(route([], { configured: true })).toBe("chat");
@@ -43,4 +43,17 @@ test("anything that reaches a model, or writes down which one, needs a provider"
 
 test("onboarding is how an unusable machine file gets rewritten, so it is not blocked by one", () => {
   expect(needsProvider("onboard")).toBe(false);
+});
+
+/**
+ * `vesna serve` is a route like `chat`: it reaches a model, so it needs a
+ * provider, and it is listed where a person looks for it.
+ */
+test("serve is a command, needs a provider, and is in the usage", () => {
+  expect(route(["serve"], { configured: true })).toBe("serve");
+  expect(route(["serve"], { configured: false })).toBe("serve");
+  expect(needsProvider("serve")).toBe(true);
+  expect(USAGE).toContain(
+    "  vesna serve                             serve the agent over JSON-RPC on stdio (for editors)",
+  );
 });

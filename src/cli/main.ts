@@ -16,10 +16,11 @@ import { isHelp, isVersion, VERSION } from "./entry";
 import { parseFlags } from "./flags";
 import { authCommand } from "./authcmd";
 import { buildCommand } from "./buildcmd";
+import { serveCommand } from "./servecmd";
 import { needsOnboarding, runOnboarding } from "./onboard";
 import type { Preset } from "../providers/catalog";
 
-const USAGE = [
+export const USAGE = [
   "usage:",
   "  vesna                                   open the chat; sets you up on the first run",
   "  vesna chat [--plain]                    full-screen chat; --plain for a dumb terminal",
@@ -29,6 +30,7 @@ const USAGE = [
   "  vesna auth login                        sign in (browser, headless, or API key)",
   "  vesna build <slug>                      run an approved plan: build, review, merge",
   "  vesna build <slug> [--resume | --retry <task> | --abort]",
+  "  vesna serve                             serve the agent over JSON-RPC on stdio (for editors)",
 ].join("\n");
 
 /**
@@ -40,11 +42,11 @@ const USAGE = [
  * silently drops `"version"` even though the tests below assert it. A named
  * union keeps every value real, `"version"` included.
  */
-export type Command = "init" | "chat" | "do" | "auth" | "build";
+export type Command = "init" | "chat" | "do" | "auth" | "build" | "serve";
 
 export type Route = Command | "onboard" | "usage" | "version" | "error";
 
-const COMMANDS = new Set<string>(["init", "chat", "do", "auth", "build"]);
+const COMMANDS = new Set<string>(["init", "chat", "do", "auth", "build", "serve"]);
 
 /**
  * What the arguments ask for.
@@ -88,6 +90,7 @@ export function needsProvider(route: Route): boolean {
     case "auth":
     case "init":
     case "build":
+    case "serve":
       return true;
     case "onboard":
     case "usage":
@@ -216,7 +219,7 @@ export async function main(argv: string[]): Promise<number> {
 
   // Nothing below can reach a model without a credential, and learning that
   // from an SDK error names a provider the user never chose.
-  if (enteringChat || command === "do" || command === "build") {
+  if (enteringChat || command === "do" || command === "build" || action === "serve") {
     const credential = await inspectCredential(earlyConfig, process.env, homedir());
     if (!usable(credential)) {
       console.error(`vesna: ${problem(credential)}`);
@@ -224,6 +227,10 @@ export async function main(argv: string[]): Promise<number> {
       return EXIT.error;
     }
   }
+
+  // The server builds its own context: stdout is the protocol's, so nothing
+  // here may print, and what `buildContext` throws reaches stderr via bin/vesna.
+  if (action === "serve") return await serveCommand(root);
 
   const { registry, config, provider, theme, notes, policy, sink } = await buildContext(root);
   const permit = (node: { use: string }) => permits(config, node.use);
