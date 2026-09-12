@@ -95,3 +95,45 @@ test("splitPlan on a real plan whose code examples contain task headings finds e
     "T1", "T2", "T3", "T4", "T5", "T6", "T7", "T8", "T9", "T10", "T11", "T12",
   ]);
 });
+
+test("a task's verify: line is cut out of its text and returned on its own", () => {
+  const plan = `# Plan
+
+### Task 1: The reducer
+verify: bun test tests/spec/project.test.ts
+
+- [ ] Step 1
+
+### Task 2: The lock
+
+- [ ] Step 1
+`;
+  const tasks = splitPlan(plan);
+  expect(tasks[0]!.verify).toBe("bun test tests/spec/project.test.ts");
+  expect(tasks[0]!.text).not.toContain("verify:");
+  expect(tasks[0]!.text).toContain("- [ ] Step 1");
+  expect(tasks[1]!.verify).toBeUndefined();
+});
+
+test("verify: may follow a blank line, and is only ever the first thing in the task", () => {
+  const plan = `### Task 1: A
+
+verify:   bun test
+
+text
+`;
+  expect(splitPlan(plan)[0]!.verify).toBe("bun test");
+});
+
+test("an empty verify: and a second verify: are plan errors naming the task", () => {
+  expect(() => splitPlan("### Task 3: A\nverify:\n")).toThrow("Task 3: verify: is empty");
+  expect(() => splitPlan("### Task 3: A\nverify: a\n\nverify: b\n")).toThrow("Task 3: verify: given twice");
+  expect(() => splitPlan("### Task 3: A\ntext\nverify: a\n")).toThrow(
+    "Task 3: verify: must be the first line of the task",
+  );
+});
+
+test("a verify: inside a fence is somebody's example, not the task's check", () => {
+  const plan = "### Task 1: A\n\n```\nverify: not this\n```\n";
+  expect(splitPlan(plan)[0]!.verify).toBeUndefined();
+});

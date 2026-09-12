@@ -12,9 +12,12 @@ export interface PlanTask {
   id: string;
   title: string;
   text: string;
+  /** The check Vesna runs itself, from the task's `verify:` line. */
+  verify?: string;
 }
 
 const HEADING = /^### Task (\d+): (.+)$/;
+const VERIFY = /^verify:(.*)$/;
 // A fenced code block opens with 3+ backticks or tildes (up to 3 leading
 // spaces, per CommonMark) and closes with a matching line of the same
 // character, at least as long. A `### Task N:` line inside one is somebody's
@@ -27,6 +30,7 @@ export function splitPlan(markdown: string): PlanTask[] {
   const body: string[] = [];
   let fenceChar = "";
   let fenceLen = 0;
+  let sawBody = false;
 
   const flush = () => {
     if (current === null) return;
@@ -59,8 +63,22 @@ export function splitPlan(markdown: string): PlanTask[] {
       }
       flush();
       current = { id, title: match[2]!.trim(), text: line };
+      sawBody = false;
       continue;
     }
+
+    const verify = inFence || current === null ? null : line.match(VERIFY);
+    if (verify) {
+      const number = current!.id.slice(1);
+      if (current!.verify !== undefined) throw new Error(`Task ${number}: verify: given twice`);
+      const command = verify[1]!.trim();
+      if (command === "") throw new Error(`Task ${number}: verify: is empty`);
+      if (sawBody) throw new Error(`Task ${number}: verify: must be the first line of the task`);
+      current!.verify = command;
+      continue;
+    }
+
+    if (current !== null && line.trim() !== "") sawBody = true;
     if (current !== null) body.push(line);
   }
   flush();
