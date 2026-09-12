@@ -88,6 +88,13 @@ export async function serve(core: Core, io: ServeIo, meta: { serverVersion: stri
 
     if (message.method === "initialize") {
       if (initialized) return refuse(INVALID_REQUEST, "already initialized");
+      // A handshake is a request: one without an id has nobody to hand the
+      // state to, and must not lock the real one out. Its params name the
+      // client, and a client that cannot say who it is has not initialized.
+      if (id === null) return;
+      if (strings(message.params, ["clientName", "clientVersion"]) === null) {
+        return refuse(INVALID_PARAMS, "initialize needs { clientName: string; clientVersion: string }");
+      }
       initialized = true;
       reply({ serverVersion: meta.serverVersion, capabilities: CAPABILITIES, state: core.snapshot() });
       subscription.off = core.on((n) => write({ jsonrpc: "2.0", method: n.method, params: n.params }));
@@ -102,9 +109,10 @@ export async function serve(core: Core, io: ServeIo, meta: { serverVersion: stri
         return settle(core.send(p.text as string));
       }
       case "command": {
-        const p = strings(message.params, ["name"], ["argument"]);
-        if (p === null) return refuse(INVALID_PARAMS, "command needs { name: string; argument?: string }");
-        return settle(core.command(p.name as string, (p.argument as string | undefined) ?? ""));
+        const p = strings(message.params, ["name"], ["argument", "typed"]);
+        if (p === null) return refuse(INVALID_PARAMS, "command needs { name: string; argument?: string; typed?: string }");
+        const typed = p.typed as string | undefined;
+        return settle(core.command(p.name as string, (p.argument as string | undefined) ?? "", typed === undefined ? {} : { typed }));
       }
       case "answer": {
         const p = strings(message.params, ["id", "value"]);

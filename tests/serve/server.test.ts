@@ -45,8 +45,8 @@ function fakeCore() {
       calls.push(["send", text]);
       return new Promise<void>((resolve) => pending.push(resolve));
     },
-    command(name, argument) {
-      calls.push(["command", name, argument]);
+    command(name, argument, options) {
+      calls.push(["command", name, argument, ...(options?.typed !== undefined ? [options.typed] : [])]);
       return new Promise<void>((resolve) => pending.push(resolve));
     },
     answer(id, value) {
@@ -598,4 +598,55 @@ test("over a pipe: a y whose approval write fails is a notice, and the server su
   expect(await s.child.exited).toBe(0);
   await s.reading;
   expect(await s.stderr()).toBe("");
+}, 30_000);
+
+// Final fix round.
+
+test("command carries the typed line through, when the client gives one", async () => {
+  const s = await initialized();
+  s.request(2, "command", { name: "mode", argument: "auto", typed: "/mode auto" });
+  s.request(3, "command", { name: "spec", typed: "/spec" });
+  s.request(4, "command", { name: "mode", argument: "auto", typed: 5 });
+  await until(() => s.response(4) !== undefined, "the refusal");
+  expect(s.calls).toEqual([["command", "mode", "auto", "/mode auto"], ["command", "spec", "", "/spec"]]);
+  expect(s.response(4).error).toMatchObject({ code: INVALID_PARAMS });
+  s.release();
+  s.release();
+  s.end();
+  await s.running;
+});
+
+test("initialize needs clientName and clientVersion strings, and a notification-shaped one does nothing", async () => {
+  const s = await started();
+  s.request(1, "initialize", { clientName: "t" });
+  s.request(2, "initialize", { clientName: 1, clientVersion: "0" });
+  s.request(3, "initialize");
+  await until(() => s.response(3) !== undefined, "the refusals");
+  for (const id of [1, 2, 3]) expect(s.response(id).error).toMatchObject({ code: INVALID_PARAMS });
+  // Not initialized by a refused initialize, nor by one without an id.
+  s.notify("initialize", { clientName: "t", clientVersion: "0" });
+  s.request(4, "send", { text: "hi" });
+  await until(() => s.response(4) !== undefined, "the send's refusal");
+  expect(s.response(4).error).toMatchObject({ code: NOT_INITIALIZED });
+  // The real one is not locked out.
+  s.request(5, "initialize", { clientName: "t", clientVersion: "0" });
+  await until(() => s.response(5) !== undefined, "initialize");
+  expect(s.response(5).result).toMatchObject({ serverVersion: "9.9.9" });
+  expect(s.calls).toEqual([]);
+  s.end();
+  await s.running;
+});
+
+test("over a pipe: a command with a typed line is quoted back as a user entry", async () => {
+  const s = spawnServe(await sandbox());
+  s.write({ jsonrpc: "2.0", id: 1, method: "initialize", params: { clientName: "test", clientVersion: "0" } });
+  await waitFor(() => s.response(1) !== undefined, "initialize", s.stderr);
+  s.write({ jsonrpc: "2.0", id: 2, method: "command", params: { name: "mode", argument: "auto", typed: "/mode auto" } });
+  await waitFor(() => s.response(2) !== undefined, "the command's response", s.stderr);
+  const transcript = s.notifications("transcript").map((n) => n.params);
+  expect(transcript[0]).toEqual({ kind: "user", text: "/mode auto" });
+  expect(transcript[1]).toMatchObject({ kind: "notice", level: "ok" });
+  s.child.stdin.end();
+  expect(await s.child.exited).toBe(0);
+  await s.reading;
 }, 30_000);

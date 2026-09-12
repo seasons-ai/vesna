@@ -271,7 +271,8 @@ the others:
 
 It speaks JSON-RPC 2.0 on stdio, each message framed by a `Content-Length`
 header the way a language server's are. Requests: `initialize`, `send`,
-`command`, `answer`, `interrupt`, `shutdown`, `exit`. Notifications from the
+`command` (with the line as typed, so it is quoted back like the chat's),
+`answer`, `interrupt`, `shutdown`, `exit`. Notifications from the
 server: `transcript` (one line of the conversation at a time), `state` (the
 whole status again on every change), `ask` (a question and its choices) and
 `ask.resolved`. The first exchange, verbatim, from a folder whose config
