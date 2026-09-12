@@ -157,6 +157,41 @@ test("parked findings are listed under the task, not hidden", () => {
   expect(out).toContain("parked: a.ts — nit");
 });
 
+test("a done task shows its three witnesses, with a dash for a check the plan never declared", () => {
+  const withCheck = project([
+    { t: "created", id: "x", title: "X" },
+    { t: "task.added", id: "T1", title: "a" },
+    { t: "task.added", id: "T2", title: "b" },
+    { t: "approved", what: "spec" },
+    { t: "approved", what: "plan" },
+    { t: "build.started" },
+    { t: "verify.declared", task: "T1" },
+    { t: "task.started", id: "T1" },
+    { t: "review.done", task: "T1", round: 0, spec: "met", findings: [] },
+    { t: "verify.done", task: "T1", stage: "merge", code: 0, ms: 1 },
+    { t: "task.done", id: "T1" },
+    { t: "task.started", id: "T2" },
+    { t: "review.done", task: "T2", round: 0, spec: "met", findings: [] },
+    { t: "task.done", id: "T2" },
+  ])!;
+  const out = gardenPane(withCheck, { ...options, width: 60 }).lines.join("\n");
+  expect(out).toContain("✓ worker  ✓ reviewer  ✓ vesna");
+  expect(out).toContain("✓ worker  ✓ reviewer  — vesna");
+});
+
+test("a running task shows no witnesses yet", () => {
+  const running = project([
+    { t: "created", id: "x", title: "X" },
+    { t: "task.added", id: "T1", title: "a" },
+    { t: "approved", what: "spec" },
+    { t: "approved", what: "plan" },
+    { t: "build.started" },
+    { t: "task.started", id: "T1" },
+  ])!;
+  const out = gardenPane(running, { ...options, width: 60 }).lines.join("\n");
+  expect(out).not.toContain("worker");
+});
+
 test("in ASCII mode not one mark is outside ascii", () => {
   const out = text(
     [

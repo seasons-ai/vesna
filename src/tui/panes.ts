@@ -101,6 +101,7 @@ const ASCII_MARKS: Record<string, string> = {
   "✓": "+",
   "×": "x",
   "!": "!",
+  "—": "-",
 };
 
 /**
@@ -141,6 +142,16 @@ export function gardenPane(tree: SpecTree, options: PaneOptions): Pane {
           text: `  ${theme.paint(taskRole, mark(taskGlyph))} ${theme.paint("text", truncate(task.title, width - 4))}`,
           id: `task:${task.id}`,
         });
+        if (task.state === "done") {
+          const { worker, reviewer, vesna } = task.evidence;
+          const witness = (ok: boolean | null, name: string) =>
+            ok === null
+              ? `${theme.paint("faint", mark("—"))} ${theme.paint("faint", name)}`
+              : `${theme.paint(ok ? "ice" : "warn", mark(ok ? "✓" : "×"))} ${theme.paint("muted", name)}`;
+          lines.push({
+            text: `    ${witness(worker, "worker")}  ${witness(reviewer, "reviewer")}  ${witness(vesna, "vesna")}`,
+          });
+        }
         if (task.agent !== undefined) {
           lines.push({
             text: `    ${theme.paint("petal", mark("❀"))} ${theme.paint("muted", truncate(task.agent, width - 6))}`,
