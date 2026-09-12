@@ -252,3 +252,78 @@ test("vesna build --resume finishes a build killed during the whole-branch revie
   }
   expect(readEvents(specs, "work").at(-1)).toEqual({ t: "build.done" });
 });
+
+// Every refusal that names a /build word gets the shell's own spelling
+// under it — not only "was interrupted". A shell user meeting "/build retry
+// T2" with no flag beside it has been told the chat's words, not theirs.
+function deadWithoutCheckout(): { root: string; specs: string } {
+  const root = mkdtempSync(join(tmpdir(), "vesna-buildcmd-gone-"));
+  const specs = join(root, ".vesna", "specs");
+  mkdirSync(specs, { recursive: true });
+  createSpec(specs, "work");
+  for (const event of [
+    { t: "task.added", id: "T1", title: "First" },
+    { t: "task.added", id: "T2", title: "Second", dependsOn: ["T1"] },
+    { t: "approved", what: "plan" },
+    { t: "build.started" },
+    { t: "task.started", id: "T1", agent: "vesna build" },
+    { t: "task.done", id: "T1", commit: "sha-T1" },
+    { t: "task.started", id: "T2", agent: "vesna build" },
+  ] as SpecEvent[]) appendEvent(specs, "work", event);
+  writeSpecFile(specPaths(specs, "work").plan, "# Plan\n\n### Task 1: First\nDo it.\n\n### Task 2: Second\nDo it.\n");
+  return { root, specs };
+}
+
+const shellDeps = () => ({
+  provider: {} as any,
+  registry: createRegistry(),
+  policy: { mode: "auto" as const, allow: {}, deny: {} },
+  theme: resolveTheme("mono", { depth: 0 }),
+  seams,
+});
+
+async function capture(run: () => Promise<number>): Promise<{ code: number; stderr: string[] }> {
+  const log = console.log;
+  const error = console.error;
+  const stderr: string[] = [];
+  console.log = () => {};
+  console.error = (line: string) => { stderr.push(line); };
+  try {
+    return { code: await run(), stderr };
+  } finally {
+    console.log = log;
+    console.error = error;
+  }
+}
+
+test("--resume on a build whose checkout is gone names the flags under the chat's words", async () => {
+  const { root } = deadWithoutCheckout();
+  const { code, stderr } = await capture(() => buildCommand("work", root, shellDeps(), { resume: "true" }));
+  expect(code).toBe(2);
+  expect(stderr).toEqual([
+    'vesna: the checkout of "T2" is gone — /build retry T2 or /build abort',
+    "  from the shell: vesna build work --resume | --retry <task> | --abort",
+  ]);
+});
+
+test("a plain vesna build on a task a stop left a checkout for names the flags under the chat's words", async () => {
+  const root = rootWithSpec();
+  const specs = join(root, ".vesna", "specs");
+  appendEvent(specs, "work", { t: "build.started" });
+  appendEvent(specs, "work", { t: "task.started", id: "T1", agent: "vesna build" });
+  appendEvent(specs, "work", { t: "task.failed", id: "T1", reason: "interrupted" });
+  appendEvent(specs, "work", { t: "build.stopped", reason: "interrupted" });
+  // The kept checkout: git reports T1's branch as existing.
+  const git = async (args: string[]) => {
+    if (args[0] === "branch" && args[1] === "--list") return { code: 0, stdout: `  ${args[2]}\n`, stderr: "" };
+    return seams.git(args);
+  };
+  const { code, stderr } = await capture(() =>
+    buildCommand("work", root, { ...shellDeps(), seams: { ...seams, git } }, {}),
+  );
+  expect(code).toBe(2);
+  expect(stderr).toEqual([
+    "vesna: T1 has a checkout left by a stopped build — /build retry T1 redoes it",
+    "  from the shell: vesna build work --resume | --retry <task> | --abort",
+  ]);
+});

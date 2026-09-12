@@ -33,14 +33,16 @@ says `--resume`, `--retry <task>` or `--abort` — the same three words as
 a merged task's worktree and branch are removed, an aborted or retried one's
 discarded, a stopped one's kept for a person to read.
 
+**`0.3.2` — trust patch.** Tagged and published. The whole-branch review
+gates `done`. The README version follows `package.json` under test. This
+roadmap replaces a stale one. One `vesna build` per spec at a time. CI installs
+the packed tarball and runs it, not just the checkout.
+
 Every console block in the README is verbatim output.
 
 ## In progress
 
-**`0.3.2` — trust patch.** The whole-branch review gates `done` (shipped in
-this line). The README version follows `package.json` under test. This
-roadmap replaces a stale one. One `vesna build` per spec at a time. CI installs
-the packed tarball and runs it, not just the checkout.
+Nothing at the moment — see Next.
 
 ## Next
 

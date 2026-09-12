@@ -128,7 +128,10 @@ export async function buildCommand(
   }
   if (outcome.status !== "done") {
     console.error(`vesna: ${outcome.reason}`);
-    if (outcome.status === "could-not-start" && outcome.reason.includes("was interrupted")) {
+    // The loop's refusals name the chat's words — "/build resume", "/build
+    // retry T2" — wherever they come from. A shell user gets the flags
+    // under any of them, not only the first one that was written.
+    if (outcome.status === "could-not-start" && outcome.reason.includes("/build ")) {
       console.error(`  from the shell: vesna build ${slug} --resume | --retry <task> | --abort`);
     }
   }
