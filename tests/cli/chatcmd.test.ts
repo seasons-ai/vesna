@@ -1,6 +1,7 @@
 import { test, expect } from "bun:test";
 import {
   CHAT_COMMANDS,
+  approvalQuestion,
   approveOutcome,
   buildBusy,
   buildFailed,
@@ -405,4 +406,40 @@ test("a /build of any kind while this process holds a build says it is running, 
 
 test("/build cancel on a build another process holds says where to stop it", () => {
   expect(cancelElsewhere()).toBe("that build is running in another process — stop it there");
+});
+
+const unapprovedPlan = project([
+  { t: "created", id: "x", title: "X" },
+  { t: "approved", what: "spec" },
+  { t: "task.added", id: "T1", title: "The reducer" },
+  { t: "task.added", id: "T2", title: "A title that is much too long for one column" },
+])!;
+
+test("with a spec written and not approved, the question is about the spec", () => {
+  const t = project([{ t: "created", id: "x", title: "X" }])!;
+  expect(approvalQuestion(t, { specWritten: true, plan: null })).toEqual({
+    what: "spec", lines: ["approve the spec? [y] yes  [n] not yet"],
+  });
+  expect(approvalQuestion(t, { specWritten: false, plan: null })).toBeNull();
+});
+
+test("with a plan written and not approved, the tasks and their checks come first", () => {
+  const plan = [
+    { id: "T1", title: "The reducer", text: "", verify: "bun test tests/spec/project.test.ts" },
+    { id: "T2", title: "A title that is much too long for one column", text: "" },
+  ];
+  expect(approvalQuestion(unapprovedPlan, { specWritten: true, plan })).toEqual({
+    what: "plan",
+    lines: [
+      "T1  The reducer              verify: bun test tests/spec/project.test.ts",
+      "T2  A title that is much to… no verify — worker and reviewer only",
+      "approve the plan? [y] yes  [n] not yet",
+    ],
+  });
+});
+
+test("nothing is asked once both are approved, or with no spec at all", () => {
+  const done = project([{ t: "created", id: "x", title: "X" }, { t: "approved", what: "spec" }, { t: "approved", what: "plan" }])!;
+  expect(approvalQuestion(done, { specWritten: true, plan: [{ id: "T1", title: "a", text: "" }] })).toBeNull();
+  expect(approvalQuestion(null, { specWritten: true, plan: null })).toBeNull();
 });

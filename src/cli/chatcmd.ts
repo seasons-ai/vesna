@@ -1,5 +1,6 @@
 import { PRESETS, findPreset, needsAddress, needsOauth, type Preset } from "../providers/catalog";
 import type { Approvable, RecoveryAction, Shape, SpecTree } from "../spec/project";
+import type { PlanTask } from "../sdd/brief";
 import { SHAPES } from "../sdd/classify";
 import type { BuildState } from "../sdd/recover";
 
@@ -107,6 +108,33 @@ export function approveOutcome(
     return { kind: "approved", what, message: "approved: plan — /build will run it" };
   }
   return { kind: "refused", message: 'approve what? "spec" or "plan"' };
+}
+
+const TITLE_WIDTH = 24;
+
+/**
+ * What waits for a person's yes after a turn. Null when nothing does. The
+ * plan's tasks are listed with their checks because the checks are part of
+ * what is being approved: Vesna will run those commands.
+ */
+export function approvalQuestion(
+  tree: SpecTree | null,
+  facts: { specWritten: boolean; plan: PlanTask[] | null },
+): { what: Approvable; lines: string[] } | null {
+  if (tree === null) return null;
+  if (!tree.approved.spec) {
+    return facts.specWritten ? { what: "spec", lines: ["approve the spec? [y] yes  [n] not yet"] } : null;
+  }
+  if (tree.approved.plan || facts.plan === null || facts.plan.length === 0) return null;
+  const lines = facts.plan.map((task) => {
+    const title =
+      task.title.length > TITLE_WIDTH
+        ? `${task.title.slice(0, TITLE_WIDTH - 1)}…`
+        : task.title.padEnd(TITLE_WIDTH);
+    const check = task.verify !== undefined ? `verify: ${task.verify}` : "no verify — worker and reviewer only";
+    return `${task.id.padEnd(3)} ${title} ${check}`;
+  });
+  return { what: "plan", lines: [...lines, "approve the plan? [y] yes  [n] not yet"] };
 }
 
 export type ClassifyOutcome =

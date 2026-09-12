@@ -20,7 +20,7 @@ import { listSessions, openSession, readSession } from "../../src/store/sessions
 import { createPlanNodes } from "../../src/nodes/plan";
 import { project, type SpecEvent } from "../../src/spec/project";
 import { createSink } from "../../src/spec/sink";
-import { appendEvent, createSpec, readEvents, specPaths, specsRoot, writeSpecFile } from "../../src/spec/store";
+import { appendEvent, createSpec, digestOf, readEvents, specPaths, specsRoot, writeSpecFile } from "../../src/spec/store";
 import type { BuildResult } from "../../src/work/builder";
 import { branchName, worktreePath } from "../../src/work/worktree";
 import { pidAlive } from "../../src/sdd/recover";
@@ -2533,5 +2533,65 @@ test("a second /build typed while the first is still before its lock is refused,
   const events = readEvents(specs, "work");
   expect(events.filter((e) => e.t === "build.recovered").length).toBe(1);
   expect(events.at(-1)).toEqual({ t: "build.done" });
+  await quit(app);
+});
+
+/**
+ * A spec whose plan is written and waits for a person: the spec approved, two
+ * tasks in the log, and a plan.md whose first task declares a check.
+ */
+async function unapprovedPlanApp() {
+  const base = await deps(reply("x"));
+  const specs = specsRoot(base.root);
+  const sink = createSink(specs);
+  const slug = "gate";
+  createSpec(specs, slug);
+  appendEvent(specs, slug, { t: "approved", what: "spec" });
+  appendEvent(specs, slug, { t: "task.added", id: "T1", title: "a" });
+  appendEvent(specs, slug, { t: "task.added", id: "T2", title: "b" });
+  writeSpecFile(specPaths(specs, slug).plan, "### Task 1: a\nverify: bun test\n\n### Task 2: b\n");
+  const app = await start(reply("x"), { rows: 40, cols: 120 }, { ...base, sink });
+  app.input.type(`/spec open ${slug}\r`);
+  await until(() => app.screen().includes(`spec ${slug}`), "the spec opening");
+  return { app, specs, slug };
+}
+
+test("after a turn with an unapproved plan the chat asks, y approves with the plan's digest, and the question does not return", async () => {
+  const { app, specs, slug } = await unapprovedPlanApp();
+  app.input.type("hello\r");
+  await until(() => app.screen().includes("approve the plan? [y] yes  [n] not yet"), "the question");
+  expect(app.screen()).toContain("verify: bun test");
+  app.input.type("y");
+  await until(() => app.screen().includes("approved: plan"), "the approval");
+  const approved = readEvents(specs, slug).find((e: any) => e.t === "approved" && e.what === "plan") as any;
+  expect(approved.digest).toBe(digestOf(join(specs, slug, "plan.md")));
+  app.input.type("hello again\r");
+  await until(() => app.screen().split("hello again").length > 1, "the second turn");
+  expect(app.screen().split("approve the plan?").length).toBe(2); // asked once
+  await quit(app);
+});
+
+test("n leaves the log alone and the question comes back after the next turn", async () => {
+  const { app, specs, slug } = await unapprovedPlanApp();
+  app.input.type("hello\r");
+  await until(() => app.screen().includes("approve the plan?"), "the question");
+  app.input.type("n");
+  app.input.type("more\r");
+  await until(() => app.screen().split("approve the plan?").length === 3, "asked again");
+  expect(readEvents(specs, slug).some((e: any) => e.t === "approved" && e.what === "plan")).toBe(false);
+  // The question owns the keyboard until it is answered: a ctrl-c now says
+  // "not yet", it does not start leaving.
+  app.input.type("n");
+  // Two questions, each naming "[n] not yet", and two answers saying it.
+  await until(() => app.screen().split("not yet").length === 5, "the second not yet");
+  await quit(app);
+});
+
+test("/approve plan writes the digest too", async () => {
+  const { app, specs, slug } = await unapprovedPlanApp();
+  app.input.type("/approve plan\r");
+  await until(() => app.screen().includes("approved: plan"), "the approval");
+  const approved = readEvents(specs, slug).find((e: any) => e.t === "approved" && e.what === "plan") as any;
+  expect(approved.digest).toBe(digestOf(specPaths(specs, slug).plan));
   await quit(app);
 });

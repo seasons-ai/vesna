@@ -2,6 +2,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import {
   CHAT_COMMANDS,
+  approvalQuestion,
   approveOutcome,
   buildBusy,
   buildFailed,
@@ -39,8 +40,9 @@ import { resolveGlyphs, type Glyphs } from "./glyphs";
 import { decodeKeys, type Key } from "./keys";
 import { layout, panelWidths, type Frame, type ViewState } from "./layout";
 import { chatsPane, gardenPane } from "./panes";
-import { createSpec, listSpecs, readSpec, readSpecFile, specPaths, specsRoot } from "../spec/store";
-import { activeStage, type SpecTree } from "../spec/project";
+import { createSpec, digestOf, listSpecs, readSpec, readSpecFile, specPaths, specsRoot } from "../spec/store";
+import { activeStage, type Approvable, type SpecTree } from "../spec/project";
+import { splitPlan } from "../sdd/brief";
 import type { SpecSink } from "../spec/sink";
 import { wrapAnsi } from "./wrap";
 import { spinnerFrame } from "./render";
@@ -297,6 +299,75 @@ export async function runApp(deps: AppDeps, io: AppIo): Promise<number> {
     const lock = join(specPaths(specs, deps.sink.slug).dir, "build.lock");
     const pid = readLockPid(lock);
     return buildState(spec, pid !== null && pidAlive(pid));
+  }
+
+  /**
+   * The sha256 of the text being approved, so the log names what the yes was
+   * for and the loop can refuse a plan edited after it. Null when the file is
+   * not there — an approval before the text is written carries no digest.
+   */
+  function approvalDigest(what: Approvable): string | null {
+    const slug = deps.sink?.slug;
+    if (slug == null) return null;
+    const paths = specPaths(specs, slug);
+    return digestOf(what === "spec" ? paths.spec : paths.plan);
+  }
+
+  /** The one event no tool can emit, written with the digest of what it approves. */
+  function writeApproval(what: Approvable): void {
+    if (deps.sink === undefined) return;
+    const digest = approvalDigest(what);
+    deps.sink.emit({ t: "approved", what, ...(digest !== null ? { digest } : {}) });
+  }
+
+  /**
+   * After a turn that leaves a spec or a plan waiting, one question under the
+   * answer. The plan's tasks and their checks come first: the checks are
+   * what Vesna will run, so they are part of the yes. Only y writes anything;
+   * n writes nothing and the question returns after the next turn. A plan
+   * that does not split is not asked about — /build says why.
+   */
+  async function askApproval(): Promise<void> {
+    if (turn !== null || leaving || building) return;
+    const slug = deps.sink?.slug;
+    if (slug == null) return;
+    const paths = specPaths(specs, slug);
+    const specWritten = readSpecFile(paths.spec) !== null;
+    const plan = (() => {
+      const text = readSpecFile(paths.plan);
+      if (text === null) return null;
+      try {
+        return splitPlan(text);
+      } catch {
+        return null;
+      }
+    })();
+    const question = approvalQuestion(spec, { specWritten, plan });
+    if (question === null) return;
+
+    for (const [index, line] of question.lines.entries()) {
+      transcript.notice(line, index === question.lines.length - 1 ? "warn" : "muted");
+    }
+    draw();
+
+    while (true) {
+      const answer = await new Promise<string>((resolve) => {
+        awaiting = resolve;
+      });
+      awaiting = null;
+      // "always" is a permission's answer; this question has only yes and not yet.
+      if (answer === "a") continue;
+      if (answer === "y") {
+        writeApproval(question.what);
+        refreshSpec();
+        transcript.notice(approveOutcome(question.what, spec, true).message, "ok");
+      } else {
+        transcript.notice("not yet", "muted");
+      }
+      transcript.endTurn();
+      draw();
+      return;
+    }
   }
 
   function refreshChats(): void {
@@ -756,7 +827,7 @@ export async function runApp(deps: AppDeps, io: AppIo): Promise<number> {
         if (input.name === "approve") {
           const outcome = approveOutcome(input.argument, spec, deps.sink !== undefined);
           if (outcome.kind === "approved" && deps.sink !== undefined) {
-            deps.sink.emit({ t: "approved", what: outcome.what });
+            writeApproval(outcome.what);
             refreshSpec();
             transcript.notice(outcome.message, "ok");
           } else {
@@ -982,6 +1053,7 @@ export async function runApp(deps: AppDeps, io: AppIo): Promise<number> {
         refreshSpec();
         transcript.endTurn();
         draw();
+        await askApproval();
       }
     }
   } finally {
