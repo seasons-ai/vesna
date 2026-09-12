@@ -24,6 +24,15 @@ messages that made it; this file records the state.
 - Approvals, read-only tool policy, per-node effect classes, an always-ask
   list for secrets and the event log.
 
+**Recoverable builds** (`0.4` line, on `main`). Done as declared: a process
+killed mid-build leaves a spec the next `vesna build` refuses until a person
+says `--resume`, `--retry <task>` or `--abort` — the same three words as
+`/build resume|retry|abort` in the chat — and each is recorded as a
+`build.recovered` event, never by editing `events.jsonl`; `/build cancel` and
+`ctrl-c` end a build with `build.stopped`, the task in flight marked failed;
+a merged task's worktree and branch are removed, an aborted or retried one's
+discarded, a stopped one's kept for a person to read.
+
 Every console block in the README is verbatim output.
 
 ## In progress
@@ -35,13 +44,10 @@ the packed tarball and runs it, not just the checkout.
 
 ## Next
 
-**`0.4` — recoverable builds.** Done when: a process killed mid-build leaves a
-spec that the next `vesna build` can resume, retry one task, or abort — from a
-system event, not by editing `events.jsonl`; `/build cancel` from the chat ends
-a build with `build.stopped`; a build the whole-branch review stopped can be
-re-reviewed after a fix without recording a new task (today the only route is
-a new task, and its final review covers the branch only from that point); a task's worktree and branch are cleaned up on
-success and on abort; each build carries an id in its events.
+**Left over from recoverable builds.** A build the whole-branch review
+stopped can be re-reviewed after a fix without recording a new task (today the
+only route is a new task, and its final review covers the branch only from
+that point); each build carries an id in its events.
 
 **Verification in the plan.** Done when: a task in `plan.md` can declare its
 check (`verify: bun test tests/x.test.ts`), Vesna runs it independently of the

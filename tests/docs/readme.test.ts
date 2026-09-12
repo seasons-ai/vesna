@@ -19,3 +19,18 @@ test("the README's status line names the version package.json ships", () => {
   const minor = version.split(".").slice(0, 2).join(".");
   expect(line![1]).toBe(minor);
 });
+
+/**
+ * The process section's command table is where a reader learns the words.
+ * `/build` grew four of them — cancel, resume, retry <task>, abort — and a
+ * table that names three of the four would send someone to a command that
+ * exists without telling them. The refusal the README shows spells out the
+ * same three recoveries, so the two must agree.
+ */
+test("the README's command table names every word /build takes", () => {
+  const table = readme.match(/```text\n([\s\S]*?)```/)?.[1] ?? "";
+  const rows = table.split("\n").filter((line) => line.startsWith("/build"));
+  const words = rows.map((row) => row.split(/\s{2,}/)[0]);
+  expect(words).toEqual(["/build", "/build cancel", "/build resume", "/build retry <task>", "/build abort"]);
+  expect(readme).toContain("was interrupted — /build resume, /build retry <task>, or /build abort");
+});

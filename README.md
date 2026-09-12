@@ -121,6 +121,10 @@ answer, a **bounded** change is designed in the conversation and built, an
 /approve spec                closes design — the plan can be written
 /approve plan                closes plan — /build may run it
 /build                       run the approved plan: build, review, merge
+/build cancel                stop it after the task in flight is interrupted
+/build resume                a build a killed process left: continue that task
+/build retry <task>          redo one task from scratch
+/build abort                 abandon the interrupted build
 ctrl-g                       show or hide the column
 ```
 
@@ -171,6 +175,23 @@ $ echo $?
 2
 ```
 
+`ctrl-c` and `/build cancel` end a build through the log: the task in flight
+marked failed, the build stopped. A process killed outright writes nothing,
+so the log still says "building" — and the next `/build` refuses:
+
+```console
+$ vesna build demo-arithmetic
+vesna: a build of "demo-arithmetic" was interrupted — /build resume, /build retry <task>, or /build abort
+  from the shell: vesna build demo-arithmetic --resume | --retry <task> | --abort
+$ echo $?
+2
+```
+
+`resume` continues the interrupted task in the checkout it was left in,
+`retry <task>` throws that checkout away and builds the task again, `abort`
+abandons the build. A merged task's worktree and branch are removed; a
+stopped task's are kept, so there is something to look at.
+
 ## Permission
 
 Three modes in `.vesna/config.yaml` — `plan` looks and changes nothing, `ask`
@@ -186,9 +207,10 @@ every review it has had. Containment is on the roadmap, not claimed.
 ## Roadmap
 
 **Now — a stable SDD agent, and the automation around it.** Recoverable
-builds: a process killed mid-build can be resumed, retried, or cancelled
-from the chat; worktrees cleaned up; verification declared in the plan and
-re-run after the merge.
+builds have shipped: a process killed mid-build can be resumed, retried, or
+abandoned from the chat or the shell, and a merged task's worktree is cleaned
+up. Next in this line: verification declared in the plan and re-run after
+the merge.
 
 **Next — the editor.** The agent as a server, and a VS Code extension that
 shows the spec, the plan, the garden and the review findings as editor
