@@ -293,7 +293,8 @@ export async function runApp(deps: AppDeps, io: AppIo): Promise<number> {
     return true;
   }
 
-  function dispatch(key: Key): void {
+  /** True when the key answered a question: the rest of its chunk is not read. */
+  function dispatch(key: Key): boolean {
     // A question owns the keyboard until it is answered. Only the three
     // answers decide: a stray key must not refuse an action by accident.
     if (awaiting !== null) {
@@ -307,7 +308,7 @@ export async function runApp(deps: AppDeps, io: AppIo): Promise<number> {
               ? "y"
               : "";
       if (answer !== "") awaiting.resolve(answer);
-      return;
+      return answer !== "";
     }
 
     if (key.type !== "interrupt") confirmExit = false;
@@ -316,27 +317,27 @@ export async function runApp(deps: AppDeps, io: AppIo): Promise<number> {
       case "interrupt":
         if (state.busy) {
           core.interrupt();
-          return;
+          return false;
         }
         if (editor.text !== "") {
           editor = createEditor(editor.history);
           draw();
-          return;
+          return false;
         }
         if (confirmExit) {
           if (!leave()) {
             confirmExit = false;
             draw();
           }
-          return;
+          return false;
         }
         confirmExit = true;
         draw();
-        return;
+        return false;
 
       case "eof":
         if (editor.text === "" && !state.busy && !leave()) draw();
-        return;
+        return false;
 
       case "click": {
         const column = key.column;
@@ -347,14 +348,14 @@ export async function runApp(deps: AppDeps, io: AppIo): Promise<number> {
               ? shown?.rightTargets?.[key.row]
               : shown?.targets?.[key.row];
 
-        if (target === undefined) return;
+        if (target === undefined) return false;
         if (target.startsWith("session:")) {
           void resume(target.slice("session:".length));
-          return;
+          return false;
         }
         const text = transcript.rawOf(target);
         if (text !== undefined) void copy(text);
-        return;
+        return false;
       }
 
       case "wheel-up":
@@ -363,7 +364,7 @@ export async function runApp(deps: AppDeps, io: AppIo): Promise<number> {
         const step = key.type === "wheel-up" ? WHEEL_LINES : -WHEEL_LINES;
         scroll = clampScroll(scroll + step);
         draw();
-        return;
+        return false;
       }
 
       case "page-up":
@@ -371,26 +372,26 @@ export async function runApp(deps: AppDeps, io: AppIo): Promise<number> {
         const page = Math.max(1, Math.floor(conversationRows(screen.size().rows) * PAGE_FRACTION));
         scroll = clampScroll(scroll + (key.type === "page-up" ? page : -page));
         draw();
-        return;
+        return false;
       }
 
       case "panel-left":
         void toggleChats();
-        return;
+        return false;
 
       case "cycle-mode": {
         void core.command("mode", nextMode(state.mode));
-        return;
+        return false;
       }
 
       case "panel-right":
         showGarden = !showGarden;
         draw();
-        return;
+        return false;
 
       case "escape":
         if (state.busy) core.interrupt();
-        return;
+        return false;
 
       default: {
         const applied = applyKey(editor, key);
@@ -401,6 +402,7 @@ export async function runApp(deps: AppDeps, io: AppIo): Promise<number> {
           submissions.push(applied.submit);
         }
         draw();
+        return false;
       }
     }
   }
@@ -417,7 +419,10 @@ export async function runApp(deps: AppDeps, io: AppIo): Promise<number> {
     for await (const chunk of io.input) {
       const decoded = decodeKeys(carry + chunk);
       carry = decoded.rest;
-      for (const key of decoded.keys) dispatch(key);
+      // What follows an answer in the same read was typed at the question,
+      // not at what comes after it: a ctrl-c leaning on the y must not
+      // interrupt the turn the y just allowed.
+      for (const key of decoded.keys) if (dispatch(key)) break;
       if (quitting) break;
     }
     submissions.close();

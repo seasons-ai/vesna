@@ -2576,3 +2576,32 @@ test("/exit typed behind the approval question does not leave while it stands", 
   expect(await app.finished).toBe(0);
   expect(readEvents(specs, slug).some((e: any) => e.t === "approved" && e.what === "plan")).toBe(false);
 });
+
+// Final fix round.
+
+test("the keys after an answer in the same chunk are dropped: y then ctrl-c does not interrupt the turn", async () => {
+  const { registry, ran } = writing();
+  const caller = toolCaller("put", { path: "src/a.ts" });
+  const app = await start(caller, { rows: 20, cols: 90 }, await allowing(caller, registry));
+  app.input.type("go\r");
+  await until(() => app.screen().includes("[y] allow"), "the question");
+  app.input.type("y\x03");
+  await until(() => app.screen().includes("finished"), "the turn running on to its end");
+  const rows = app.screen().split("\n");
+  expect(rows.filter((row) => row.trim() === "interrupted").length).toBe(0);
+  expect(rows.filter((row) => row.includes("allowed once")).length).toBe(1);
+  expect(ran).toEqual(["src/a.ts"]);
+  await quit(app);
+});
+
+test("y then ctrl-c in one chunk behind the approval question approves, and arms nothing", async () => {
+  const { app, specs, slug } = await unapprovedPlanApp();
+  app.input.type("hello\r");
+  await until(() => app.screen().includes("approve the plan?"), "the question");
+  app.input.type("y\x03");
+  await until(() => app.screen().includes("approved: plan"), "the approval");
+  await settled();
+  expect(app.screen().split("again to leave").length - 1).toBe(0);
+  expect(readEvents(specs, slug).filter((e: any) => e.t === "approved" && e.what === "plan")).toHaveLength(1);
+  await quit(app);
+});
