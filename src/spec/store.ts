@@ -144,12 +144,12 @@ export function readSpec(root: string, slug: string): SpecTree | null {
   return project(readEvents(root, slug));
 }
 
-/** sha256 hex of the file's bytes; null when there is no such file. */
 /** The sha256 hex of a text already in hand — what an approval names. */
 export function digestOfText(text: string): string {
   return createHash("sha256").update(text).digest("hex");
 }
 
+/** The digest of a file read as UTF-8; null when there is no such file. */
 export function digestOf(path: string): string | null {
   try {
     return digestOfText(readFileSync(path, "utf8"));
