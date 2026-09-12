@@ -140,7 +140,9 @@ export function project(events: SpecEvent[]): SpecTree | null {
 
   const stageState = new Map<Stage, StageState>();
   const criteria = new Map<string, Criterion>();
-  const tasks = new Map<string, Task>();
+  // Evidence is kept apart from the task and joined at the end: the map
+  // is the one source of it, so a task's record carries none on its own.
+  const tasks = new Map<string, Omit<Task, "evidence">>();
   const evidence = new Map<string, Evidence>();
   const approved = { spec: false, plan: false };
   const digests: SpecTree["digests"] = {};
@@ -189,7 +191,6 @@ export function project(events: SpecEvent[]): SpecTree | null {
           title: event.title,
           state: "todo",
           dependsOn: event.dependsOn ?? [],
-          evidence: { worker: false, reviewer: false, vesna: null },
         });
         evidence.set(event.id, { worker: false, reviewer: false, vesna: null });
         // The approval was of the plan as it stood. A plan with a task the
@@ -424,7 +425,7 @@ export function activeStage(tree: SpecTree, facts: { specWritten: boolean } = { 
  * A task waiting on unfinished work is not merely "not started": showing it as
  * blocked is what tells the reader nothing is stuck, it is simply waiting.
  */
-function blockedIfWaiting(task: Task, tasks: Map<string, Task>): Task {
+function blockedIfWaiting<T extends Omit<Task, "evidence">>(task: T, tasks: Map<string, T>): T {
   if (task.state !== "todo") return task;
   const waiting = task.dependsOn.some((id) => tasks.get(id)?.state !== "done");
   return waiting && task.dependsOn.length > 0 ? { ...task, state: "blocked" } : task;
