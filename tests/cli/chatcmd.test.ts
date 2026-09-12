@@ -6,7 +6,6 @@ import {
   buildStart,
   classifyOutcome,
   parseChatInput,
-  quitBlocked,
   quitCancelling,
   quitTimedOut,
   recoverOutcome,
@@ -174,10 +173,6 @@ test("/build on a spec whose every task is merged is refused, so no review of an
     { t: "build.done" },
   ]);
   expect(buildStart(t, "idle")).toEqual({ kind: "refused", message: "nothing to build — every task is merged" });
-});
-
-test("leaving while a build runs is refused, because killing the process wedges the spec", () => {
-  expect(quitBlocked()).toBe("a build is running — wait for it to stop before leaving");
 });
 
 test("/build while a build is running is refused", () => {

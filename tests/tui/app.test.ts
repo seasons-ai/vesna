@@ -1,4 +1,5 @@
 import { test, expect } from "bun:test";
+import { mkdirSync } from "node:fs";
 import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -17,10 +18,11 @@ import { CODEX_BASE_URL, findPreset, type Preset } from "../../src/providers/cat
 import { readSettings, settingsPath, writeSettings } from "../../src/cli/settings";
 import { listSessions, openSession, readSession } from "../../src/store/sessions";
 import { createPlanNodes } from "../../src/nodes/plan";
-import { project } from "../../src/spec/project";
+import { project, type SpecEvent } from "../../src/spec/project";
 import { createSink } from "../../src/spec/sink";
 import { appendEvent, createSpec, readEvents, specPaths, specsRoot, writeSpecFile } from "../../src/spec/store";
 import type { BuildResult } from "../../src/work/builder";
+import { branchName, worktreePath } from "../../src/work/worktree";
 import type { ReviewOutcome } from "../../src/sdd/review";
 import type { MergeReport } from "../../src/work/merge";
 
@@ -1880,7 +1882,7 @@ test("/build while one is already running is refused", async () => {
   await quit(app);
 });
 
-test("leaving while a build runs is refused on every path, and allowed once it stops", async () => {
+test("quitting mid-build cancels it first, and the log says so", async () => {
   const base = await deps(reply("x"));
   const sink = createSink(specsRoot(base.root));
   const specs = specsRoot(base.root);
@@ -1902,26 +1904,109 @@ test("leaving while a build runs is refused on every path, and allowed once it s
   app.input.type("/build\r");
   await until(() => /T1\s+building/.test(app.screen()), "the task starting");
 
+  app.input.type("\x03\x03");
+  await until(() => app.screen().includes("cancelling the build before leaving"), "the notice");
+  const notices = () => app.screen().split("\n").filter((row) => /cancelling the build before leaving/.test(row)).length;
+  // Still here while the loop winds down — and a second quit on any path
+  // does not start a second wait or say it twice.
   const stillRunning = () =>
     Promise.race([app.finished.then(() => "finished"), new Promise((r) => setTimeout(() => r("running"), 50))]);
-  const refusals = () => app.screen().split("\n").filter((row) => /a build is running — wait for it to stop before leaving/.test(row)).length;
-
-  app.input.type("\x03\x03");
-  await until(() => refusals() === 1, "the refusal on ctrl-c twice");
   expect(await stillRunning()).toBe("running");
-
   app.input.type("/exit\r");
-  await until(() => refusals() === 2, "the refusal on /exit");
-  expect(await stillRunning()).toBe("running");
-
   app.input.type("\x04");
-  await until(() => refusals() === 3, "the refusal on ctrl-d");
   expect(await stillRunning()).toBe("running");
+  expect(notices()).toBe(1);
 
   release();
-  await until(() => /T1\s+merged/.test(app.screen()), "the build finishing");
-  app.input.type("/exit\r");
   expect(await app.finished).toBe(0);
+  const events = readEvents(specs, "gate");
+  expect(events.some((e) => e.t === "build.stopped" && (e as any).reason === "interrupted")).toBe(true);
+  expect(events.filter((e) => e.t === "build.stopped").length).toBe(1);
+});
+
+test("/build cancel interrupts the running build and the log ends with build.stopped interrupted", async () => {
+  const base = await deps(reply("x"));
+  const sink = createSink(specsRoot(base.root));
+  const specs = specsRoot(base.root);
+  twoTaskSpec(specs, "gate");
+
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const seams = buildFakes();
+  const build = async (r: { task: string }) => {
+    await gate;
+    return seams.build(r);
+  };
+
+  const app = await start(reply("x"), { rows: 40, cols: 120 }, { ...base, sink, buildSeams: { ...seams, build } });
+  app.input.type("/spec open gate\r");
+  await until(() => app.screen().includes("spec gate"), "the spec opening");
+  app.input.type("/build\r");
+  await until(() => /T1\s+building/.test(app.screen()), "the first task");
+  app.input.type("/build cancel\r");
+  await until(() => app.screen().includes("cancelling"), "the cancel line");
+  release();
+  await until(() => app.screen().includes("stopped: interrupted"), "the stop");
+  const events = readEvents(specs, "gate");
+  expect(events.at(-1)).toEqual({ t: "build.stopped", reason: "interrupted" });
+  // T2 was never started: the cancel landed before it, and nothing rebuilt it.
+  expect(events.some((e) => e.t === "task.started" && (e as any).id === "T2")).toBe(false);
+  await quit(app);
+});
+
+test("/build on a dead build refuses with the three actions, and /build resume continues it", async () => {
+  const base = await deps(reply("x"));
+  const sink = createSink(specsRoot(base.root));
+  const specs = specsRoot(base.root);
+  // The log a killed process left behind: T1 merged, T2 in flight, no
+  // build.stopped, and no lock file — a lock nobody holds reads as dead.
+  createSpec(specs, "work");
+  const deadAfterT1: SpecEvent[] = [
+    { t: "task.added", id: "T1", title: "First" },
+    { t: "task.added", id: "T2", title: "Second", dependsOn: ["T1"] },
+    { t: "approved", what: "plan" },
+    { t: "build.started" },
+    { t: "task.started", id: "T1", agent: "vesna build" },
+    { t: "task.done", id: "T1", commit: "sha-T1" },
+    { t: "task.started", id: "T2", agent: "vesna build" },
+  ];
+  for (const event of deadAfterT1) appendEvent(specs, "work", event);
+  writeSpecFile(
+    specPaths(specs, "work").plan,
+    "# Plan\n\n### Task 1: First\nDo it.\n\n### Task 2: Second\nDo it.\n",
+  );
+  // Resume refuses a checkout that is not really there, so T2 gets a
+  // directory that the git seam reports as a registered worktree.
+  const path = worktreePath(base.root, "work", "T2");
+  mkdirSync(path, { recursive: true });
+  const branch = branchName("work", "T2");
+  const seams = buildFakes();
+  const git = async (args: string[]) => {
+    if (args[0] === "worktree" && args[1] === "list") {
+      return {
+        code: 0,
+        stdout: `worktree ${path}\nHEAD 0000000000000000000000000000000000000000\nbranch refs/heads/${branch}\n\n`,
+        stderr: "",
+      };
+    }
+    return seams.git(args);
+  };
+
+  const app = await start(reply("x"), { rows: 40, cols: 120 }, { ...base, sink, buildSeams: { ...seams, git } });
+  app.input.type("/spec open work\r");
+  await until(() => app.screen().includes("spec work"), "the spec opening");
+  app.input.type("/build\r");
+  await until(() => app.screen().includes("was interrupted"), "the refusal");
+  app.input.type("/build resume\r");
+  await until(() => app.screen().includes("resuming T2"), "the resume");
+  await until(() => /T2\s+merged/.test(app.screen()), "the resumed task merging");
+  await until(() => app.screen().split("\n").some((row) => /(^|\s)done\s*$/.test(row)), "the build");
+  const events = readEvents(specs, "work");
+  expect(events.some((e) => e.t === "build.recovered" && (e as any).action === "resume")).toBe(true);
+  expect(events.at(-1)).toEqual({ t: "build.done" });
+  await quit(app);
 });
 
 test("/spec new refuses while a build is running, and creates nothing", async () => {

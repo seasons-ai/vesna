@@ -1,4 +1,5 @@
 import { homedir } from "node:os";
+import { join } from "node:path";
 import {
   CHAT_COMMANDS,
   approveOutcome,
@@ -10,7 +11,9 @@ import {
   describeProviders,
   modelSwitchOutcome,
   parseChatInput,
-  quitBlocked,
+  quitCancelling,
+  quitTimedOut,
+  recoverOutcome,
   specSwitchBlocked,
   switchBlocked,
   switchFailed,
@@ -44,7 +47,7 @@ import { resolveTheme, themeNames, type Theme } from "./theme";
 import { copyToClipboard, systemCopyIo } from "./clipboard";
 import { decide, facetOf, MODES, type Mode, type Policy } from "../policy/decide";
 import { runBuild, type BuildLoopRequest } from "../sdd/loop";
-import type { BuildState } from "../sdd/recover";
+import { buildState, pidAlive, readLockPid, type BuildState } from "../sdd/recover";
 import { rememberAllow, suggestPattern } from "../policy/store";
 import {
   listSessions,
@@ -128,6 +131,13 @@ export async function runApp(deps: AppDeps, io: AppIo): Promise<number> {
   // which a build killed in an earlier process leaves true forever — that
   // one must not trap the person here as well.
   let building = false;
+  // The signal for the build in flight: /build cancel and quitting both
+  // abort it, and the loop's own abort path writes the events. Null
+  // whenever `building` is false.
+  let buildController: AbortController | null = null;
+  // Set once quitting has asked the build to stop, so a second quit on any
+  // path neither aborts twice nor starts a second wait.
+  let leaving = false;
 
   const submissions = createQueue<string>();
 
@@ -270,11 +280,16 @@ export async function runApp(deps: AppDeps, io: AppIo): Promise<number> {
    * as a property of `never`. A function boundary resets that to the
    * declared type, the same way `refreshSpec` above reads `spec` safely.
    *
-   * Task 5 computes the real state from the recovery lock; for now this
-   * only distinguishes "already running" from everything else.
+   * The state comes from the log and the lock together, the way `runBuild`
+   * reads it: a log that says building is a live build only while some
+   * process holds the lock. No lock, or a lock whose pid is gone, is a
+   * build a killed process left behind — dead, and a person's to recover.
    */
   function currentBuildState(): BuildState {
-    return spec?.building ? "running" : "idle";
+    if (spec === null || deps.sink?.slug == null) return "idle";
+    const lock = join(specPaths(specs, deps.sink.slug).dir, "build.lock");
+    const pid = readLockPid(lock);
+    return buildState(spec, pid !== null && pidAlive(pid));
   }
 
   function refreshChats(): void {
@@ -505,15 +520,41 @@ export async function runApp(deps: AppDeps, io: AppIo): Promise<number> {
   }
 
   /**
-   * Leaves, unless a build is running: its promise would die with the
-   * process, leaving the spec's log saying "building" with nothing left to
-   * ever say otherwise. False when refused, with the reason in the transcript.
+   * Leaves — after cancelling a build in flight. Its promise would die with
+   * the process otherwise, leaving the spec's log saying "building" with
+   * nothing left to ever say otherwise. So the build is aborted through its
+   * own signal, and the exit waits for the loop to write `build.stopped`.
+   *
+   * False means "not yet": the exit is coming, from `settled` below, once
+   * the build has stopped. A caller must not exit on its own when it sees
+   * false, and must not print a refusal — the transcript already says what
+   * is happening. A second quit while the wait is on is absorbed here.
    */
   function leave(): boolean {
-    if (building) {
-      transcript.notice(quitBlocked(), "warn");
+    if (building && buildController !== null) {
+      if (leaving) return false;
+      leaving = true;
+      transcript.notice(quitCancelling(), "warn");
       transcript.endTurn();
-      return false;
+      draw();
+      buildController.abort();
+      // Wait for the loop to write build.stopped, but not forever: a hung
+      // provider call is cancelled by the same signal, so this is sub-second
+      // in practice; ten seconds is the ceiling before leaving anyway.
+      const deadline = Date.now() + 10_000;
+      const settled = new Promise<void>((resolve) => {
+        const tick = () => {
+          if (!building || Date.now() > deadline) return resolve();
+          setTimeout(tick, 50);
+        };
+        tick();
+      });
+      void settled.then(() => {
+        if (building) transcript.notice(quitTimedOut(), "warn");
+        quitting = true;
+        submissions.close();
+      });
+      return false; // the exit happens when the build has stopped
     }
     quitting = true;
     submissions.close();
@@ -724,12 +765,36 @@ export async function runApp(deps: AppDeps, io: AppIo): Promise<number> {
         }
 
         if (input.name === "build") {
-          const start = buildStart(spec, currentBuildState());
-          if (start.kind === "refused") {
-            transcript.notice(start.message, "warn");
-            transcript.endTurn();
-            draw();
-            continue;
+          // A word after /build is cancel, or one of the three recoveries.
+          // Cancel only aborts: the loop's abort path writes task.failed and
+          // build.stopped, and `onEvent` below prints them as they land.
+          let recovery: BuildLoopRequest["recovery"];
+          if (input.argument.trim() !== "") {
+            const outcome = recoverOutcome(input.argument, spec, currentBuildState());
+            if (outcome.kind === "refused") {
+              transcript.notice(outcome.message, "warn");
+              transcript.endTurn();
+              draw();
+              continue;
+            }
+            if (outcome.kind === "cancel") {
+              buildController?.abort();
+              transcript.notice(outcome.message, "ok");
+              transcript.endTurn();
+              draw();
+              continue;
+            }
+            recovery = { action: outcome.action, ...(outcome.task !== undefined ? { task: outcome.task } : {}) };
+            transcript.notice(outcome.message, "ok");
+          } else {
+            const start = buildStart(spec, currentBuildState());
+            if (start.kind === "refused") {
+              transcript.notice(start.message, "warn");
+              transcript.endTurn();
+              draw();
+              continue;
+            }
+            transcript.notice(start.message, "ok");
           }
           // `buildStart` only returns "start" once the plan is approved, and
           // a plan can only be approved above through /approve, which itself
@@ -741,12 +806,12 @@ export async function runApp(deps: AppDeps, io: AppIo): Promise<number> {
             draw();
             continue;
           }
-          transcript.notice(start.message, "ok");
           transcript.endTurn();
           draw();
           // Runs alongside the conversation. Each event redraws the garden and
           // adds a line, so the person watches it happen rather than waiting.
           building = true;
+          buildController = new AbortController();
           void runBuild({
             root: deps.root,
             specsRoot: specsRoot(deps.root),
@@ -756,10 +821,13 @@ export async function runApp(deps: AppDeps, io: AppIo): Promise<number> {
             policy,
             permit: (type) => permits(deps.config, type),
             ...(deps.notes !== undefined ? { notes: deps.notes } : {}),
+            ...(recovery !== undefined ? { recovery } : {}),
+            signal: buildController.signal,
             ...deps.buildSeams,
             onEvent: (event) => {
               // "building" from `build.started` would just repeat the line
-              // `buildStart` already printed above.
+              // `buildStart` already printed above; `build.recovered` has no
+              // line of its own — the recovery notice above is it.
               if (event.t !== "build.started") {
                 const line = describeEvent(event);
                 if (line !== null) transcript.notice(line, event.t === "build.stopped" ? "warn" : "muted");
@@ -770,6 +838,7 @@ export async function runApp(deps: AppDeps, io: AppIo): Promise<number> {
           })
             .then((outcome) => {
               building = false;
+              buildController = null;
               // A stop already reached the transcript as its `build.stopped`
               // event above; only a build that never started has no event
               // to carry its reason.
@@ -779,6 +848,7 @@ export async function runApp(deps: AppDeps, io: AppIo): Promise<number> {
             })
             .catch((error) => {
               building = false;
+              buildController = null;
               // A build can reject rather than resolve: an ordinary git
               // failure deep inside a worker's own commit throws a plain
               // `Error`, which `runBuild` does not catch into a `Stop`. Left

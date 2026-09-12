@@ -251,19 +251,6 @@ export function specSwitchBlocked(): string {
   return "a build is running — wait for it to stop before switching specs";
 }
 
-/**
- * Why the TUI refuses to leave while a build is running.
- *
- * The build's promise dies with the process, and its last event is whatever
- * it had reached: `building` stays true in the log and the task in flight
- * stays `running`, with nothing left to ever write `build.stopped`. The
- * shell command wires ctrl-c to the build's own signal; the TUI has no such
- * route yet, so it waits.
- */
-export function quitBlocked(): string {
-  return "a build is running — wait for it to stop before leaving";
-}
-
 /** One line per catalog entry: id, where its credential comes from, label. */
 export function describeProviders(
   current: string,
