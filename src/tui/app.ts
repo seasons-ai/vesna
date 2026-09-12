@@ -14,11 +14,13 @@ import { copyToClipboard, systemCopyIo } from "./clipboard";
 import type { Mode } from "../policy/decide";
 import { createTranscript, type Transcript } from "./transcript";
 import { createCore, type CoreDeps } from "../core/core";
-import type { State } from "../core/types";
+import type { Core, State } from "../core/types";
 import { detailOf } from "../loop/trace";
 
 export interface AppDeps extends CoreDeps {
   theme: Theme;
+  /** The agent to drive. A test brings one that fails on purpose; production builds it from the deps. */
+  core?: Core;
   /** Puts text on the clipboard. Injected so a test never touches the real one. */
   copy?: (text: string) => void | Promise<void>;
 }
@@ -49,7 +51,7 @@ export async function runApp(deps: AppDeps, io: AppIo): Promise<number> {
 
   // The agent itself. Everything drawn below comes from what it says: the
   // transcript as it grows, and the state as the core last reported it.
-  const core = createCore(deps);
+  const core = deps.core ?? createCore(deps);
   let state: State = core.snapshot();
 
   let editor = createEditor();
@@ -232,6 +234,18 @@ export async function runApp(deps: AppDeps, io: AppIo): Promise<number> {
     }
   });
 
+  /**
+   * A core call made from a key has no `await` to catch its failure: left
+   * alone, a rejection there ends the process before `finally` restores
+   * the terminal. It is a line on the screen instead.
+   */
+  const reported = (run: Promise<unknown>): void => {
+    run.catch((error: unknown) => {
+      transcript.notice(String(error), "error");
+      draw();
+    });
+  };
+
   async function toggleChats(): Promise<void> {
     showChats = !showChats;
     if (showChats) await core.command("chats", "");
@@ -278,7 +292,8 @@ export async function runApp(deps: AppDeps, io: AppIo): Promise<number> {
       transcript.notice(quitCancelling(), "warn");
       transcript.endTurn();
       draw();
-      void core.close().then(() => {
+      // A close that fails still leaves: the person asked to.
+      void core.close().catch((error: unknown) => transcript.notice(String(error), "error")).then(() => {
         // Drawn before `quitting` is set: `draw` is a no-op after that, and
         // the core's last line — a build that would not stop — is the one
         // a person needs to see on the way out.
@@ -350,7 +365,7 @@ export async function runApp(deps: AppDeps, io: AppIo): Promise<number> {
 
         if (target === undefined) return false;
         if (target.startsWith("session:")) {
-          void resume(target.slice("session:".length));
+          reported(resume(target.slice("session:".length)));
           return false;
         }
         const text = transcript.rawOf(target);
@@ -376,11 +391,11 @@ export async function runApp(deps: AppDeps, io: AppIo): Promise<number> {
       }
 
       case "panel-left":
-        void toggleChats();
+        reported(toggleChats());
         return false;
 
       case "cycle-mode": {
-        void core.command("mode", nextMode(state.mode));
+        reported(core.command("mode", nextMode(state.mode)));
         return false;
       }
 
@@ -486,7 +501,7 @@ export async function runApp(deps: AppDeps, io: AppIo): Promise<number> {
           // core's promise is the build's end. Every event reaches the
           // transcript and the garden as a notification, and `/build cancel`
           // is taken on this same loop while it runs.
-          void core.command(input.name, input.argument, { typed: line });
+          reported(core.command(input.name, input.argument, { typed: line }));
           continue;
         }
 

@@ -4,6 +4,8 @@ import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { runApp, type AppDeps } from "../../src/tui/app";
+import { createCore } from "../../src/core/core";
+import type { Core } from "../../src/core/types";
 import { allowing, buildFakes, deps, done, halfway, provider, providerHandle, reply, toolCaller, until, writing } from "../helpers/chat";
 import type { Terminal } from "../../src/tui/screen";
 import { resolveTheme } from "../../src/tui/theme";
@@ -2604,4 +2606,23 @@ test("y then ctrl-c in one chunk behind the approval question approves, and arms
   expect(app.screen().split("again to leave").length - 1).toBe(0);
   expect(readEvents(specs, slug).filter((e: any) => e.t === "approved" && e.what === "plan")).toHaveLength(1);
   await quit(app);
+});
+
+test("a core method that rejects on a key path is a notice, and the terminal is still restored", async () => {
+  const writes: string[] = [];
+  const terminal: Terminal = { size: () => ({ rows: 20, cols: 100 }), write: (t) => void writes.push(t) };
+  const screen = () => writes.join("").replace(/\x1b\[[0-9;]*m/g, "");
+  const input = keyboard();
+  const base = await deps(reply("x"));
+  const real = createCore(base);
+  // The real core, except that a mode change fails: what a rejection on a
+  // key-driven path — no await, no try — does to the screen.
+  const core: Core = { ...real, command: (name, argument, options) => (name === "mode" ? Promise.reject(new Error("boom")) : real.command(name, argument, options)) };
+  const finished = runApp({ ...base, core }, { terminal, input });
+  await until(() => screen().includes("vesna"), "the first frame");
+  input.type("\x1b[Z");
+  await until(() => screen().includes("Error: boom"), "the failure as a notice");
+  input.type("\x03\x03");
+  expect(await finished).toBe(0);
+  expect(writes.join("")).toContain("\x1b[?1049l");
 });
