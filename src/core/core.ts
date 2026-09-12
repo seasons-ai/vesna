@@ -221,7 +221,9 @@ export function createCore(deps: CoreDeps): Core {
   function send(text: string): Promise<void> {
     if (closing) return Promise.resolve();
     const run = free.then(() => runSend(text));
-    free = run.then((question) => question.answered, () => {});
+    // Neither the turn nor the question after it may leave a rejection on
+    // the chain: the next thing asked would inherit it and never run.
+    free = run.then((question) => question.answered.catch(() => {}), () => {});
     return run.then(() => {});
   }
 
@@ -637,9 +639,16 @@ export function createCore(deps: CoreDeps): Core {
 
     const answer = await asks.ask("approval", question.lines, ["y", "n"], true);
     if (answer === "y") {
-      writeApproval(question.what, digest);
-      refreshSpec();
-      notice(approveOutcome(question.what, spec, true).message, "ok");
+      // A log that cannot be written to — a read-only checkout, a full
+      // disk — is a failure the person reads, not one the chat dies of:
+      // nothing was approved, and the next line is taken as usual.
+      try {
+        writeApproval(question.what, digest);
+        refreshSpec();
+        notice(approveOutcome(question.what, spec, true).message, "ok");
+      } catch (error) {
+        notice(`vesna: ${(error as Error).message}`, "error");
+      }
     } else {
       notice("not yet", "muted");
     }

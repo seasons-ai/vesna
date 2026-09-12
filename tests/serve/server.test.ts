@@ -1,4 +1,5 @@
 import { test, expect } from "bun:test";
+import { chmodSync } from "node:fs";
 import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -15,6 +16,7 @@ import {
 } from "../../src/serve/rpc";
 import type { Core, Notification, State } from "../../src/core/types";
 import { until } from "../helpers/chat";
+import { appendEvent, createSpec, readEvents, specPaths, specsRoot, writeSpecFile } from "../../src/spec/store";
 
 /**
  * The server glues a `Core` to the codec. Layer (a) drives `serve()` in
@@ -554,3 +556,46 @@ test("over a pipe: a client that dies mid-burst leaves the server exiting 0 with
     expect({ run, code, stderr }).toEqual({ run, code: 0, stderr: "" });
   }
 }, 60_000);
+
+/**
+ * A `y` to the approval question whose write to the spec's log fails: the
+ * failure is a notice the person sees, `answer` is still `{}`, the next
+ * request is answered, and the server leaves with 0 — never a stack.
+ */
+test("over a pipe: a y whose approval write fails is a notice, and the server survives it", async () => {
+  const where = await sandbox("baseUrl: http://127.0.0.1:1/v1\n");
+  const specs = specsRoot(where.cwd);
+  createSpec(specs, "gate");
+  appendEvent(specs, "gate", { t: "approved", what: "spec" });
+  appendEvent(specs, "gate", { t: "task.added", id: "T1", title: "a" });
+  writeSpecFile(specPaths(specs, "gate").plan, "### Task 1: a\n");
+  const s = spawnServe(where);
+  s.write({ jsonrpc: "2.0", id: 1, method: "initialize", params: { clientName: "test", clientVersion: "0" } });
+  await waitFor(() => s.response(1) !== undefined, "initialize", s.stderr);
+  s.write({ jsonrpc: "2.0", id: 2, method: "command", params: { name: "spec", argument: "open gate" } });
+  await waitFor(() => s.response(2) !== undefined, "the spec opening", s.stderr);
+  // The turn fails at the service; the question is still asked after it.
+  s.write({ jsonrpc: "2.0", id: 3, method: "send", params: { text: "hi" } });
+  await waitFor(() => s.notifications("ask").length > 0, "the approval question", s.stderr);
+  const ask = s.notifications("ask")[0]!.params;
+  expect(ask.kind).toBe("approval");
+  chmodSync(specPaths(specs, "gate").events, 0o444);
+  try {
+    s.write({ jsonrpc: "2.0", id: 4, method: "answer", params: { id: ask.id, value: "y" } });
+    await waitFor(() => s.response(4) !== undefined, "answer's response", s.stderr);
+    expect(s.response(4).result).toEqual({});
+    await waitFor(() => s.notifications("transcript").some((n) => n.params.kind === "notice" && n.params.level === "error" && /^vesna: /.test(n.params.text)), "the failure notice", s.stderr);
+    s.write({ jsonrpc: "2.0", id: 5, method: "command", params: { name: "mode", argument: "auto" } });
+    await waitFor(() => s.response(5) !== undefined, "the next request's response", s.stderr);
+    expect(s.response(5).result).toEqual({});
+  } finally {
+    chmodSync(specPaths(specs, "gate").events, 0o644);
+  }
+  expect(readEvents(specs, "gate").some((e: any) => e.t === "approved" && e.what === "plan")).toBe(false);
+  s.write({ jsonrpc: "2.0", id: 6, method: "shutdown", params: {} });
+  await waitFor(() => s.response(6) !== undefined, "shutdown's response", s.stderr);
+  s.write({ jsonrpc: "2.0", method: "exit" });
+  expect(await s.child.exited).toBe(0);
+  await s.reading;
+  expect(await s.stderr()).toBe("");
+}, 30_000);

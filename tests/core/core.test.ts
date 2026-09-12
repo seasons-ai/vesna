@@ -1,6 +1,7 @@
 import { test, expect } from "bun:test";
 import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
+import { chmodSync } from "node:fs";
 import { join } from "node:path";
 import { createCore } from "../../src/core/core";
 import type { Notification } from "../../src/core/types";
@@ -816,4 +817,35 @@ test("close with a build that will not stop gives up at the ceiling and says so"
   expect(transcript(seen).at(-1)).toEqual({ kind: "turn-end" });
   // The loop never wrote build.stopped — nothing else may write it either.
   expect(readEvents(specs, slug).some((e: any) => e.t === "build.stopped")).toBe(false);
+});
+
+// Final fix round.
+
+test("a y whose approval write fails is an error notice, not a crash, and the queue lives on", async () => {
+  const { core, seen, specs, slug } = await unapprovedPlan();
+  await core.send("hello");
+  const ask = asks(seen, "approval")[0];
+  // The log cannot be appended to: a read-only checkout, a full disk.
+  chmodSync(specPaths(specs, slug).events, 0o444);
+  try {
+    expect(core.answer(ask.id, "y")).toBe(true);
+    await core.send("second");
+  } finally {
+    chmodSync(specPaths(specs, slug).events, 0o644);
+  }
+  const notices = transcript(seen).filter((e: any) => e.kind === "notice") as any[];
+  const failure = notices.find((e) => e.level === "error");
+  expect(failure).toBeDefined();
+  expect(failure.text.startsWith("vesna: ")).toBe(true);
+  expect(failure.text).toContain("EACCES");
+  expect(readEvents(specs, slug).some((e: any) => e.t === "approved" && e.what === "plan")).toBe(false);
+  expect(notices.some((e) => /^approved: plan/.test(e.text))).toBe(false);
+  // The turn after it ran, and was quoted back: the chain carried no rejection.
+  const entries = transcript(seen) as any[];
+  const failedAt = entries.findIndex((e) => e.kind === "notice" && e.level === "error");
+  const secondAt = entries.findIndex((e) => e.kind === "user" && e.text === "second");
+  expect(secondAt).toBeGreaterThan(failedAt);
+  expect(entries.slice(secondAt).some((e) => e.kind === "delta")).toBe(true);
+  expect(lastState(seen).busy).toBe(false);
+  await core.close();
 });
