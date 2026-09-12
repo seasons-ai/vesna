@@ -51,7 +51,7 @@ gates `done`. The README version follows `package.json` under test. This
 roadmap replaces a stale one. One `vesna build` per spec at a time. CI installs
 the packed tarball and runs it, not just the checkout.
 
-**Finishing a stopped build.** Done as declared: `build.started` names the
+**Finishing a stopped build** (`0.6.0`). Done as declared: `build.started` names the
 sha of the base branch's head, and the reducer's `buildBase` keeps the first
 one after the most recent `build.done` — a resume's own `build.started`
 carries the same `base`, so the whole-branch review always diffs
