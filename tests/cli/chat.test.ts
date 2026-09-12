@@ -163,3 +163,38 @@ test("n refuses, and a line that is not an answer does not decide", async () => 
   expect(printed.join("\n")).toContain("refused");
   expect(ran).toEqual([]);
 });
+
+/**
+ * Idle ctrl-c is the third way out of the plain chat, and it leaves through
+ * the same door as `/exit`: the core is closed before the process goes, so
+ * a line typed into the leaving is not sent, and nothing runs behind it.
+ */
+test("idle ctrl-c closes the core before leaving", async () => {
+  const { state, provider } = counting();
+  const exits: number[] = [];
+  const realExit = process.exit;
+  process.exit = ((code?: number) => void exits.push(code ?? 0)) as typeof process.exit;
+  let asked = 0;
+  const io = {
+    write() {},
+    async question() {
+      asked += 1;
+      // The person presses ctrl-c at the prompt, then types a line anyway.
+      if (asked === 1) {
+        process.emit("SIGINT");
+        // The handler's close is asynchronous; give it its turn.
+        await new Promise((r) => setTimeout(r, 10));
+        return "hello";
+      }
+      return "/exit";
+    },
+    close() {},
+  };
+  try {
+    await chat(provider, [], { io });
+  } finally {
+    process.exit = realExit;
+  }
+  expect(exits).toEqual([0]);
+  expect(state.calls).toBe(0);
+});

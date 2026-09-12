@@ -128,15 +128,19 @@ export async function runChat(deps: ChatDeps): Promise<number> {
     }
   });
 
-  // First ctrl-c cancels the turn in progress; a second one, while idle, leaves.
+  // First ctrl-c cancels the turn in progress; a second one, while idle,
+  // leaves — through the same door as `/exit`: the core closed first, so
+  // a question still open is answered no and nothing runs behind the exit.
   const onSigint = () => {
     if (core.snapshot().busy) {
       core.interrupt();
       return;
     }
     console.log("");
-    io.close();
-    process.exit(EXIT.ok);
+    void core.close().then(() => {
+      io.close();
+      process.exit(EXIT.ok);
+    });
   };
   process.on("SIGINT", onSigint);
 
