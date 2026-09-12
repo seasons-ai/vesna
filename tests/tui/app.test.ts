@@ -2396,12 +2396,22 @@ test("the mode is always on screen — switching invisibly would be worse than n
   await quit(app);
 });
 
+test("the idle hint names the mode and the shift-tab that changes it", async () => {
+  const app = await start(reply("x"), { rows: 20, cols: 100 });
+  await until(() => app.screen().includes("shift-tab: ask → auto"), "the hint");
+  expect(app.screen()).toContain("/help · shift-tab: ask → auto · ctrl-c twice to leave");
+  await quit(app);
+});
+
 test("shift-tab walks the three modes and comes back round", async () => {
   const app = await start(reply("x"), { rows: 20, cols: 100 });
   expect(app.screen()).toContain("ask");
 
   app.input.type("\x1b[Z");
-  await until(() => app.screen().includes("auto"), "auto");
+  // The idle hint always names the next mode, so a bare "auto" is on screen
+  // even before the switch (as part of "ask → auto"); wait for the hint that
+  // only appears once the mode has actually become auto.
+  await until(() => app.screen().includes("shift-tab: auto → plan"), "auto");
   app.input.type("\x1b[Z");
   await until(() => app.screen().includes("plan"), "plan");
   app.input.type("\x1b[Z");

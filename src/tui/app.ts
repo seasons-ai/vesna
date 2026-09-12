@@ -12,7 +12,10 @@ import {
   describeHeader,
   describeModels,
   describeProviders,
+  hintLine,
+  modeRole,
   modelSwitchOutcome,
+  nextMode,
   parseChatInput,
   quitCancelling,
   quitTimedOut,
@@ -205,7 +208,7 @@ export async function runApp(deps: AppDeps, io: AppIo): Promise<number> {
       targets: transcript.copyTargets(Math.max(1, size.cols)),
       empty: emptyState({ theme, glyphs, cols: size.cols, rows: size.rows }),
       editor,
-      hint: hint(theme, busy, confirmExit, glyphs),
+      hint: hint(theme, busy, confirmExit, glyphs, policy.mode),
       status: status(theme, session, busy, tick, glyphs, policy.mode),
       scroll,
       panel: theme.panel,
@@ -732,8 +735,7 @@ export async function runApp(deps: AppDeps, io: AppIo): Promise<number> {
         return;
 
       case "cycle-mode": {
-        const next = MODES[(MODES.indexOf(policy.mode) + 1) % MODES.length]!;
-        setMode(next);
+        setMode(nextMode(policy.mode));
         return;
       }
 
@@ -1405,10 +1407,10 @@ function header(deps: AppDeps, theme: Theme, glyphs: Glyphs): string {
   return `${theme.paint("petal", glyphs.mark)} ${theme.paint("petal", "vesna")} ${dot} ${theme.paint("text", model)} ${dot} ${theme.paint("muted", service)}`;
 }
 
-function hint(theme: Theme, busy: boolean, confirmExit: boolean, glyphs: Glyphs): string {
+function hint(theme: Theme, busy: boolean, confirmExit: boolean, glyphs: Glyphs, mode: Mode): string {
   if (confirmExit) return theme.paint("warn", "ctrl-c again to leave");
   if (busy) return theme.paint("muted", "ctrl-c interrupt");
-  return theme.paint("muted", `/help ${glyphs.bullet} alt-enter newline ${glyphs.bullet} ctrl-c twice to leave`);
+  return theme.paint("muted", hintLine(mode, glyphs.bullet));
 }
 
 function status(
@@ -1422,13 +1424,14 @@ function status(
   const { usage } = session;
   const tokens = usage.inputTokens + usage.outputTokens;
   const cost = `$${session.costUsd.toFixed(4)}`;
-  // The mode decides what the agent may do, so it is never off screen.
-  const body = `${mode} ${glyphs.bullet} ${formatTokens(tokens)} ${glyphs.bullet} ${cost}`;
+  // The mode decides what the agent may do, so it is never off screen, and
+  // painted by its own role so auto is never mistaken for ask.
+  const body = `${theme.paint(modeRole(mode), mode)} ${theme.paint("muted", `${glyphs.bullet} ${formatTokens(tokens)} ${glyphs.bullet} ${cost}`)}`;
   // The body is painted in both branches, not just the idle one: after the
   // spinner's own run closes there is no foreground left in force.
   return busy
-    ? `${theme.paint("petal", spinnerFrame(tick, glyphs.spinner))} ${theme.paint("muted", body)}`
-    : theme.paint("muted", body);
+    ? `${theme.paint("petal", spinnerFrame(tick, glyphs.spinner))} ${body}`
+    : body;
 }
 
 function formatTokens(count: number): string {

@@ -8,6 +8,9 @@ import {
   buildStart,
   cancelElsewhere,
   classifyOutcome,
+  hintLine,
+  modeRole,
+  nextMode,
   parseChatInput,
   quitCancelling,
   quitTimedOut,
@@ -442,4 +445,18 @@ test("nothing is asked once both are approved, or with no spec at all", () => {
   const done = project([{ t: "created", id: "x", title: "X" }, { t: "approved", what: "spec" }, { t: "approved", what: "plan" }])!;
   expect(approvalQuestion(done, { specWritten: true, plan: [{ id: "T1", title: "a", text: "" }] })).toBeNull();
   expect(approvalQuestion(null, { specWritten: true, plan: null })).toBeNull();
+});
+
+test("the idle hint names the mode and the one shift-tab goes to", () => {
+  expect(hintLine("plan", "•")).toBe("/help • shift-tab: plan → ask • ctrl-c twice to leave");
+  expect(hintLine("ask", "•")).toBe("/help • shift-tab: ask → auto • ctrl-c twice to leave");
+  expect(hintLine("auto", "•")).toBe("/help • shift-tab: auto → plan • ctrl-c twice to leave");
+  expect(hintLine("ask", "*")).toBe("/help * shift-tab: ask → auto * ctrl-c twice to leave");
+});
+
+test("the mode is painted so auto stands out", () => {
+  expect(nextMode("auto")).toBe("plan");
+  expect(modeRole("plan")).toBe("muted");
+  expect(modeRole("ask")).toBe("text");
+  expect(modeRole("auto")).toBe("warn");
 });

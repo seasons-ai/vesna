@@ -3,6 +3,7 @@ import type { Approvable, RecoveryAction, Shape, SpecTree } from "../spec/projec
 import type { PlanTask } from "../sdd/brief";
 import { SHAPES } from "../sdd/classify";
 import type { BuildState } from "../sdd/recover";
+import { MODES, type Mode } from "../policy/decide";
 
 export interface ChatCommand {
   name: string;
@@ -46,6 +47,19 @@ export const PLAIN_CHAT_COMMANDS: readonly string[] = [
 /** What to say when a command exists, but not on this surface. */
 export function fullScreenOnly(name: string): string {
   return `/${name} needs the full-screen chat — run \`vesna\` in a terminal, without --plain`;
+}
+
+export function nextMode(mode: Mode): Mode {
+  return MODES[(MODES.indexOf(mode) + 1) % MODES.length]!;
+}
+
+/** The mode decides what the agent may do, so the hint says how to change it. */
+export function hintLine(mode: Mode, bullet: string): string {
+  return `/help ${bullet} shift-tab: ${mode} → ${nextMode(mode)} ${bullet} ctrl-c twice to leave`;
+}
+
+export function modeRole(mode: Mode): "muted" | "text" | "warn" {
+  return mode === "plan" ? "muted" : mode === "ask" ? "text" : "warn";
 }
 
 /** The line under `/help` in the line-based chat, so the rest are not a secret. */
