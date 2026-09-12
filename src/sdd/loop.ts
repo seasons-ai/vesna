@@ -107,6 +107,21 @@ function isAbort(error: Error, signal: AbortSignal | undefined): boolean {
 }
 
 /**
+ * A cancel usually lands inside the worker's model call. The providers hand
+ * the signal to `fetch`, which rejects with an AbortError — and `work()`
+ * catches everything the session throws, so what reaches the loop is a
+ * failed (or refused) result carrying the abort's own text, not the abort.
+ * The signal says whose doing it was: a result that failed after it fired
+ * is the interruption, thrown here so it takes the same path an abort from
+ * anywhere else does.
+ */
+function interruptedResult(result: BuildResult, signal: AbortSignal | undefined): void {
+  if ((result.status === "failed" || result.status === "refused") && signal?.aborted === true) {
+    throw Object.assign(new Error("interrupted"), { name: "AbortError" });
+  }
+}
+
+/**
  * A review call, made safe against a provider that throws instead of
  * answering. An abort — the person interrupted, or the signal already says so
  * — propagates untouched; anything else becomes a no-verdict outcome carrying
@@ -395,6 +410,7 @@ export async function runBuild(request: BuildLoopRequest): Promise<BuildOutcome>
         : await build({ ...common, spec: slug, objective: brief });
       let report = `# ${task.id}\n\n${result.text}\n`;
       writeSpecFile(join(paths.reports, `${task.id}.md`), report);
+      interruptedResult(result, request.signal);
 
       if (result.status === "refused") {
         throw new Stop(`${task.id}: the worker was not allowed to: ${result.refusals.join("; ")}`);
@@ -487,6 +503,7 @@ export async function runBuild(request: BuildLoopRequest): Promise<BuildOutcome>
           renderFindings(open),
         ].join("\n");
         const resumed = await resume({ ...common, worktree: { path: result.worktree, branch: result.branch }, message });
+        interruptedResult(resumed, request.signal);
         // A refusal is neither a fix nor "no changes": the worker was
         // stopped short, and whatever it did before that is partial. The
         // first round stops on it; a fix round must too, or the partial

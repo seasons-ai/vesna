@@ -2072,8 +2072,14 @@ test("/build cancel interrupts the running build and the log ends with build.sto
     release = resolve;
   });
   const seams = buildFakes();
-  const build = async (r: { task: string }) => {
+  // A worker that honours its signal the way the real one does: the
+  // provider's fetch rejects with an AbortError, `work()` catches it, and
+  // what comes back is a failed result carrying the abort's text.
+  const build = async (r: { task: string; signal?: AbortSignal }): Promise<BuildResult> => {
     await gate;
+    if (r.signal?.aborted) {
+      return { ...(await seams.build(r)), status: "failed", error: "The operation was aborted." };
+    }
     return seams.build(r);
   };
 

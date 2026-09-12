@@ -1308,3 +1308,61 @@ test("retry on a dead build must name the in-flight task, not a task still to do
   expect(f.log).toEqual([]);
   expect(readEvents(specs, "work").length).toBe(before);
 });
+
+// A cancel usually lands inside the worker's model call. The real providers
+// hand the signal to `fetch`, which rejects with an AbortError; `work()`
+// catches everything the session throws and returns a failed result with
+// the abort's text. The loop has to read that result as the interruption it
+// was — the signal says so — not as a worker that failed with "aborted".
+function abortsWhenCancelled(controller: AbortController): Provider {
+  return {
+    id: "fake",
+    async complete(request): Promise<CompletionResult> {
+      // The person cancels while the call is in flight; fetch rejects.
+      controller.abort();
+      if (request.signal?.aborted) throw Object.assign(new Error("The operation was aborted."), { name: "AbortError" });
+      throw new Error("unreachable");
+    },
+  };
+}
+
+test("a cancel that lands inside the worker's model call is interrupted, not a failed worker (real git)", async () => {
+  const { root, specs } = await setupReal(oneApproved);
+  const controller = new AbortController();
+  const out = await runBuild({
+    root, specsRoot: specs, slug: "work",
+    provider: abortsWhenCancelled(controller), registry: registry(),
+    policy: { mode: "auto", allow: {}, deny: {} },
+    review: async () => clean,
+    signal: controller.signal,
+  });
+  expect(out).toEqual({ status: "stopped", reason: "interrupted" });
+  const events = readEvents(specs, "work");
+  expect(events.filter((e) => e.t === "task.failed")).toEqual([{ t: "task.failed", id: "T1", reason: "interrupted" }]);
+  expect(events.at(-1)).toEqual({ t: "build.stopped", reason: "interrupted" });
+});
+
+test("a failed result handed back after the signal fired is interrupted, on the first attempt and on a fix round", async () => {
+  const { root, specs } = setup(oneApproved);
+  const controller = new AbortController();
+  const f = fakes();
+  const build = async (r: any): Promise<BuildResult> => {
+    controller.abort();
+    return { ...built(r.task, 1), status: "failed", error: "The operation was aborted." };
+  };
+  const out = await runBuild(base(root, specs, f, { build, signal: controller.signal }));
+  expect(out).toEqual({ status: "stopped", reason: "interrupted" });
+  expect(readEvents(specs, "work").filter((e) => e.t === "task.failed")).toEqual([{ t: "task.failed", id: "T1", reason: "interrupted" }]);
+
+  const { root: r2, specs: s2 } = setup(oneApproved);
+  const c2 = new AbortController();
+  const bad: Finding = { severity: "important", file: "a.ts", text: "wrong" };
+  const f2 = fakes({ reviews: [{ kind: "verdict", verdict: { spec: "met", findings: [bad], summary: "one" }, costUsd: 0 }] });
+  const resume = async (r: any): Promise<BuildResult> => {
+    c2.abort();
+    return { ...built(r.task, 2), status: "failed", error: "The operation was aborted." };
+  };
+  const out2 = await runBuild(base(r2, s2, f2, { resume, signal: c2.signal }));
+  expect(out2).toEqual({ status: "stopped", reason: "interrupted" });
+  expect(readEvents(s2, "work").filter((e) => e.t === "task.failed")).toEqual([{ t: "task.failed", id: "T1", reason: "interrupted" }]);
+});
