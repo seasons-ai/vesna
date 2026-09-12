@@ -15,7 +15,7 @@ backgrounds, `assets/mark-light.svg` for light ones.*
 
 A coding agent with spec-driven development built in.
 
-**Status: v0.3.** Early, tested, and honest about what it does not do yet.
+**Status: v0.4.** Early, tested, and honest about what it does not do yet.
 
 ## Who this is for
 

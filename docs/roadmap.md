@@ -24,7 +24,7 @@ messages that made it; this file records the state.
 - Approvals, read-only tool policy, per-node effect classes, an always-ask
   list for secrets and the event log.
 
-**Recoverable builds** (`0.4` line, on `main`). Done as declared: a process
+**Recoverable builds** (`0.4.0`). Done as declared: a process
 killed mid-build leaves a spec the next `vesna build` refuses until a person
 says `--resume`, `--retry <task>` or `--abort` — the same three words as
 `/build resume|retry|abort` in the chat — and each is recorded as a
