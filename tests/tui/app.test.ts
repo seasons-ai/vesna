@@ -1,5 +1,5 @@
 import { test, expect } from "bun:test";
-import { mkdirSync } from "node:fs";
+import { mkdirSync, writeFileSync } from "node:fs";
 import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -23,6 +23,7 @@ import { createSink } from "../../src/spec/sink";
 import { appendEvent, createSpec, readEvents, specPaths, specsRoot, writeSpecFile } from "../../src/spec/store";
 import type { BuildResult } from "../../src/work/builder";
 import { branchName, worktreePath } from "../../src/work/worktree";
+import { pidAlive } from "../../src/sdd/recover";
 import type { ReviewOutcome } from "../../src/sdd/review";
 import type { MergeReport } from "../../src/work/merge";
 
@@ -1882,12 +1883,11 @@ test("/build while one is already running is refused", async () => {
   await quit(app);
 });
 
-test("quitting mid-build cancels it first, and the log says so", async () => {
-  const base = await deps(reply("x"));
-  const sink = createSink(specsRoot(base.root));
-  const specs = specsRoot(base.root);
-  oneTaskSpec(specs, "gate");
-
+/**
+ * A build seam parked on a gate the test opens, so a build can be held in
+ * flight while the chat is driven around it.
+ */
+function gatedBuild() {
   let release!: () => void;
   const gate = new Promise<void>((resolve) => {
     release = resolve;
@@ -1897,31 +1897,168 @@ test("quitting mid-build cancels it first, and the log says so", async () => {
     await gate;
     return seams.build(r);
   };
+  return { seams: { ...seams, build }, release };
+}
 
-  const app = await start(reply("x"), { rows: 40, cols: 120 }, { ...base, sink, buildSeams: { ...seams, build } });
+/** A provider that counts its calls, for asserting that no turn ran. */
+function counting(text: string) {
+  let calls = 0;
+  const p = provider(async () => {
+    calls += 1;
+    return done(text);
+  });
+  return { provider: p, calls: () => calls };
+}
+
+/**
+ * Input is processed off the async iterator, so a keystroke the app answers
+ * with nothing visible has no frame to wait for. One tick of the timer is
+ * more than the dispatch takes.
+ */
+const settled = () => new Promise((resolve) => setTimeout(resolve, 60));
+
+for (const [name, initiate] of [
+  ["ctrl-c twice", "\x03\x03"],
+  ["/exit", "/exit\r"],
+  ["ctrl-d", "\x04"],
+] as const) {
+  test(`quitting mid-build by ${name} cancels it first, and the log says so`, async () => {
+    const base = await deps(reply("x"));
+    const sink = createSink(specsRoot(base.root));
+    const specs = specsRoot(base.root);
+    oneTaskSpec(specs, "gate");
+    const { seams, release } = gatedBuild();
+
+    const app = await start(reply("x"), { rows: 40, cols: 120 }, { ...base, sink, buildSeams: seams });
+    app.input.type("/spec open gate\r");
+    await until(() => app.screen().includes("spec gate"), "the spec opening");
+    app.input.type("/build\r");
+    await until(() => /T1\s+building/.test(app.screen()), "the task starting");
+
+    app.input.type(initiate);
+    await until(() => app.screen().includes("cancelling the build before leaving"), "the notice");
+    const notices = () =>
+      app.screen().split("\n").filter((row) => /cancelling the build before leaving/.test(row)).length;
+    // Still here while the loop winds down — and a second quit on any path
+    // does not start a second wait or say it twice.
+    const stillRunning = () =>
+      Promise.race([app.finished.then(() => "finished"), new Promise((r) => setTimeout(() => r("running"), 50))]);
+    expect(await stillRunning()).toBe("running");
+    for (const again of ["\x03\x03", "/exit\r", "\x04"]) {
+      app.input.type(again);
+      await settled();
+    }
+    expect(await stillRunning()).toBe("running");
+    expect(notices()).toBe(1);
+
+    release();
+    expect(await app.finished).toBe(0);
+    const events = readEvents(specs, "gate");
+    expect(events.some((e) => e.t === "build.stopped" && (e as any).reason === "interrupted")).toBe(true);
+    expect(events.filter((e) => e.t === "build.stopped").length).toBe(1);
+  });
+}
+
+test("a build that will not stop is left after the ceiling, and the last frame says so", async () => {
+  const base = await deps(reply("x"));
+  const sink = createSink(specsRoot(base.root));
+  const specs = specsRoot(base.root);
+  oneTaskSpec(specs, "gate");
+  const seams = buildFakes();
+  // Never resolves, and ignores its signal: a worker that will not be stopped.
+  const build = () => new Promise<BuildResult>(() => {});
+
+  const app = await start(
+    reply("x"),
+    { rows: 40, cols: 120 },
+    { ...base, sink, buildSeams: { ...seams, build }, quitCeilingMs: 200 },
+  );
   app.input.type("/spec open gate\r");
   await until(() => app.screen().includes("spec gate"), "the spec opening");
   app.input.type("/build\r");
   await until(() => /T1\s+building/.test(app.screen()), "the task starting");
 
-  app.input.type("\x03\x03");
-  await until(() => app.screen().includes("cancelling the build before leaving"), "the notice");
-  const notices = () => app.screen().split("\n").filter((row) => /cancelling the build before leaving/.test(row)).length;
-  // Still here while the loop winds down — and a second quit on any path
-  // does not start a second wait or say it twice.
-  const stillRunning = () =>
-    Promise.race([app.finished.then(() => "finished"), new Promise((r) => setTimeout(() => r("running"), 50))]);
-  expect(await stillRunning()).toBe("running");
+  const began = Date.now();
   app.input.type("/exit\r");
-  app.input.type("\x04");
-  expect(await stillRunning()).toBe("running");
-  expect(notices()).toBe(1);
+  expect(await app.finished).toBe(0);
+  expect(Date.now() - began).toBeGreaterThanOrEqual(200);
+  expect(app.screen()).toContain("cancelling the build before leaving");
+  expect(app.screen()).toContain("did not stop in time");
+  // The loop never wrote build.stopped — nothing else may write it either.
+  expect(readEvents(specs, "gate").some((e) => e.t === "build.stopped")).toBe(false);
+});
 
+test("a message typed during the cancel-before-quit wait is dropped, not answered", async () => {
+  const p = counting("x");
+  const base = await deps(p.provider);
+  const sink = createSink(specsRoot(base.root));
+  const specs = specsRoot(base.root);
+  oneTaskSpec(specs, "gate");
+  const { seams, release } = gatedBuild();
+
+  const app = await start(p.provider, { rows: 40, cols: 120 }, { ...base, sink, buildSeams: seams });
+  app.input.type("/spec open gate\r");
+  await until(() => app.screen().includes("spec gate"), "the spec opening");
+  app.input.type("/build\r");
+  await until(() => /T1\s+building/.test(app.screen()), "the task starting");
+
+  app.input.type("/exit\r");
+  await until(() => app.screen().includes("cancelling the build before leaving"), "the notice");
+  app.input.type("hello there\r");
+  await settled();
   release();
   expect(await app.finished).toBe(0);
-  const events = readEvents(specs, "gate");
-  expect(events.some((e) => e.t === "build.stopped" && (e as any).reason === "interrupted")).toBe(true);
-  expect(events.filter((e) => e.t === "build.stopped").length).toBe(1);
+  expect(p.calls()).toBe(0);
+  const notices = app.screen().split("\n").filter((row) => /cancelling the build before leaving/.test(row)).length;
+  expect(notices).toBe(1);
+  expect(app.screen()).not.toContain("hello there");
+});
+
+test("/build cancel on a build another process holds is refused, and nothing is aborted", async () => {
+  const base = await deps(reply("x"));
+  const sink = createSink(specsRoot(base.root));
+  const specs = specsRoot(base.root);
+  oneTaskSpec(specs, "gate");
+  // A build in flight elsewhere: the log says building, and the lock names
+  // a pid that is alive — this test's own.
+  appendEvent(specs, "gate", { t: "build.started" });
+  appendEvent(specs, "gate", { t: "task.started", id: "T1", agent: "vesna build" });
+  writeFileSync(join(specPaths(specs, "gate").dir, "build.lock"), JSON.stringify({ pid: process.pid }));
+  const before = readEvents(specs, "gate");
+
+  const app = await start(reply("x"), { rows: 40, cols: 120 }, { ...base, sink, buildSeams: buildFakes() });
+  app.input.type("/spec open gate\r");
+  await until(() => app.screen().includes("spec gate"), "the spec opening");
+  app.input.type("/build cancel\r");
+  await until(() => app.screen().includes("that build is running in another process — stop it there"), "the refusal");
+  expect(app.screen()).not.toContain("cancelling");
+  expect(readEvents(specs, "gate")).toEqual(before);
+  await quit(app);
+});
+
+test("/build resume sees a build killed in another process after the spec was opened", async () => {
+  const base = await deps(reply("x"));
+  const sink = createSink(specsRoot(base.root));
+  const specs = specsRoot(base.root);
+  oneTaskSpec(specs, "gate");
+
+  const app = await start(reply("x"), { rows: 40, cols: 120 }, { ...base, sink, buildSeams: buildFakes() });
+  app.input.type("/spec open gate\r");
+  await until(() => app.screen().includes("spec gate"), "the spec opening");
+  // Another process starts a build and is killed: the log moves, the lock
+  // names a pid that is gone, and this chat's copy of the spec is stale.
+  appendEvent(specs, "gate", { t: "build.started" });
+  appendEvent(specs, "gate", { t: "task.started", id: "T1", agent: "vesna build" });
+  let pid = 999_999;
+  while (pidAlive(pid)) pid += 1;
+  writeFileSync(join(specPaths(specs, "gate").dir, "build.lock"), JSON.stringify({ pid }));
+
+  app.input.type("/build resume\r");
+  await until(() => app.screen().includes("resuming T1"), "the resume");
+  // The checkout was never made, so the loop refuses the resume itself;
+  // waiting for that keeps the run from ending mid-launch.
+  await until(() => app.screen().includes('the checkout of "T1" is gone'), "the loop's refusal");
+  await quit(app);
 });
 
 test("/build cancel interrupts the running build and the log ends with build.stopped interrupted", async () => {

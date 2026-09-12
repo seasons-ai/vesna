@@ -93,6 +93,11 @@ export interface AppDeps {
    * functions are `runBuild`'s own defaults.
    */
   buildSeams?: Pick<BuildLoopRequest, "build" | "resume" | "review" | "merge" | "git">;
+  /**
+   * How long quitting waits for a cancelled build to write `build.stopped`
+   * before leaving anyway. Ten seconds unless a test shortens it.
+   */
+  quitCeilingMs?: number;
 }
 
 export interface AppIo {
@@ -541,7 +546,7 @@ export async function runApp(deps: AppDeps, io: AppIo): Promise<number> {
       // Wait for the loop to write build.stopped, but not forever: a hung
       // provider call is cancelled by the same signal, so this is sub-second
       // in practice; ten seconds is the ceiling before leaving anyway.
-      const deadline = Date.now() + 10_000;
+      const deadline = Date.now() + (deps.quitCeilingMs ?? 10_000);
       const settled = new Promise<void>((resolve) => {
         const tick = () => {
           if (!building || Date.now() > deadline) return resolve();
@@ -550,7 +555,13 @@ export async function runApp(deps: AppDeps, io: AppIo): Promise<number> {
         tick();
       });
       void settled.then(() => {
-        if (building) transcript.notice(quitTimedOut(), "warn");
+        // Drawn before `quitting` is set: `draw` is a no-op after that, and
+        // this is the one line a person needs to see on the way out.
+        if (building) {
+          transcript.notice(quitTimedOut(), "warn");
+          transcript.endTurn();
+          draw();
+        }
         quitting = true;
         submissions.close();
       });
@@ -696,6 +707,10 @@ export async function runApp(deps: AppDeps, io: AppIo): Promise<number> {
     while (true) {
       const line = await submissions.take();
       if (line === null) break;
+      // Once quitting has asked the build to stop, the person has said
+      // they are leaving: a message typed into the wait must not start a
+      // turn that runs, tools and all, behind a frame that no longer draws.
+      if (leaving) continue;
       const input = parseChatInput(line);
 
       if (input.kind === "blank") continue;
@@ -765,6 +780,10 @@ export async function runApp(deps: AppDeps, io: AppIo): Promise<number> {
         }
 
         if (input.name === "build") {
+          // The log may have moved under this chat — a build run and killed
+          // in another process — and the lock is read fresh below, so the
+          // tree it is judged against has to be fresh too.
+          refreshSpec();
           // A word after /build is cancel, or one of the three recoveries.
           // Cancel only aborts: the loop's abort path writes task.failed and
           // build.stopped, and `onEvent` below prints them as they land.
@@ -778,8 +797,15 @@ export async function runApp(deps: AppDeps, io: AppIo): Promise<number> {
               continue;
             }
             if (outcome.kind === "cancel") {
-              buildController?.abort();
-              transcript.notice(outcome.message, "ok");
+              // "running" is the lock's word, and the lock may be another
+              // process's — `vesna build` in a second terminal. This chat
+              // has nothing to abort then, and must not say it did.
+              if (buildController === null) {
+                transcript.notice("that build is running in another process — stop it there", "warn");
+              } else {
+                buildController.abort();
+                transcript.notice(outcome.message, "ok");
+              }
               transcript.endTurn();
               draw();
               continue;
