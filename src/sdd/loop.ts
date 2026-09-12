@@ -111,12 +111,18 @@ function isAbort(error: Error, signal: AbortSignal | undefined): boolean {
  * the signal to `fetch`, which rejects with an AbortError — and `work()`
  * catches everything the session throws, so what reaches the loop is a
  * failed (or refused) result carrying the abort's own text, not the abort.
- * The signal says whose doing it was: a result that failed after it fired
- * is the interruption, thrown here so it takes the same path an abort from
- * anywhere else does.
+ * A cancel that lands while the worker is inside a tool call, before it has
+ * changed anything, comes back as "no-changes" instead — still the person's
+ * doing, not a worker that looked and found nothing to do. The signal says
+ * whose doing it was: a result of any of these shapes that arrives after it
+ * fired is the interruption, thrown here so it takes the same path an abort
+ * from anywhere else does.
  */
 function interruptedResult(result: BuildResult, signal: AbortSignal | undefined): void {
-  if ((result.status === "failed" || result.status === "refused") && signal?.aborted === true) {
+  if (
+    (result.status === "failed" || result.status === "refused" || result.status === "no-changes") &&
+    signal?.aborted === true
+  ) {
     throw Object.assign(new Error("interrupted"), { name: "AbortError" });
   }
 }

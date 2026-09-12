@@ -356,6 +356,48 @@ test("/build retry on a dead build names only the in-flight task, and refuses an
   });
 });
 
+// Idle with every task done: nothing is open to retry, but unlike the dead
+// state, resume and abort are not "just refused for now" — they are refused
+// because there is no build to recover at all. The wording has to say that,
+// not point at commands that are refused right next to it.
+const idleAllDone = project([
+  { t: "created", id: "x", title: "X" },
+  { t: "task.added", id: "T1", title: "a" },
+  { t: "approved", what: "spec" }, { t: "approved", what: "plan" },
+  { t: "build.started" }, { t: "task.started", id: "T1" }, { t: "task.done", id: "T1" },
+  { t: "build.done" },
+]);
+
+test("/build retry with nothing open on an idle spec says every task is merged, not the dead build's wording", () => {
+  expect(recoverOutcome("retry T1", idleAllDone, "idle")).toEqual({
+    kind: "refused",
+    message: "nothing to retry — every task is merged",
+  });
+  expect(recoverOutcome("retry", idleAllDone, "idle")).toEqual({
+    kind: "refused",
+    message: "nothing to retry — every task is merged",
+  });
+});
+
+// The plan-approval check `buildStart` makes has to hold for retry too: an
+// idle spec whose plan is not (or no longer) approved cannot be retried into
+// a build the loop will only refuse a moment later.
+const idleUnapprovedPlan = project([
+  { t: "created", id: "x", title: "X" },
+  { t: "task.added", id: "T1", title: "a" }, { t: "task.added", id: "T2", title: "b" },
+  { t: "approved", what: "spec" },
+  { t: "build.started" }, { t: "task.started", id: "T1" }, { t: "task.done", id: "T1" },
+  { t: "task.started", id: "T2" }, { t: "task.failed", id: "T2", reason: "interrupted" },
+  { t: "build.stopped", reason: "interrupted" },
+]);
+
+test("/build retry on an idle spec whose plan is not approved refuses with the same text buildStart uses", () => {
+  expect(recoverOutcome("retry T2", idleUnapprovedPlan, "idle")).toEqual({
+    kind: "refused",
+    message: "the plan is not approved — /approve plan",
+  });
+});
+
 test("a /build of any kind while this process holds a build says it is running, in the same words buildStart uses", () => {
   expect(buildBusy()).toBe("a build is already running");
   expect(buildStart(deadTree, "running")).toEqual({ kind: "refused", message: buildBusy() });

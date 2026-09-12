@@ -218,6 +218,13 @@ export function recoverOutcome(
     return { kind: "recover", action: "resume", ...(running ? { task: running } : {}), message: `resuming ${running ?? "the build"} in its own checkout` };
   }
   if (word === "retry") {
+    // A dead build is always approved — it could not have started otherwise
+    // — but an idle spec's retry runs the loop from scratch, which refuses
+    // an unapproved plan itself; check it here too, with the same wording,
+    // so retry does not promise a start the loop is about to take back.
+    if (state !== "dead" && !tree.approved.plan) {
+      return { kind: "refused", message: "the plan is not approved — /approve plan" };
+    }
     // On a dead build the only task a retry can redo is the one left in
     // flight; on an idle one, any task a stop left unmerged. A dead build
     // with nothing in flight — killed between one task's merge and the next
@@ -227,10 +234,16 @@ export function recoverOutcome(
       ? (running === undefined ? [] : [running])
       : tree.tasks.filter((t) => t.state !== "done").map((t) => t.id);
     if (open.length === 0) {
-      return {
-        kind: "refused",
-        message: "nothing is open to retry — /build resume finishes the build, /build abort abandons it",
-      };
+      // Dead-and-nothing-open is a build that has to be finished or
+      // abandoned — resume and abort say so. Idle-and-nothing-open is a
+      // spec with no build at all: resume and abort are refused right next
+      // to it, so pointing at them here would be a dead end of its own.
+      return state === "dead"
+        ? {
+            kind: "refused",
+            message: "nothing is open to retry — /build resume finishes the build, /build abort abandons it",
+          }
+        : { kind: "refused", message: "nothing to retry — every task is merged" };
     }
     if (arg === undefined) {
       return { kind: "refused", message: `retry which task? ${open.join(", ")} ${open.length === 1 ? "is" : "are"} open` };

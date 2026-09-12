@@ -1366,3 +1366,21 @@ test("a failed result handed back after the signal fired is interrupted, on the 
   expect(out2).toEqual({ status: "stopped", reason: "interrupted" });
   expect(readEvents(s2, "work").filter((e) => e.t === "task.failed")).toEqual([{ t: "task.failed", id: "T1", reason: "interrupted" }]);
 });
+
+// A cancel that lands while the worker is inside a tool call, before it has
+// changed anything: the session loop breaks on the signal and `work()`
+// returns "no-changes" rather than a failed result. That is still the
+// person's cancel, not a worker that looked and decided there was nothing to
+// do — the log should read "interrupted", not "the worker changed nothing".
+test("a cancel that lands mid-tool-call, before anything changed, is interrupted, not a no-op worker", async () => {
+  const { root, specs } = setup(oneApproved);
+  const controller = new AbortController();
+  const build = async (r: any): Promise<BuildResult> => {
+    controller.abort();
+    return { ...built(r.task, 1), status: "no-changes", commit: undefined };
+  };
+  const out = await runBuild(base(root, specs, fakes(), { build, signal: controller.signal }));
+  expect(out).toEqual({ status: "stopped", reason: "interrupted" });
+  expect(readEvents(specs, "work").filter((e) => e.t === "task.failed")).toEqual([{ t: "task.failed", id: "T1", reason: "interrupted" }]);
+  expect(readEvents(specs, "work").at(-1)).toEqual({ t: "build.stopped", reason: "interrupted" });
+});
