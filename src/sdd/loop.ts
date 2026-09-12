@@ -1,4 +1,5 @@
 import { existsSync, unlinkSync, writeFileSync } from "node:fs";
+import { rm } from "node:fs/promises";
 import { join } from "node:path";
 import type { Policy } from "../policy/decide";
 import type { Provider } from "../providers/types";
@@ -8,7 +9,7 @@ import { appendEvent, readEvents, readSpecFile, specPaths, writeSpecFile } from 
 import { discardBuild, resumeTask, runTask, type BuildResult } from "../work/builder";
 import { mergeAll } from "../work/merge";
 import { CycleError, schedule } from "../work/schedule";
-import { branchName, deleteBranch, listWorktrees, removeWorktree, runGit, worktreePath, type GitRunner } from "../work/worktree";
+import { branchName, deleteBranch, isRegistered, removeWorktree, runGit, worktreePath, type GitRunner } from "../work/worktree";
 import { splitPlan, writeBriefs } from "./brief";
 import { buildState, inFlightTask, pidAlive, readLockPid } from "./recover";
 import { reviewTask, type ReviewOutcome } from "./review";
@@ -226,12 +227,8 @@ export async function runBuild(request: BuildLoopRequest): Promise<BuildOutcome>
       // nearest `.git` is the main repository, and its commit would land on
       // the base branch instead of a branch of its own.
       if (inFlight !== undefined) {
-        const path = worktreePath(request.root, slug, inFlight);
-        const branch = branchName(slug, inFlight);
-        const registered = (await listWorktrees(request.root, git)).some(
-          (w) => w.path === path && w.branch === branch,
-        );
-        if (!existsSync(path) || !registered) {
+        const checkout = { path: worktreePath(request.root, slug, inFlight), branch: branchName(slug, inFlight) };
+        if (!(await isRegistered(request.root, checkout, git))) {
           return {
             status: "could-not-start",
             reason: `the checkout of "${inFlight}" is gone — /build retry ${inFlight} or /build abort`,
@@ -240,38 +237,12 @@ export async function runBuild(request: BuildLoopRequest): Promise<BuildOutcome>
       }
     }
 
-    const target = action === "retry" ? request.recovery.task : inFlight;
     if (action === "retry") {
+      const target = request.recovery.task;
       if (target === undefined) return { status: "could-not-start", reason: "retry needs a task — /build retry <task>" };
       const t = tree.tasks.find((x) => x.id === target);
       if (t === undefined) return { status: "could-not-start", reason: `${target} is not a task of this spec` };
       if (t.state === "done") return { status: "could-not-start", reason: `${target} is merged — it cannot be retried` };
-    }
-    emit({ t: "build.recovered", action, ...(target !== undefined ? { task: target } : {}) });
-
-    if (action !== "resume" && target !== undefined) {
-      // A missing checkout here is a state, not an error: retry and abort
-      // both tolerate it. A checkout still on disk is removed the usual way;
-      // one that never made it that far — or whose directory is gone while
-      // git still remembers it — has nothing left to discard but git's own
-      // bookkeeping, which `deleteBranch` already prunes and clears,
-      // tolerating a branch that was never created.
-      const path = worktreePath(request.root, slug, target);
-      const branch = branchName(slug, target);
-      const result = { task: target, worktree: path, branch } as BuildResult;
-      if (request.discard !== undefined) {
-        await request.discard(request.root, result, git);
-      } else if (existsSync(path)) {
-        await discardBuild(request.root, result, git);
-      } else {
-        await deleteBranch(request.root, branch, git);
-      }
-    }
-
-    if (action === "abort") {
-      releaseLock(lockPath);
-      emit({ t: "build.stopped", reason: "abandoned" });
-      return { status: "stopped", reason: "abandoned" };
     }
   }
 
@@ -281,9 +252,40 @@ export async function runBuild(request: BuildLoopRequest): Promise<BuildOutcome>
   }
 
   try {
-    // Inside the try so a failure here — a briefs path that is a file, say —
-    // still releases the lock in `finally` rather than leaving this
-    // process's own pid holding the spec.
+    if (request.recovery !== undefined) {
+      const { action } = request.recovery;
+      const target = action === "retry" ? request.recovery.task : inFlight;
+      emit({ t: "build.recovered", action, ...(target !== undefined ? { task: target } : {}) });
+
+      // Inside the try, alongside the build it recovers, so that a throw
+      // from git here — as unlikely as `isRegistered` now makes it — still
+      // runs the `finally` below and never leaves the lock held.
+      if (action !== "resume" && target !== undefined) {
+        const path = worktreePath(request.root, slug, target);
+        const branch = branchName(slug, target);
+        const checkout = { path, branch };
+        // A checkout that is really there and registered is removed the
+        // usual way. Anything else — never created, removed by hand while
+        // git still remembers it, or a stray directory nobody registered —
+        // is a state, not an error: retry and abort both tolerate it by
+        // clearing whatever is at the path themselves and letting
+        // `deleteBranch` prune and clear git's own bookkeeping.
+        if (request.discard !== undefined) {
+          await request.discard(request.root, { task: target, worktree: path, branch } as BuildResult, git);
+        } else if (await isRegistered(request.root, checkout, git)) {
+          await discardBuild(request.root, { task: target, worktree: path, branch } as BuildResult, git);
+        } else {
+          await rm(path, { recursive: true, force: true });
+          await deleteBranch(request.root, branch, git);
+        }
+      }
+
+      if (action === "abort") {
+        emit({ t: "build.stopped", reason: "abandoned" });
+        return { status: "stopped", reason: "abandoned" };
+      }
+    }
+
     const briefs = writeBriefs(specsRoot, slug, planTasks);
     emit({ t: "build.started" });
 

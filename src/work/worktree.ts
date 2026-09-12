@@ -1,3 +1,4 @@
+import { existsSync } from "node:fs";
 import { mkdir, realpath, rm, writeFile } from "node:fs/promises";
 import { isAbsolute, join, relative, resolve } from "node:path";
 
@@ -124,22 +125,48 @@ export async function hasUncommitted(path: string, git: GitRunner = runGit): Pro
   return result.code === 0 && result.stdout.trim() !== "";
 }
 
+// A path that does not exist cannot be resolved, and that is an answer rather
+// than a failure: nothing lives inside a directory that is not there.
+async function settle(candidate: string): Promise<string> {
+  try {
+    return await realpath(resolve(candidate));
+  } catch {
+    return resolve(candidate);
+  }
+}
+
+/**
+ * Whether `tree` is a live, present worktree git itself currently knows about.
+ *
+ * `git worktree list` reports paths already resolved through symlinks, so a
+ * raw string comparison against `tree.path` falsely says "not registered"
+ * for any repository reached through one — every macOS tmp directory among
+ * them. Both sides are realpath'd the same way before comparing.
+ *
+ * A directory that is gone is never registered, even when git's own
+ * administrative files still name it (git keeps a removed worktree's entry
+ * in `worktree list` until something prunes it): there is nothing there for
+ * a caller to act on as a worktree, and running git inside a path that does
+ * not exist throws rather than answering.
+ */
+export async function isRegistered(repo: string, tree: Worktree, git: GitRunner = runGit): Promise<boolean> {
+  if (!existsSync(tree.path)) return false;
+  const path = await settle(tree.path);
+  const registeredPaths = await Promise.all(
+    (await listWorktrees(repo, git)).map(async (candidate) => ({
+      path: await settle(candidate.path),
+      branch: candidate.branch,
+    })),
+  );
+  return registeredPaths.some((candidate) => candidate.path === path && candidate.branch === tree.branch);
+}
+
 export async function removeWorktree(
   repo: string,
   tree: Worktree,
   options: { discardChanges?: boolean } = {},
   git: GitRunner = runGit,
 ): Promise<void> {
-  // A path that does not exist cannot be resolved, and that is an answer
-  // rather than a failure: nothing lives inside a directory that is not there.
-  const settle = async (candidate: string) => {
-    try {
-      return await realpath(resolve(candidate));
-    } catch {
-      return resolve(candidate);
-    }
-  };
-
   const root = await settle(worktreesRoot(repo));
   const path = await settle(tree.path);
   const inside = relative(root, path);
@@ -147,16 +174,7 @@ export async function removeWorktree(
     throw new WorktreeError(`${tree.path} is not inside Vesna's worktrees directory`);
   }
 
-  const registeredPaths = await Promise.all(
-    (await listWorktrees(repo, git)).map(async (candidate) => ({
-      path: await realpath(resolve(candidate.path)),
-      branch: candidate.branch,
-    })),
-  );
-  const registered = registeredPaths.some(
-    (candidate) => candidate.path === path && candidate.branch === tree.branch,
-  );
-  if (!registered) {
+  if (!(await isRegistered(repo, tree, git))) {
     throw new WorktreeError(`${tree.path} is not a registered Vesna worktree`);
   }
 

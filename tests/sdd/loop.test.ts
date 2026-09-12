@@ -981,3 +981,53 @@ test("abort discards a checkout whose directory was removed by hand while its br
   expect(out).toEqual({ status: "stopped", reason: "abandoned" });
   expect((await runGit(["branch", "--list", "vesna/work/T2"], root)).stdout.trim()).toBe("");
 });
+
+// Round 2 of the review: the registration check that resume and the discard
+// branching both rely on has to realpath, and has to decide on registration
+// rather than mere existence, or it misjudges two more real states.
+
+test("resume proceeds when the in-flight checkout is registered, even through a symlinked tmp directory (real git)", async () => {
+  const { root, specs } = await setupReal(deadAfterT1);
+  const tree = await createWorktree(root, "work", "T2", runGit);
+  // A partial commit, the way a genuine in-flight attempt would leave one.
+  writeFileSync(join(tree.path, "partial.txt"), "wip\n");
+  await runGit(["add", "-A"], tree.path);
+  await runGit(["commit", "-qm", "wip"], tree.path);
+
+  const out = await runBuild({
+    root, specsRoot: specs, slug: "work",
+    provider: writes("b.txt", "one\n"), registry: registry(),
+    policy: { mode: "auto", allow: {}, deny: {} },
+    review: async () => clean,
+    recovery: { action: "resume" },
+  });
+  expect(out).toEqual({ status: "done" });
+});
+
+test("abort tolerates a directory at the worktree path that was never registered as a worktree", async () => {
+  const { root, specs } = setup(deadAfterT1);
+  const f = fakes();
+  const path = worktreePath(root, "work", "T2");
+  mkdirSync(path, { recursive: true });
+  writeFileSync(join(path, "junk.txt"), "leftover\n");
+
+  const out = await runBuild(base(root, specs, f, { recovery: { action: "abort" } }));
+  expect(out).toEqual({ status: "stopped", reason: "abandoned" });
+  expect(f.log).toEqual([]);
+  const events = readEvents(specs, "work");
+  expect(events.filter((e) => e.t === "build.recovered").length).toBe(1);
+  expect(events.filter((e) => e.t === "build.stopped").length).toBe(1);
+  expect(existsSync(path)).toBe(false);
+});
+
+test("retry rebuilds a task whose worktree path holds a directory that was never registered", async () => {
+  const { root, specs } = setup(deadAfterT1);
+  const f = fakes();
+  const path = worktreePath(root, "work", "T2");
+  mkdirSync(path, { recursive: true });
+  writeFileSync(join(path, "junk.txt"), "leftover\n");
+
+  const out = await runBuild(base(root, specs, f, { recovery: { action: "retry", task: "T2" } }));
+  expect(out).toEqual({ status: "done" });
+  expect(f.log).toEqual(["build T2", "review", "merge T2", "review"]);
+});
