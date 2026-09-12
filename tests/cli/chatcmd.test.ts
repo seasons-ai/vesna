@@ -265,3 +265,16 @@ test("quitting mid-build says what it is doing, and what it did if the build did
   expect(quitCancelling()).toBe("cancelling the build before leaving…");
   expect(quitTimedOut()).toBe("the build did not stop in time — leaving anyway; the next /build will treat it as interrupted");
 });
+
+test("/build retry with nothing open — a dead build finished every task before crashing — says so, not 'are open'", () => {
+  const finishedButDead = project([
+    { t: "created", id: "x", title: "X" },
+    { t: "task.added", id: "T1", title: "a" },
+    { t: "approved", what: "spec" }, { t: "approved", what: "plan" },
+    { t: "build.started" }, { t: "task.started", id: "T1" }, { t: "task.done", id: "T1" },
+  ]);
+  expect(recoverOutcome("retry", finishedButDead, "dead")).toEqual({
+    kind: "refused",
+    message: "nothing is open to retry — /build resume finishes the build, /build abort abandons it",
+  });
+});

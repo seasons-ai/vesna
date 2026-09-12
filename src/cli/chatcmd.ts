@@ -195,7 +195,15 @@ export function recoverOutcome(
   }
   if (word === "retry") {
     const open = tree.tasks.filter((t) => t.state !== "done").map((t) => t.id);
-    if (arg === undefined) return { kind: "refused", message: `retry which task? ${open.join(", ")} ${open.length === 1 ? "is" : "are"} open` };
+    if (arg === undefined) {
+      if (open.length === 0) {
+        return {
+          kind: "refused",
+          message: "nothing is open to retry — /build resume finishes the build, /build abort abandons it",
+        };
+      }
+      return { kind: "refused", message: `retry which task? ${open.join(", ")} ${open.length === 1 ? "is" : "are"} open` };
+    }
     const target = tree.tasks.find((t) => t.id === arg);
     if (target === undefined) return { kind: "refused", message: `${arg} is not a task of this spec` };
     if (target.state === "done") return { kind: "refused", message: `${arg} is merged — it cannot be retried` };
