@@ -7,7 +7,8 @@ import type { Notification } from "../../src/core/types";
 import { createSink } from "../../src/spec/sink";
 import { openSession, readSessionSync } from "../../src/store/sessions";
 import { appendEvent, createSpec, digestOf, readEvents, specPaths, specsRoot, writeSpecFile } from "../../src/spec/store";
-import { allowing, deps, halfway, reply, toolCaller, until, writing } from "../helpers/chat";
+import type { BuildResult } from "../../src/work/builder";
+import { allowing, buildFakes, deps, halfway, reply, toolCaller, until, writing } from "../helpers/chat";
 
 /**
  * The same scenarios `tests/tui/app.test.ts` runs on a screen, re-run against
@@ -358,14 +359,20 @@ test("/clear empties the transcript and starts a fresh conversation", async () =
 });
 
 test("a build in flight keeps the approval question quiet, and shows in the state", async () => {
-  const { core, seen } = await unapprovedPlan();
-  core.setBuilding(true);
-  expect(lastState(seen).building).toBe(true);
+  const { base, specs, sink, slug } = await approvedPlan(1);
+  const { seams, release } = gatedBuild();
+  const core = createCore({ ...base, sink, buildSeams: seams });
+  const seen = collect(core);
+  await core.command("spec", `open ${slug}`);
+  const running = core.command("build", "");
+  await until(() => lastState(seen).building === true, "the build starting");
   expect(lastState(seen).buildState).toBe("running");
   await core.send("hi");
   expect(asks(seen, "approval")).toHaveLength(0);
-  core.setBuilding(false);
+  release();
+  await running;
   expect(lastState(seen).building).toBe(false);
+  expect(readEvents(specs, slug).some((e: any) => e.t === "task.done")).toBe(true);
   await core.close();
 });
 
@@ -632,4 +639,165 @@ test("a key-driven mode change is not quoted back; a typed one is, once, as type
   await core.command("resume", "some-id");
   expect(transcript(seen).filter((e: any) => e.kind === "user")).toHaveLength(2);
   await core.close();
+});
+
+// The build and the leaving, the way `tests/tui/app.test.ts` drives them
+// on the screen: the same spec setup, the same seams from the helper.
+
+/** A spec with an approved plan of `tasks` tasks, ready for /build. */
+async function approvedPlan(tasks: number) {
+  const base = await deps(reply("x"));
+  const specs = specsRoot(base.root);
+  const sink = createSink(specs);
+  const slug = "gate";
+  createSpec(specs, slug);
+  const plan = ["# Plan", ""];
+  for (let n = 1; n <= tasks; n += 1) {
+    appendEvent(specs, slug, { t: "task.added", id: `T${n}`, title: `Task ${n}` });
+    plan.push(`### Task ${n}: Task ${n}`, "Do it.", "");
+  }
+  appendEvent(specs, slug, { t: "approved", what: "plan" });
+  writeSpecFile(specPaths(specs, slug).plan, plan.join("\n"));
+  return { base, specs, sink, slug };
+}
+
+/**
+ * A build seam parked on a gate the test opens, so a build can be held in
+ * flight while the core is driven around it. The worker honours its signal
+ * the way the real one does: what comes back after an abort is a failed
+ * result carrying the abort's text.
+ */
+function gatedBuild() {
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const seams = buildFakes();
+  const build = async (r: { task: string; signal?: AbortSignal }): Promise<BuildResult> => {
+    await gate;
+    if (r.signal?.aborted) {
+      return { ...(await seams.build(r)), status: "failed", error: "The operation was aborted." };
+    }
+    return seams.build(r);
+  };
+  return { seams: { ...seams, build }, release };
+}
+
+test("/build runs the loop and the state says building, then not; the events are notices", async () => {
+  const { base, sink, slug } = await approvedPlan(2);
+  const core = createCore({ ...base, sink, buildSeams: buildFakes() });
+  const seen = collect(core);
+  await core.command("spec", `open ${slug}`);
+  await core.command("build", "", { typed: "/build" });
+  // The fakes build in a few milliseconds: the state that said building is
+  // in the history, and the last one says it is over.
+  const states = seen.filter((n) => n.method === "state").map((n) => n.params as any);
+  expect(states.some((state) => state.building === true && state.buildState === "running")).toBe(true);
+  expect(lastState(seen).building).toBe(false);
+  const notices = transcript(seen).filter((e: any) => e.kind === "notice").map((e: any) => e.text);
+  expect(transcript(seen).some((e: any) => e.kind === "user" && e.text === "/build")).toBe(true);
+  expect(notices.some((text: string) => /^building 2 tasks/.test(text))).toBe(true);
+  const at = (needle: string) => notices.findIndex((text: string) => text.startsWith(needle));
+  expect(at("T1  building")).toBeGreaterThanOrEqual(0);
+  expect(at("T1  merged")).toBeGreaterThan(at("T1  building"));
+  expect(at("T2  building")).toBeGreaterThan(at("T1  merged"));
+  expect(at("T2  merged")).toBeGreaterThan(at("T2  building"));
+  expect(lastState(seen).spec.tasks.every((t: any) => t.state === "done")).toBe(true);
+  expect(lastState(seen).buildState).toBe("idle");
+  await core.close();
+});
+
+test("/build with nothing open, and /build while one is running, are refused with the chat's words", async () => {
+  const { base, sink, slug } = await approvedPlan(1);
+  const { seams, release } = gatedBuild();
+  const core = createCore({ ...base, sink, buildSeams: seams });
+  const seen = collect(core);
+  await core.command("build", "");
+  expect(transcript(seen).at(-2)).toMatchObject({ kind: "notice", text: expect.stringContaining("nothing to build"), level: "warn" });
+  expect(transcript(seen).at(-1)).toEqual({ kind: "turn-end" });
+  await core.command("spec", `open ${slug}`);
+  const running = core.command("build", "");
+  await until(() => lastState(seen).building === true, "the build starting");
+  await core.command("build", "");
+  expect(transcript(seen).some((e: any) => e.kind === "notice" && /a build is already running/.test(e.text))).toBe(true);
+  release();
+  await running;
+  await core.close();
+});
+
+test("/build cancel interrupts through the loop and the log ends stopped interrupted", async () => {
+  const { base, specs, sink, slug } = await approvedPlan(2);
+  const { seams, release } = gatedBuild();
+  const core = createCore({ ...base, sink, buildSeams: seams });
+  const seen = collect(core);
+  await core.command("spec", `open ${slug}`);
+  const running = core.command("build", "");
+  await until(() => lastState(seen).building === true, "the build starting");
+  // At once, not behind the build it cancels.
+  await core.command("build", "cancel", { typed: "/build cancel" });
+  expect(transcript(seen).some((e: any) => e.kind === "notice" && /cancelling/.test(e.text))).toBe(true);
+  release();
+  await running;
+  expect(lastState(seen).building).toBe(false);
+  expect(transcript(seen).some((e: any) => e.kind === "notice" && /stopped: interrupted/.test(e.text))).toBe(true);
+  const events = readEvents(specs, slug);
+  expect(events.at(-1)).toEqual({ t: "build.stopped", reason: "interrupted" });
+  expect(events.some((e: any) => e.t === "task.started" && e.id === "T2")).toBe(false);
+  await core.close();
+});
+
+test("/build cancel with no build of this process's own says so, and aborts nothing", async () => {
+  const { base, sink, slug } = await approvedPlan(1);
+  const core = createCore({ ...base, sink, buildSeams: buildFakes() });
+  const seen = collect(core);
+  await core.command("spec", `open ${slug}`);
+  await core.command("build", "cancel");
+  expect(transcript(seen).at(-2)).toEqual({ kind: "notice", text: "nothing to cancel — no build is running", level: "warn" });
+  expect(transcript(seen).at(-1)).toEqual({ kind: "turn-end" });
+  expect(lastState(seen).building).toBe(false);
+  await core.close();
+});
+
+test("close cancels a running build and resolves once it stopped", async () => {
+  const { base, specs, sink, slug } = await approvedPlan(1);
+  const { seams, release } = gatedBuild();
+  const core = createCore({ ...base, sink, buildSeams: seams });
+  const seen = collect(core);
+  await core.command("spec", `open ${slug}`);
+  const running = core.command("build", "");
+  await until(() => lastState(seen).building === true, "the build starting");
+  const closing = core.close();
+  // Still building until the loop is let go: close waits, it does not leave.
+  const settled = await Promise.race([closing.then(() => "closed"), new Promise((r) => setTimeout(() => r("waiting"), 50))]);
+  expect(settled).toBe("waiting");
+  expect(core.snapshot().building).toBe(true);
+  release();
+  await closing;
+  await running;
+  expect(core.snapshot().building).toBe(false);
+  const events = readEvents(specs, slug);
+  expect(events.some((e: any) => e.t === "build.stopped" && e.reason === "interrupted")).toBe(true);
+  expect(events.filter((e: any) => e.t === "build.stopped")).toHaveLength(1);
+  expect(transcript(seen).some((e: any) => e.kind === "notice" && /did not stop in time/.test(e.text))).toBe(false);
+  // A second close joins the first rather than aborting twice.
+  await core.close();
+});
+
+test("close with a build that will not stop gives up at the ceiling and says so", async () => {
+  const { base, specs, sink, slug } = await approvedPlan(1);
+  const seams = buildFakes();
+  // Never resolves, and ignores its signal: a worker that will not be stopped.
+  const build = () => new Promise<BuildResult>(() => {});
+  const core = createCore({ ...base, sink, buildSeams: { ...seams, build }, quitCeilingMs: 200 });
+  const seen = collect(core);
+  await core.command("spec", `open ${slug}`);
+  void core.command("build", "");
+  await until(() => lastState(seen).building === true, "the build starting");
+  const began = Date.now();
+  await core.close();
+  expect(Date.now() - began).toBeGreaterThanOrEqual(200);
+  expect(transcript(seen).at(-2)).toMatchObject({ kind: "notice", text: expect.stringContaining("did not stop in time"), level: "warn" });
+  expect(transcript(seen).at(-1)).toEqual({ kind: "turn-end" });
+  // The loop never wrote build.stopped — nothing else may write it either.
+  expect(readEvents(specs, slug).some((e: any) => e.t === "build.stopped")).toBe(false);
 });

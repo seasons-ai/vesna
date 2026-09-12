@@ -1,34 +1,17 @@
-import {
-  CHAT_COMMANDS,
-  buildBusy,
-  buildFailed,
-  buildStart,
-  cancelElsewhere,
-  hintLine,
-  modeRole,
-  nextMode,
-  parseChatInput,
-  quitCancelling,
-  quitTimedOut,
-  recoverOutcome,
-} from "../cli/chatcmd";
-import { describeEvent } from "../cli/buildcmd";
+import { CHAT_COMMANDS, hintLine, modeRole, nextMode, parseChatInput, quitCancelling } from "../cli/chatcmd";
 import { EXIT } from "../cli/exit";
-import { permits } from "../cli/config";
 import { createEditor, applyKey } from "./editor";
 import { emptyState } from "./emptystate";
 import { resolveGlyphs, type Glyphs } from "./glyphs";
 import { decodeKeys, type Key } from "./keys";
 import { layout, panelWidths, type Frame, type ViewState } from "./layout";
 import { chatsPane, gardenPane } from "./panes";
-import { specsRoot } from "../spec/store";
 import { wrapAnsi } from "./wrap";
 import { spinnerFrame } from "./render";
 import { createScreen, type Terminal } from "./screen";
 import { resolveTheme, themeNames, type Theme } from "./theme";
 import { copyToClipboard, systemCopyIo } from "./clipboard";
 import type { Mode } from "../policy/decide";
-import { runBuild, type BuildLoopRequest } from "../sdd/loop";
 import { createTranscript, type Transcript } from "./transcript";
 import { createCore, type CoreDeps } from "../core/core";
 import type { State } from "../core/types";
@@ -74,16 +57,8 @@ export async function runApp(deps: AppDeps, io: AppIo): Promise<number> {
   let tick = 0;
   let quitting = false;
   let confirmExit = false;
-  // Whether this process has a build in flight. Not the log's `building`,
-  // which a build killed in an earlier process leaves true forever — that
-  // one must not trap the person here as well.
-  let building = false;
-  // The signal for the build in flight: /build cancel and quitting both
-  // abort it, and the loop's own abort path writes the events. Null
-  // whenever `building` is false.
-  let buildController: AbortController | null = null;
-  // Set once quitting has asked the build to stop, so a second quit on any
-  // path neither aborts twice nor starts a second wait.
+  // Set once quitting has asked the core to stop its build, so a second quit
+  // on any path neither says it twice nor starts a second wait.
   let leaving = false;
 
   const submissions = createQueue<string>();
@@ -287,43 +262,27 @@ export async function runApp(deps: AppDeps, io: AppIo): Promise<number> {
   }
 
   /**
-   * Leaves — after cancelling a build in flight. Its promise would die with
-   * the process otherwise, leaving the spec's log saying "building" with
-   * nothing left to ever say otherwise. So the build is aborted through its
-   * own signal, and the exit waits for the loop to write `build.stopped`.
+   * Leaves — after the core has cancelled a build in flight and waited for
+   * it, up to its ceiling. The core says what happened on the way; this
+   * side only says that it is happening.
    *
-   * False means "not yet": the exit is coming, from `settled` below, once
-   * the build has stopped. A caller must not exit on its own when it sees
-   * false, and must not print a refusal — the transcript already says what
-   * is happening. A second quit while the wait is on is absorbed here.
+   * False means "not yet": the exit is coming, once the core's `close()`
+   * resolves. A caller must not exit on its own when it sees false, and
+   * must not print a refusal — the transcript already says what is
+   * happening. A second quit while the wait is on is absorbed here.
    */
   function leave(): boolean {
-    if (building && buildController !== null) {
+    if (core.snapshot().building) {
       if (leaving) return false;
       leaving = true;
       transcript.notice(quitCancelling(), "warn");
       transcript.endTurn();
       draw();
-      buildController.abort();
-      // Wait for the loop to write build.stopped, but not forever: a hung
-      // provider call is cancelled by the same signal, so this is sub-second
-      // in practice; ten seconds is the ceiling before leaving anyway.
-      const deadline = Date.now() + (deps.quitCeilingMs ?? 10_000);
-      const settled = new Promise<void>((resolve) => {
-        const tick = () => {
-          if (!building || Date.now() > deadline) return resolve();
-          setTimeout(tick, 50);
-        };
-        tick();
-      });
-      void settled.then(() => {
+      void core.close().then(() => {
         // Drawn before `quitting` is set: `draw` is a no-op after that, and
-        // this is the one line a person needs to see on the way out.
-        if (building) {
-          transcript.notice(quitTimedOut(), "warn");
-          transcript.endTurn();
-          draw();
-        }
+        // the core's last line — a build that would not stop — is the one
+        // a person needs to see on the way out.
+        draw();
         quitting = true;
         submissions.close();
       });
@@ -493,7 +452,7 @@ export async function runApp(deps: AppDeps, io: AppIo): Promise<number> {
       if (input.kind === "command") {
         // The core quotes back every command it takes. The ones that never
         // reach it — the screen's own — are quoted here, the same way.
-        const own = ["exit", "build", "chats", "help", "cost", "theme", "copy"].includes(input.name);
+        const own = ["exit", "chats", "help", "cost", "theme", "copy"].includes(input.name);
         if (own) {
           transcript.user(line);
           draw();
@@ -518,124 +477,11 @@ export async function runApp(deps: AppDeps, io: AppIo): Promise<number> {
         }
 
         if (input.name === "build") {
-          // The log may have moved under this chat — a build run and killed
-          // in another process — and the lock is read fresh below, so the
-          // tree it is judged against has to be fresh too.
-          core.refreshSpec();
-          const spec = state.spec;
-          // This process's own build comes first, from its own flag: the
-          // loop checks the checkout before it takes the lock, so for a
-          // moment after a launch the log and the lock still read as dead,
-          // and a second `/build resume` typed inside that moment would
-          // launch a second loop — whose losing `.then` would then clear
-          // `building` under the winner. Only cancel gets through.
-          if (building && buildController !== null && input.argument.trim() !== "cancel") {
-            transcript.notice(buildBusy(), "warn");
-            transcript.endTurn();
-            draw();
-            continue;
-          }
-          // A word after /build is cancel, or one of the three recoveries.
-          // Cancel only aborts: the loop's abort path writes task.failed and
-          // build.stopped, and `onEvent` below prints them as they land.
-          let recovery: BuildLoopRequest["recovery"];
-          if (input.argument.trim() !== "") {
-            const outcome = recoverOutcome(input.argument, spec, building ? "running" : core.currentBuildState());
-            if (outcome.kind === "refused") {
-              transcript.notice(outcome.message, "warn");
-              transcript.endTurn();
-              draw();
-              continue;
-            }
-            if (outcome.kind === "cancel") {
-              // "running" is the lock's word, and the lock may be another
-              // process's — `vesna build` in a second terminal. This chat
-              // has nothing to abort then, and must not say it did.
-              if (buildController === null) {
-                transcript.notice(cancelElsewhere(), "warn");
-              } else {
-                buildController.abort();
-                transcript.notice(outcome.message, "ok");
-              }
-              transcript.endTurn();
-              draw();
-              continue;
-            }
-            recovery = { action: outcome.action, ...(outcome.task !== undefined ? { task: outcome.task } : {}) };
-            transcript.notice(outcome.message, "ok");
-          } else {
-            const start = buildStart(spec, core.currentBuildState());
-            if (start.kind === "refused") {
-              transcript.notice(start.message, "warn");
-              transcript.endTurn();
-              draw();
-              continue;
-            }
-            transcript.notice(start.message, "ok");
-          }
-          // `buildStart` only returns "start" once the plan is approved, and
-          // a plan can only be approved above through /approve, which itself
-          // requires a sink — so `deps.sink` is never undefined here. Guarded
-          // anyway, the same way /approve guards its own sink-dependent write,
-          // rather than trusting that invariant with a bare assertion.
-          if (deps.sink === undefined) {
-            transcript.endTurn();
-            draw();
-            continue;
-          }
-          transcript.endTurn();
-          draw();
-          // Runs alongside the conversation. Each event redraws the garden and
-          // adds a line, so the person watches it happen rather than waiting.
-          building = true;
-          core.setBuilding(true);
-          buildController = new AbortController();
-          void runBuild({
-            root: deps.root,
-            specsRoot: specsRoot(deps.root),
-            slug: deps.sink.slug!,
-            provider: deps.provider,
-            registry: deps.registry,
-            policy: core.policy(),
-            permit: (type) => permits(deps.config, type),
-            ...(deps.notes !== undefined ? { notes: deps.notes } : {}),
-            ...(recovery !== undefined ? { recovery } : {}),
-            signal: buildController.signal,
-            ...deps.buildSeams,
-            onEvent: (event) => {
-              // "building" from `build.started` would just repeat the line
-              // `buildStart` already printed above; `build.recovered` has no
-              // line of its own — the recovery notice above is it.
-              if (event.t !== "build.started") {
-                const line = describeEvent(event);
-                if (line !== null) transcript.notice(line, event.t === "build.stopped" ? "warn" : "muted");
-              }
-              core.refreshSpec();
-            },
-          })
-            .then((outcome) => {
-              building = false;
-              core.setBuilding(false);
-              buildController = null;
-              // A stop already reached the transcript as its `build.stopped`
-              // event above; only a build that never started has no event
-              // to carry its reason.
-              if (outcome.status === "could-not-start") transcript.notice(outcome.reason, "warn");
-              core.refreshSpec();
-            })
-            .catch((error) => {
-              building = false;
-              core.setBuilding(false);
-              buildController = null;
-              // A build can reject rather than resolve: an ordinary git
-              // failure deep inside a worker's own commit throws a plain
-              // `Error`, which `runBuild` does not catch into a `Stop`. Left
-              // unhandled that takes the whole TUI down mid-conversation —
-              // so it lands in the transcript instead, the same way every
-              // other fire-and-forget write in this file guards itself.
-              transcript.notice(buildFailed(error as Error), "error");
-              core.refreshSpec();
-            });
+          // Not awaited: the build runs alongside the conversation, and the
+          // core's promise is the build's end. Every event reaches the
+          // transcript and the garden as a notification, and `/build cancel`
+          // is taken on this same loop while it runs.
+          void core.command(input.name, input.argument, { typed: line });
           continue;
         }
 

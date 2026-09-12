@@ -3,16 +3,23 @@ import { join } from "node:path";
 import {
   approvalQuestion,
   approveOutcome,
+  buildBusy,
+  buildFailed,
+  buildStart,
+  cancelElsewhere,
   classifyOutcome,
   describeHeader,
   describeModels,
   describeProviders,
   modelSwitchOutcome,
+  quitTimedOut,
+  recoverOutcome,
   specSwitchBlocked,
   switchBlocked,
   switchFailed,
   switchOutcome,
 } from "../cli/chatcmd";
+import { describeEvent } from "../cli/buildcmd";
 import { permits, type VesnaConfig } from "../cli/config";
 import type { ProviderHandle } from "../cli/context";
 import { asPreset, inspectCredential, problem, remedy, usable } from "../cli/preflight";
@@ -24,7 +31,7 @@ import { findPreset } from "../providers/catalog";
 import { listModels } from "../providers/models";
 import type { AgentMessage, Provider } from "../providers/types";
 import type { Registry } from "../registry/types";
-import type { BuildLoopRequest } from "../sdd/loop";
+import { runBuild, type BuildLoopRequest } from "../sdd/loop";
 import type { SpecSink } from "../spec/sink";
 import {
   listSessions,
@@ -75,8 +82,8 @@ export interface CoreDeps {
    */
   buildSeams?: Pick<BuildLoopRequest, "build" | "resume" | "review" | "merge" | "git" | "verify">;
   /**
-   * How long quitting waits for a cancelled build to write `build.stopped`
-   * before leaving anyway. Ten seconds unless a test shortens it.
+   * How long `close()` waits for a cancelled build to write `build.stopped`
+   * before giving up on it. Ten seconds unless a test shortens it.
    */
   quitCeilingMs?: number;
 }
@@ -97,24 +104,12 @@ const MODE_HELP: Record<Mode, string> = {
 };
 
 /**
- * What the TUI's `/build` handler still reaches for while the build itself
- * lives on the screen's side of the border. Gone once the build moves in.
- */
-export interface BuildSeam {
-  policy(): Policy;
-  refreshSpec(): void;
-  currentBuildState(): BuildState;
-  /** Tells the core a build is in flight here, so it says so and asks nothing meanwhile. */
-  setBuilding(on: boolean): void;
-}
-
-/**
  * The agent minus the screen. It owns what `runApp` owned: the session and
  * its turns, the policy and its questions, the spec and the approval, the
- * chat history and the slash commands. A client subscribes and draws; the
- * words are the chat's.
+ * build and its controller, the chat history and the slash commands. A
+ * client subscribes and draws; the words are the chat's.
  */
-export function createCore(deps: CoreDeps): Core & BuildSeam {
+export function createCore(deps: CoreDeps): Core {
   const listeners = new Set<(n: Notification) => void>();
   const emit = (n: Notification): void => {
     for (const listener of listeners) listener(n);
@@ -143,18 +138,28 @@ export function createCore(deps: CoreDeps): Core & BuildSeam {
   // column never pays for it.
   let chats: SessionSummary[] | null = null;
   // Whether a build is in flight in this process. Not the log's `building`,
-  // which a build killed in an earlier process leaves true forever.
+  // which a build killed in an earlier process leaves true forever — that
+  // one must not trap the person here as well.
   let building = false;
+  // The signal for the build in flight: /build cancel and close() both
+  // abort it, and the loop's own abort path writes the events. Null
+  // whenever `building` is false.
+  let buildController: AbortController | null = null;
   let closing = false;
+  // The one close, so a second call joins the first wait rather than
+  // aborting twice or starting a second one.
+  let closed: Promise<void> | null = null;
   let busy = false;
   let turn: AbortController | null = null;
   // One thing at a time, in the order asked: a message or a command that
   // arrives during a turn, or while a question stands, waits its turn — as
   // the chat's own input loop always made it wait. Never rejects: the chain
-  // must outlive any one failure. Two commands skip the queue because they
+  // must outlive any one failure. Three commands skip the queue because they
   // need no session and must not wait for one: `chats` is a list refresh
-  // for a column opening mid-turn, and `mode` changes the policy the running
-  // turn's next tool call is judged by — shift-tab has always applied at once.
+  // for a column opening mid-turn, `mode` changes the policy the running
+  // turn's next tool call is judged by — shift-tab has always applied at
+  // once — and `build cancel` stops a build that may be what the queue is
+  // waiting on: a cancel that waits behind the build it cancels is a deadlock.
   let free: Promise<void> = Promise.resolve();
   /** The last /history listing, so /resume can take a number rather than an id. */
   let listed: SessionSummary[] = [];
@@ -641,6 +646,160 @@ export function createCore(deps: CoreDeps): Core & BuildSeam {
     entry({ kind: "turn-end" });
   }
 
+  /**
+   * Stops this process's own build, or says why it cannot. "running" is the
+   * lock's word, and the lock may be another process's — `vesna build` in a
+   * second terminal. This chat has nothing to abort then, and must not say
+   * it did. Cancel only aborts: the loop's abort path writes task.failed and
+   * build.stopped, and `onEvent` prints them as they land.
+   */
+  function cancelBuild(): void {
+    const outcome = recoverOutcome("cancel", spec, building ? "running" : currentBuildState());
+    if (outcome.kind !== "cancel") {
+      notice(outcome.message, "warn");
+    } else if (buildController === null) {
+      notice(cancelElsewhere(), "warn");
+    } else {
+      buildController.abort();
+      notice(outcome.message, "ok");
+    }
+    entry({ kind: "turn-end" });
+  }
+
+  /**
+   * `/build` and its recoveries. Synchronous up to the launch, so the queue
+   * is held only that long: the build runs alongside the conversation, each
+   * event a notice and a fresh tree, and the promise handed back is the
+   * build's end — resolved at once when nothing was started.
+   */
+  function buildCommand(argument: string): Promise<void> {
+    // The log may have moved under this chat — a build run and killed in
+    // another process — and the lock is read fresh below, so the tree it is
+    // judged against has to be fresh too.
+    refreshSpec();
+    // This process's own build comes first, from its own flag: the loop
+    // checks the checkout before it takes the lock, so for a moment after a
+    // launch the log and the lock still read as dead, and a second `/build
+    // resume` inside that moment would launch a second loop — whose losing
+    // `.then` would then clear `building` under the winner.
+    if (building && buildController !== null) {
+      notice(buildBusy(), "warn");
+      entry({ kind: "turn-end" });
+      return Promise.resolve();
+    }
+    // A word after /build is one of the three recoveries. Cancel is taken
+    // off the queue by `command` before this runs; the union still names
+    // it, and it is answered the same way should that ever change.
+    let recovery: BuildLoopRequest["recovery"];
+    if (argument.trim() !== "") {
+      const outcome = recoverOutcome(argument, spec, currentBuildState());
+      if (outcome.kind === "refused") {
+        notice(outcome.message, "warn");
+        entry({ kind: "turn-end" });
+        return Promise.resolve();
+      }
+      if (outcome.kind === "cancel") {
+        cancelBuild();
+        return Promise.resolve();
+      }
+      recovery = { action: outcome.action, ...(outcome.task !== undefined ? { task: outcome.task } : {}) };
+      notice(outcome.message, "ok");
+    } else {
+      const start = buildStart(spec, currentBuildState());
+      if (start.kind === "refused") {
+        notice(start.message, "warn");
+        entry({ kind: "turn-end" });
+        return Promise.resolve();
+      }
+      notice(start.message, "ok");
+    }
+    // `buildStart` only returns "start" once the plan is approved, and a
+    // plan can only be approved through /approve, which itself requires a
+    // sink — so `deps.sink` is never undefined here. Guarded anyway, the
+    // same way /approve guards its own sink-dependent write, rather than
+    // trusting that invariant with a bare assertion.
+    if (deps.sink === undefined) {
+      entry({ kind: "turn-end" });
+      return Promise.resolve();
+    }
+    entry({ kind: "turn-end" });
+
+    building = true;
+    const controller = new AbortController();
+    buildController = controller;
+    changed();
+    const ended = (): void => {
+      building = false;
+      buildController = null;
+      refreshSpec();
+    };
+    return runBuild({
+      root: deps.root,
+      specsRoot: specs,
+      slug: deps.sink.slug!,
+      provider: deps.provider,
+      registry: deps.registry,
+      policy,
+      permit: (type) => permits(deps.config, type),
+      ...(deps.notes !== undefined ? { notes: deps.notes } : {}),
+      ...(recovery !== undefined ? { recovery } : {}),
+      signal: controller.signal,
+      ...deps.buildSeams,
+      onEvent: (event) => {
+        // "building" from `build.started` would just repeat the line
+        // `buildStart` already printed above; `build.recovered` has no line
+        // of its own — the recovery notice above is it.
+        if (event.t !== "build.started") {
+          const line = describeEvent(event);
+          if (line !== null) notice(line, event.t === "build.stopped" ? "warn" : "muted");
+        }
+        refreshSpec();
+      },
+    })
+      .then((outcome) => {
+        // A stop already reached the transcript as its `build.stopped`
+        // event above; only a build that never started has no event to
+        // carry its reason.
+        if (outcome.status === "could-not-start") notice(outcome.reason, "warn");
+        ended();
+      })
+      .catch((error) => {
+        // A build can reject rather than resolve: an ordinary git failure
+        // deep inside a worker's own commit throws a plain `Error`, which
+        // `runBuild` does not catch into a `Stop`. Left unhandled that takes
+        // the whole process down mid-conversation — so it lands in the
+        // transcript instead, the same way every other fire-and-forget
+        // write in this file guards itself.
+        notice(buildFailed(error as Error), "error");
+        ended();
+      });
+  }
+
+  /**
+   * Cancels a build in flight and waits for the loop to write build.stopped,
+   * but not forever: a hung provider call is cancelled by the same signal,
+   * so this is sub-second in practice; ten seconds is the ceiling before
+   * giving up. The build's promise would die with the process otherwise,
+   * leaving the spec's log saying "building" with nothing left to ever say
+   * otherwise.
+   */
+  async function stopBuild(): Promise<void> {
+    if (!building || buildController === null) return;
+    buildController.abort();
+    const deadline = Date.now() + (deps.quitCeilingMs ?? 10_000);
+    await new Promise<void>((resolve) => {
+      const tick = (): void => {
+        if (!building || Date.now() > deadline) return resolve();
+        setTimeout(tick, 50);
+      };
+      tick();
+    });
+    if (building) {
+      notice(quitTimedOut(), "warn");
+      entry({ kind: "turn-end" });
+    }
+  }
+
   function specCommand(argument: string): void {
     const [verb, ...rest] = argument.trim().split(/\s+/);
     const name = rest.join(" ");
@@ -796,9 +955,27 @@ export function createCore(deps: CoreDeps): Core & BuildSeam {
       entry({ kind: "turn-end" });
       return Promise.resolve();
     }
+    if (name === "build" && argument.trim().split(/\s+/)[0] === "cancel") {
+      quote(options.typed);
+      cancelBuild();
+      return Promise.resolve();
+    }
+    if (name === "build") {
+      // The queue is held through the launch only — the build runs alongside
+      // the conversation — while the promise handed back spans the build.
+      const launched = free.then(() => ({ finished: startBuild(argument, options.typed) }));
+      free = launched.then(() => {}, () => {});
+      return launched.then((launch) => launch.finished);
+    }
     const run = free.then(() => runCommand(name, argument, options.typed));
     free = run.then(() => {}, () => {});
     return run;
+  }
+
+  function startBuild(argument: string, typed: string | undefined): Promise<void> {
+    if (closing) return Promise.resolve();
+    quote(typed);
+    return buildCommand(argument);
   }
 
   async function runCommand(name: string, argument: string, typed: string | undefined): Promise<void> {
@@ -922,21 +1099,16 @@ export function createCore(deps: CoreDeps): Core & BuildSeam {
       turn?.abort();
     },
     snapshot,
-    // The build seam, until the build moves in.
-    policy: (): Policy => policy,
-    refreshSpec,
-    currentBuildState,
-    setBuilding(on: boolean): void {
-      building = on;
-      changed();
-    },
     // As leaving the chat: every open question is answered no, a turn in
-    // flight is cut short, and nothing asked afterwards does anything. The
-    // build's cancellation joins this once the build moves in.
-    async close(): Promise<void> {
+    // flight is cut short, nothing asked afterwards does anything, and a
+    // build in flight is cancelled and waited for — up to the ceiling.
+    close(): Promise<void> {
+      if (closed !== null) return closed;
       closing = true;
       for (const ask of asks.open()) asks.answer(ask.id, "n");
       turn?.abort();
+      closed = stopBuild();
+      return closed;
     },
   };
 }
