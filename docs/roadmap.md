@@ -33,7 +33,7 @@ says `--resume`, `--retry <task>` or `--abort` — the same three words as
 a merged task's worktree and branch are removed, an aborted or retried one's
 discarded, a stopped one's kept for a person to read.
 
-**Verification in the plan** (on `main`, after `0.4.0`). Done as declared: a
+**Verification in the plan** (`0.5.0`). Done as declared: a
 task in `plan.md` declares its check on the line under its heading
 (`verify: bun test tests/x.test.ts`); Vesna runs it independently of the
 worker — in the task's worktree after the review passes, where a failure is a
