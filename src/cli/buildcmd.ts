@@ -1,4 +1,4 @@
-import type { SpecEvent } from "../spec/project";
+import type { RecoveryAction, SpecEvent } from "../spec/project";
 import { specsRoot } from "../spec/store";
 import { runBuild, type BuildLoopRequest, type BuildOutcome, renderFindings } from "../sdd/loop";
 import type { Policy } from "../policy/decide";
@@ -49,6 +49,25 @@ export function describeEvent(event: SpecEvent): string | null {
   }
 }
 
+/**
+ * The shell's spelling of the chat's `/build resume|retry <task>|abort` —
+ * one flag at a time, mirroring the recovery the loop itself accepts.
+ */
+export function recoveryFromFlags(
+  flags: Record<string, string>,
+): { recovery?: { action: RecoveryAction; task?: string }; error?: string } {
+  const set = (["resume", "retry", "abort"] as const).filter((f) => flags[f] !== undefined);
+  if (set.length === 0) return {};
+  if (set.length > 1) return { error: "one of --resume, --retry <task>, --abort — not two" };
+  const action = set[0]!;
+  if (action === "retry") {
+    const task = flags.retry;
+    if (task === undefined || task === "true") return { error: "--retry needs a task: --retry T2" };
+    return { recovery: { action, task } };
+  }
+  return { recovery: { action } };
+}
+
 export async function buildCommand(
   slug: string | undefined,
   root: string,
@@ -63,9 +82,16 @@ export async function buildCommand(
     /** Seams for tests, the same ones `runBuild` takes. */
     seams?: Pick<BuildLoopRequest, "build" | "resume" | "review" | "merge" | "git">;
   },
+  flags: Record<string, string> = {},
 ): Promise<number> {
   if (slug === undefined || slug === "") {
     console.error("vesna: build needs a spec — vesna build <slug>");
+    return EXIT.error;
+  }
+
+  const parsed = recoveryFromFlags(flags);
+  if (parsed.error !== undefined) {
+    console.error(`vesna: ${parsed.error}`);
     return EXIT.error;
   }
 
@@ -89,6 +115,7 @@ export async function buildCommand(
       ...(deps.permit ? { permit: deps.permit } : {}),
       ...(deps.notes !== undefined ? { notes: deps.notes } : {}),
       ...(deps.model ? { model: deps.model } : {}),
+      ...(parsed.recovery ? { recovery: parsed.recovery } : {}),
       signal: controller.signal,
       ...deps.seams,
       onEvent: (event) => {
@@ -99,6 +126,11 @@ export async function buildCommand(
   } finally {
     process.off("SIGINT", onSigint);
   }
-  if (outcome.status !== "done") console.error(`vesna: ${outcome.reason}`);
+  if (outcome.status !== "done") {
+    console.error(`vesna: ${outcome.reason}`);
+    if (outcome.status === "could-not-start" && outcome.reason.includes("was interrupted")) {
+      console.error(`  from the shell: vesna build ${slug} --resume | --retry <task> | --abort`);
+    }
+  }
   return exitFor(outcome);
 }

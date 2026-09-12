@@ -28,6 +28,7 @@ const USAGE = [
   "  vesna auth                              show which model credentials will be used",
   "  vesna auth login                        sign in (browser, headless, or API key)",
   "  vesna build <slug>                      run an approved plan: build, review, merge",
+  "  vesna build <slug> [--resume | --retry <task> | --abort]",
 ].join("\n");
 
 /**
@@ -256,15 +257,20 @@ export async function main(argv: string[]): Promise<number> {
   }
 
   if (command === "build") {
-    return await buildCommand(target, root, {
-      provider,
-      registry,
-      policy,
-      theme,
-      permit: (type) => permits(config, type),
-      notes,
-      model: flags.model ?? config.model,
-    });
+    return await buildCommand(
+      target,
+      root,
+      {
+        provider,
+        registry,
+        policy,
+        theme,
+        permit: (type) => permits(config, type),
+        notes,
+        model: flags.model ?? config.model,
+      },
+      flags,
+    );
   }
 
   console.error(`vesna: unknown command "${command}"`);

@@ -137,3 +137,81 @@ test("a finished spec is refused from the shell too", async () => {
   }
   expect(errors).toEqual(["vesna: nothing to build — every task is merged"]);
 });
+
+import { recoveryFromFlags } from "../../src/cli/buildcmd";
+import type { SpecEvent } from "../../src/spec/project";
+import { branchName, worktreePath } from "../../src/work/worktree";
+
+test("flags become a recovery, and only one at a time", () => {
+  expect(recoveryFromFlags({})).toEqual({});
+  expect(recoveryFromFlags({ resume: "true" })).toEqual({ recovery: { action: "resume" } });
+  expect(recoveryFromFlags({ retry: "T2" })).toEqual({ recovery: { action: "retry", task: "T2" } });
+  expect(recoveryFromFlags({ abort: "true" })).toEqual({ recovery: { action: "abort" } });
+  expect(recoveryFromFlags({ retry: "true" })).toEqual({ error: "--retry needs a task: --retry T2" });
+  expect(recoveryFromFlags({ resume: "true", abort: "true" })).toEqual({
+    error: "one of --resume, --retry <task>, --abort — not two",
+  });
+});
+
+test("a plain vesna build on a dead build exits 2 naming the flags, and --resume runs it", async () => {
+  const root = mkdtempSync(join(tmpdir(), "vesna-buildcmd-dead-"));
+  const specs = join(root, ".vesna", "specs");
+  mkdirSync(specs, { recursive: true });
+  createSpec(specs, "work");
+  const deadAfterT1: SpecEvent[] = [
+    { t: "task.added", id: "T1", title: "First" },
+    { t: "task.added", id: "T2", title: "Second", dependsOn: ["T1"] },
+    { t: "approved", what: "plan" },
+    { t: "build.started" },
+    { t: "task.started", id: "T1", agent: "vesna build" },
+    { t: "task.done", id: "T1", commit: "sha-T1" },
+    { t: "task.started", id: "T2", agent: "vesna build" },
+  ];
+  for (const event of deadAfterT1) appendEvent(specs, "work", event);
+  writeSpecFile(
+    specPaths(specs, "work").plan,
+    "# Plan\n\n### Task 1: First\nDo it.\n\n### Task 2: Second\nDo it.\n",
+  );
+  // Resume refuses a checkout that is not really there, so T2 gets a
+  // directory the git seam reports as a registered worktree — mirrors
+  // tests/tui/app.test.ts's dead-build resume test.
+  const path = worktreePath(root, "work", "T2");
+  mkdirSync(path, { recursive: true });
+  const branch = branchName("work", "T2");
+  const resumeSeams = {
+    ...seams,
+    resume: async (r: { task: string }) => built(r.task),
+    git: async (args: string[]) => {
+      if (args[0] === "worktree" && args[1] === "list") {
+        return {
+          code: 0,
+          stdout: `worktree ${path}\nHEAD 0000000000000000000000000000000000000000\nbranch refs/heads/${branch}\n\n`,
+          stderr: "",
+        };
+      }
+      return seams.git(args);
+    },
+  };
+  const deps = {
+    provider: {} as any,
+    registry: createRegistry(),
+    policy: { mode: "auto" as const, allow: {}, deny: {} },
+    theme: resolveTheme("mono", { depth: 0 }),
+  };
+  const log = console.log;
+  const error = console.error;
+  const stderr: string[] = [];
+  console.log = () => {};
+  console.error = (line: string) => { stderr.push(line); };
+  try {
+    const plain = await buildCommand("work", root, { ...deps, seams: resumeSeams }, {});
+    expect(plain).toBe(2);
+    expect(stderr.join("\n")).toContain("/build resume");
+    expect(stderr.join("\n")).toContain("vesna build work --resume | --retry <task> | --abort");
+    const resumed = await buildCommand("work", root, { ...deps, seams: resumeSeams }, { resume: "true" });
+    expect(resumed).toBe(0);
+  } finally {
+    console.log = log;
+    console.error = error;
+  }
+});
