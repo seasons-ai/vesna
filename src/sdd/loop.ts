@@ -179,10 +179,28 @@ export async function runBuild(request: BuildLoopRequest): Promise<BuildOutcome>
   }
   if (planTasks.length === 0) return { status: "could-not-start", reason: "plan.md names no tasks" };
   if (tree.tasks.length === 0) return { status: "could-not-start", reason: "the log names no tasks" };
-  // A finished spec has no work left: running it again would build nothing
-  // and then pay for a review of an empty diff, overwriting the real one.
-  if (tree.tasks.every((task) => task.state === "done")) {
-    return { status: "could-not-start", reason: "nothing to build — every task is merged" };
+
+  const lockPath = join(paths.dir, "build.lock");
+  const holder = readLockPid(lockPath);
+  const state = buildState(tree, holder !== null && pidAlive(holder));
+  const inFlight = inFlightTask(tree);
+
+  if (request.recovery === undefined) {
+    // Judged before "every task is merged": a process killed during the
+    // whole-branch review — the longest step — leaves every task done and
+    // the build still open. That is a dead build a person recovers, not a
+    // finished spec; refusing it as finished would leave it dead forever.
+    if (state === "dead") {
+      return {
+        status: "could-not-start",
+        reason: `a build of "${slug}" was interrupted — /build resume, /build retry <task>, or /build abort`,
+      };
+    }
+    // A finished spec has no work left: running it again would build nothing
+    // and then pay for a review of an empty diff, overwriting the real one.
+    if (tree.tasks.every((task) => task.state === "done")) {
+      return { status: "could-not-start", reason: "nothing to build — every task is merged" };
+    }
   }
 
   // A task the log knows and the plan does not — or the reverse — is not a
@@ -198,18 +216,7 @@ export async function runBuild(request: BuildLoopRequest): Promise<BuildOutcome>
     if (!logIds.has(id)) return { status: "could-not-start", reason: `${id} is in plan.md but not in the log` };
   }
 
-  const lockPath = join(paths.dir, "build.lock");
-  const holder = readLockPid(lockPath);
-  const state = buildState(tree, holder !== null && pidAlive(holder));
-  const inFlight = inFlightTask(tree);
-
   if (request.recovery === undefined) {
-    if (state === "dead") {
-      return {
-        status: "could-not-start",
-        reason: `a build of "${slug}" was interrupted — /build resume, /build retry <task>, or /build abort`,
-      };
-    }
     // A stop — any reason — keeps the in-flight task's checkout, because
     // it may be the only record of what the worker did. Building that task
     // again would collide on its branch, and the collision's own message
@@ -263,6 +270,16 @@ export async function runBuild(request: BuildLoopRequest): Promise<BuildOutcome>
     if (action === "retry") {
       const target = request.recovery.task;
       if (target === undefined) return { status: "could-not-start", reason: "retry needs a task — /build retry <task>" };
+      // A dead build with no task in flight — killed between one task's
+      // merge and the next start, or during the whole-branch review — has
+      // nothing a retry could redo: resume builds what is left, abort
+      // abandons it.
+      if (state === "dead" && inFlight === undefined) {
+        return {
+          status: "could-not-start",
+          reason: "nothing is open to retry — /build resume finishes the build, /build abort abandons it",
+        };
+      }
       const t = tree.tasks.find((x) => x.id === target);
       if (t === undefined) return { status: "could-not-start", reason: `${target} is not a task of this spec` };
       if (t.state === "done") return { status: "could-not-start", reason: `${target} is merged — it cannot be retried` };

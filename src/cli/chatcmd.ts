@@ -199,13 +199,17 @@ export function recoverOutcome(
   }
   if (word === "retry") {
     const open = tree.tasks.filter((t) => t.state !== "done").map((t) => t.id);
+    // A dead build with nothing in flight — killed between one task's merge
+    // and the next start, or during the whole-branch review — has nothing a
+    // retry could redo, whatever task is named.
+    const nothingOpen = state === "dead" ? running === undefined : open.length === 0;
+    if (nothingOpen) {
+      return {
+        kind: "refused",
+        message: "nothing is open to retry — /build resume finishes the build, /build abort abandons it",
+      };
+    }
     if (arg === undefined) {
-      if (open.length === 0) {
-        return {
-          kind: "refused",
-          message: "nothing is open to retry — /build resume finishes the build, /build abort abandons it",
-        };
-      }
       return { kind: "refused", message: `retry which task? ${open.join(", ")} ${open.length === 1 ? "is" : "are"} open` };
     }
     const target = tree.tasks.find((t) => t.id === arg);

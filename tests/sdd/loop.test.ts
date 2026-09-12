@@ -1142,3 +1142,82 @@ test("cancel mid-task keeps its checkout; a plain start then names retry; retry 
   expect(events.at(-1)).toEqual({ t: "build.done" });
   expect(events.some((e) => e.t === "build.recovered" && (e as any).action === "retry" && (e as any).task === "T1")).toBe(true);
 });
+
+// Killed during the whole-branch review — the longest step — a build has
+// every task merged and `build.started` still open. It is a dead build like
+// any other: a plain start refuses naming the three, resume finishes it
+// (no task runs; the review does), abort abandons it, retry has nothing to
+// redo. "nothing to build — every task is merged" is for a finished spec,
+// not for one whose build never got to say it finished.
+const deadInBranchReview: SpecEvent[] = [
+  ...approvedWithTasks,
+  { t: "build.started" },
+  { t: "task.started", id: "T1", agent: "vesna build" },
+  { t: "task.done", id: "T1", commit: "sha-T1" },
+  { t: "task.started", id: "T2", agent: "vesna build" },
+  { t: "task.done", id: "T2", commit: "sha-T2" },
+];
+
+test("a build killed during the whole-branch review is a dead build, not a finished spec", async () => {
+  const { root, specs } = setup(deadInBranchReview);
+  const f = fakes();
+  const out = await runBuild(base(root, specs, f));
+  expect(out).toEqual({
+    status: "could-not-start",
+    reason: 'a build of "work" was interrupted — /build resume, /build retry <task>, or /build abort',
+  });
+  expect(f.log).toEqual([]);
+});
+
+test("resume of a build killed during the whole-branch review runs no task, reviews the branch, and finishes", async () => {
+  const { root, specs } = setup(deadInBranchReview);
+  const f = fakes();
+  const out = await runBuild(base(root, specs, f, { recovery: { action: "resume" } }));
+  expect(out).toEqual({ status: "done" });
+  expect(f.log).toEqual(["review"]);
+  const events = readEvents(specs, "work");
+  const at = events.findIndex((e) => e.t === "build.recovered");
+  expect(events[at]).toEqual({ t: "build.recovered", action: "resume" });
+  expect(events[at + 1]).toEqual({ t: "build.started" });
+  expect(events.at(-1)).toEqual({ t: "build.done" });
+  expect(project(events)!.building).toBe(false);
+});
+
+test("a whole-branch review that fails on such a resume stops the build, as it would have the first time", async () => {
+  const { root, specs } = setup(deadInBranchReview);
+  const notMet: ReviewOutcome = { kind: "verdict", verdict: { spec: "not_met", findings: [], summary: "missing X" }, costUsd: 0 };
+  const f = fakes({ reviews: [notMet] });
+  const out = await runBuild(base(root, specs, f, { recovery: { action: "resume" } }));
+  expect(out).toEqual({ status: "stopped", reason: "branch review: the brief is not met — missing X" });
+  expect(readEvents(specs, "work").at(-1)).toEqual({ t: "build.stopped", reason: "branch review: the brief is not met — missing X" });
+});
+
+test("abort of a build killed during the whole-branch review abandons it; the merged tasks stay merged", async () => {
+  const { root, specs } = setup(deadInBranchReview);
+  const f = fakes();
+  const discarded: string[] = [];
+  const out = await runBuild(base(root, specs, f, {
+    recovery: { action: "abort" },
+    discard: async (_repo: string, r: any) => { discarded.push(r.task); },
+  }));
+  expect(out).toEqual({ status: "stopped", reason: "abandoned" });
+  expect(f.log).toEqual([]);
+  expect(discarded).toEqual([]);
+  const events = readEvents(specs, "work");
+  expect(events.at(-2)).toEqual({ t: "build.recovered", action: "abort" });
+  expect(events.at(-1)).toEqual({ t: "build.stopped", reason: "abandoned" });
+  const tree = project(events)!;
+  expect(tree.building).toBe(false);
+  expect(tree.tasks.map((t) => t.state)).toEqual(["done", "done"]);
+});
+
+test("retry on a build killed during the whole-branch review has nothing to redo, and says so", async () => {
+  const { root, specs } = setup(deadInBranchReview);
+  const before = readEvents(specs, "work").length;
+  const out = await runBuild(base(root, specs, fakes(), { recovery: { action: "retry", task: "T2" } }));
+  expect(out).toEqual({
+    status: "could-not-start",
+    reason: "nothing is open to retry — /build resume finishes the build, /build abort abandons it",
+  });
+  expect(readEvents(specs, "work").length).toBe(before);
+});

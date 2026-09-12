@@ -303,3 +303,32 @@ test("/build resume and /build abort after a clean stop are still refused — no
   expect(recoverOutcome("abort", stoppedTree, "idle")).toEqual({ kind: "refused", message: "nothing to recover — no interrupted build" });
   expect(recoverOutcome("retry T2", stoppedTree, "running")).toEqual({ kind: "refused", message: "nothing to recover — no interrupted build" });
 });
+
+// Killed during the whole-branch review: every task merged, the build open.
+// The chat's words have to be the ones the loop then honours.
+const deadInBranchReview = project([
+  { t: "created", id: "x", title: "X" },
+  { t: "task.added", id: "T1", title: "a" }, { t: "task.added", id: "T2", title: "b" },
+  { t: "approved", what: "spec" }, { t: "approved", what: "plan" },
+  { t: "build.started" }, { t: "task.started", id: "T1" }, { t: "task.done", id: "T1" },
+  { t: "task.started", id: "T2" }, { t: "task.done", id: "T2" },
+]);
+
+test("/build on a build killed during the whole-branch review is interrupted, not finished", () => {
+  expect(buildStart(deadInBranchReview, "dead")).toEqual({
+    kind: "refused",
+    message: "a build was interrupted — /build resume, /build retry <task>, or /build abort",
+  });
+});
+
+test("/build resume on a build killed during the whole-branch review resumes the build, with no task to name", () => {
+  expect(recoverOutcome("resume", deadInBranchReview, "dead")).toEqual({
+    kind: "recover", action: "resume", message: "resuming the build in its own checkout",
+  });
+  expect(recoverOutcome("abort", deadInBranchReview, "dead")).toEqual({
+    kind: "recover", action: "abort", message: "abandoning the build — T1, T2 stay merged",
+  });
+  expect(recoverOutcome("retry T2", deadInBranchReview, "dead")).toEqual({
+    kind: "refused", message: "nothing is open to retry — /build resume finishes the build, /build abort abandons it",
+  });
+});

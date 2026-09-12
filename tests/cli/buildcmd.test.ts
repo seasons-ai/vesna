@@ -215,3 +215,40 @@ test("a plain vesna build on a dead build exits 2 naming the flags, and --resume
     console.error = error;
   }
 });
+
+test("vesna build --resume finishes a build killed during the whole-branch review, exit 0", async () => {
+  const root = mkdtempSync(join(tmpdir(), "vesna-buildcmd-review-"));
+  const specs = join(root, ".vesna", "specs");
+  mkdirSync(specs, { recursive: true });
+  createSpec(specs, "work");
+  for (const event of [
+    { t: "task.added", id: "T1", title: "First" },
+    { t: "approved", what: "plan" },
+    { t: "build.started" },
+    { t: "task.started", id: "T1", agent: "vesna build" },
+    { t: "task.done", id: "T1", commit: "sha-T1" },
+  ] as SpecEvent[]) appendEvent(specs, "work", event);
+  writeSpecFile(specPaths(specs, "work").plan, "# Plan\n\n### Task 1: First\nDo it.\n");
+  const deps = {
+    provider: {} as any,
+    registry: createRegistry(),
+    policy: { mode: "auto" as const, allow: {}, deny: {} },
+    theme: resolveTheme("mono", { depth: 0 }),
+    seams,
+  };
+  const stderr: string[] = [];
+  const log = console.log;
+  const error = console.error;
+  console.log = () => {};
+  console.error = (line: string) => { stderr.push(line); };
+  try {
+    expect(await buildCommand("work", root, deps, {})).toBe(2);
+    expect(stderr.join("\n")).toContain("was interrupted");
+    expect(stderr.join("\n")).toContain("vesna build work --resume | --retry <task> | --abort");
+    expect(await buildCommand("work", root, deps, { resume: "true" })).toBe(0);
+  } finally {
+    console.log = log;
+    console.error = error;
+  }
+  expect(readEvents(specs, "work").at(-1)).toEqual({ t: "build.done" });
+});
