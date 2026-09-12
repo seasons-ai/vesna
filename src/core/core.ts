@@ -158,8 +158,12 @@ export function createCore(deps: CoreDeps): Core {
   // need no session and must not wait for one: `chats` is a list refresh
   // for a column opening mid-turn, `mode` changes the policy the running
   // turn's next tool call is judged by — shift-tab has always applied at
-  // once — and `build cancel` stops a build that may be what the queue is
-  // waiting on: a cancel that waits behind the build it cancels is a deadlock.
+  // once — and `build cancel`, while a build of this process's own is in
+  // flight, stops what the queue may be waiting on: a cancel that waits
+  // behind the build it cancels is a deadlock. With no build running here
+  // the cancel queues like any command, so a build and its cancel sent in
+  // one breath land in that order — the launch holds the queue for one
+  // microtask only, and the cancel then finds the build it names.
   let free: Promise<void> = Promise.resolve();
   /** The last /history listing, so /resume can take a number rather than an id. */
   let listed: SessionSummary[] = [];
@@ -696,9 +700,10 @@ export function createCore(deps: CoreDeps): Core {
       entry({ kind: "turn-end" });
       return Promise.resolve();
     }
-    // A word after /build is one of the three recoveries. Cancel is taken
-    // off the queue by `command` before this runs; the union still names
-    // it, and it is answered the same way should that ever change.
+    // A word after /build is one of the three recoveries. Cancel never
+    // reaches this — `command` answers it itself, queued or not — but the
+    // union still names it, and it is answered the same way should that
+    // ever change.
     let recovery: BuildLoopRequest["recovery"];
     if (argument.trim() !== "") {
       const outcome = recoverOutcome(argument, spec, currentBuildState());
@@ -965,9 +970,18 @@ export function createCore(deps: CoreDeps): Core {
       return Promise.resolve();
     }
     if (name === "build" && argument.trim().split(/\s+/)[0] === "cancel") {
-      quote(options.typed);
-      cancelBuild();
-      return Promise.resolve();
+      if (building) {
+        quote(options.typed);
+        cancelBuild();
+        return Promise.resolve();
+      }
+      const run = free.then(() => {
+        if (closing) return;
+        quote(options.typed);
+        cancelBuild();
+      });
+      free = run.then(() => {}, () => {});
+      return run;
     }
     if (name === "build") {
       // The queue is held through the launch only — the build runs alongside

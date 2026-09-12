@@ -849,3 +849,40 @@ test("a y whose approval write fails is an error notice, not a crash, and the qu
   expect(lastState(seen).busy).toBe(false);
   await core.close();
 });
+
+test("a build and its cancel in one breath: the cancel lands on the build, not before it", async () => {
+  const { base, specs, sink, slug } = await approvedPlan(2);
+  const { seams, release } = gatedBuild();
+  const core = createCore({ ...base, sink, buildSeams: seams });
+  const seen = collect(core);
+  await core.command("spec", `open ${slug}`);
+  // Two frames in one read: no await between them.
+  const running = core.command("build", "", { typed: "/build" });
+  const cancel = core.command("build", "cancel", { typed: "/build cancel" });
+  await cancel;
+  expect(transcript(seen).some((e: any) => e.kind === "notice" && /nothing to cancel/.test(e.text))).toBe(false);
+  expect(transcript(seen).some((e: any) => e.kind === "notice" && /cancelling/.test(e.text))).toBe(true);
+  const entries = transcript(seen) as any[];
+  expect(entries.findIndex((e) => e.kind === "user" && e.text === "/build cancel")).toBeGreaterThan(entries.findIndex((e) => e.kind === "user" && e.text === "/build"));
+  release();
+  await running;
+  const events = readEvents(specs, slug);
+  expect(events.at(-1)).toEqual({ t: "build.stopped", reason: "interrupted" });
+  expect(events.some((e: any) => e.t === "build.done")).toBe(false);
+  await core.close();
+});
+
+test("a cancel while a build runs here still skips the queue, ahead of a message waiting behind the build", async () => {
+  const { base, sink, slug } = await approvedPlan(1);
+  const { seams, release } = gatedBuild();
+  const core = createCore({ ...base, sink, buildSeams: seams });
+  const seen = collect(core);
+  await core.command("spec", `open ${slug}`);
+  const running = core.command("build", "");
+  await until(() => lastState(seen).building === true, "the build starting");
+  await core.command("build", "cancel");
+  expect(transcript(seen).some((e: any) => e.kind === "notice" && /cancelling/.test(e.text))).toBe(true);
+  release();
+  await running;
+  await core.close();
+});
