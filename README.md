@@ -231,6 +231,19 @@ $ echo $?
 abandons the build. A merged task's worktree and branch are removed; a
 stopped task's are kept, so there is something to look at.
 
+A build the branch review stopped, or whose last check failed on the base, is
+finished by a plain `/build` once the base is fixed: the red check runs
+again, no task runs, and the branch is reviewed again — from the commit the
+build first started at, whether or not it was resumed along the way. A build
+that already finished refuses instead, same as one never started:
+
+```console
+$ vesna build demo-notes
+vesna: nothing to build — every task is merged
+$ echo $?
+2
+```
+
 ## Permission
 
 Three modes in `.vesna/config.yaml` — `plan` looks and changes nothing, `ask`
@@ -250,9 +263,10 @@ every review it has had. Containment is on the roadmap, not claimed.
 **Now — a stable SDD agent, and the automation around it.** Verification in
 the plan has shipped: a task declares its check with `verify:`, Vesna runs it
 after the review and again after the merge, approval is tied to the text it
-approves, and the garden says who produced each task's evidence. Next in this
-line: re-reviewing a branch the whole-branch review stopped, and a build id in
-the events.
+approves, and the garden says who produced each task's evidence. A build the
+branch review stopped, or whose last check failed on the base, is finished by
+a plain `/build` once the base is fixed. The SDD line is complete for now;
+next is the editor.
 
 **Next — the editor.** The agent as a server, and a VS Code extension that
 shows the spec, the plan, the garden and the review findings as editor

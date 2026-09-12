@@ -51,6 +51,20 @@ gates `done`. The README version follows `package.json` under test. This
 roadmap replaces a stale one. One `vesna build` per spec at a time. CI installs
 the packed tarball and runs it, not just the checkout.
 
+**Finishing a stopped build.** Done as declared: `build.started` names the
+sha of the base branch's head, and the reducer's `buildBase` keeps the first
+one after the most recent `build.done` — a resume's own `build.started`
+carries the same `base`, so the whole-branch review always diffs
+`buildBase...HEAD`, the range for the whole build rather than whatever a
+resume's own start would have named. A spec whose every task is done but
+whose build never finished — the branch review stopped it, or the last
+task's merge-stage check is still red on the base — is a finishing build: a
+plain `/build` re-runs the red check if there is one, runs no task, reviews
+`buildBase...HEAD` again, and ends `build.done` or `build.stopped` as that
+review decides; a spec whose build did finish keeps the old refusal,
+`nothing to build — every task is merged`. No build id is needed: the range
+`buildBase...HEAD` already names what an id would have named.
+
 Every console block in the README is verbatim output.
 
 ## In progress
@@ -59,13 +73,7 @@ Nothing at the moment — see Next.
 
 ## Next
 
-**Left over from recoverable builds.** A build the whole-branch review
-stopped can be re-reviewed after a fix without recording a new task (today the
-only route is a new task, and its final review covers the branch only from
-that point); each build carries an id in its events. A spec whose every task
-is done cannot re-check the last task's failed merge-stage verify from
-`/build` — the "every task is merged" refusal comes first — so that re-check
-belongs with the branch review owed after a post-merge stop.
+Nothing at the moment — see Later.
 
 ## Later
 
