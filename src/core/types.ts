@@ -22,7 +22,11 @@ export type AskKind = "permission" | "approval";
 /** The choices a client can answer an ask with: yes, always, or no. */
 export type AskChoice = "y" | "a" | "n";
 
-/** A question a client shows the user and answers back via `Core.answer`. */
+/**
+ * A question a client shows the user and answers back via `Core.answer`.
+ * A permission ask always offers `a`; when its second line shows no `[a]`
+ * there is nothing to make a rule from, and `a` means allow once.
+ */
 export interface Ask { id: string; kind: AskKind; lines: string[]; choices: AskChoice[]; strict: boolean }
 
 /** The status a client renders in its header/statusline. */
