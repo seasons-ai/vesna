@@ -390,7 +390,20 @@ export async function runBuild(request: BuildLoopRequest): Promise<BuildOutcome>
         throw new Stop(`${task.id}: the worker was not allowed to: ${result.refusals.join("; ")}`);
       }
       if (result.status === "failed") throw new Stop(`${task.id}: ${result.error ?? "the build failed"}`);
-      if (result.status === "no-changes") throw new Stop(`${task.id}: the worker changed nothing`);
+      if (result.status === "no-changes") {
+        // On a resume, "changed nothing" is measured against the base the
+        // branch was cut from, not the head the resume started at: a
+        // process killed during the task's own review left the whole commit
+        // on the branch, and a worker that looks and leaves it alone has
+        // answered correctly. A branch ahead of base goes to review with
+        // the commit it holds; one at base is a worker that changed nothing.
+        const ahead = resuming
+          ? Number((await runLoopGit(git, ["rev-list", "--count", `${baseBranch}..${result.branch}`], request.root)).stdout.trim()) > 0
+          : false;
+        if (!ahead) throw new Stop(`${task.id}: the worker changed nothing`);
+        const head = (await runLoopGit(git, ["rev-parse", result.branch], request.root)).stdout.trim();
+        result = { ...result, status: "committed", commit: head };
+      }
 
       let round = 0;
       let silent = 0;

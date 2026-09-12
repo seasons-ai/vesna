@@ -1221,3 +1221,63 @@ test("retry on a build killed during the whole-branch review has nothing to redo
   });
   expect(readEvents(specs, "work").length).toBe(before);
 });
+
+// Killed during its own review, a task's branch already holds the whole
+// commit. The resumed worker looks and changes nothing — which is the right
+// answer, not a failure: "changed nothing" on a resume is measured against
+// the base the branch was cut from, and a branch ahead of it goes to review.
+test("resume of a task killed during its review reviews and merges the commit its branch already holds (real git)", async () => {
+  const { root, specs } = await setupReal(deadAfterT1);
+  const tree = await createWorktree(root, "work", "T2", runGit);
+  writeFileSync(join(tree.path, "T2.txt"), "the whole task\n");
+  await runGit(["add", "-A"], tree.path);
+  await runGit(["commit", "-qm", "T2: built by vesna"], tree.path);
+  const head = (await runGit(["rev-parse", "HEAD"], tree.path)).stdout.trim();
+
+  // Answers with text only: nothing to write, nothing to commit.
+  const textOnly: Provider = {
+    id: "fake",
+    async complete(): Promise<CompletionResult> {
+      return {
+        content: [{ type: "text", text: "already done" }],
+        stopReason: "end_turn", model: "m",
+        usage: { inputTokens: 1, outputTokens: 1, cacheReadTokens: 0, cacheWriteTokens: 0 },
+      };
+    },
+  };
+  const out = await runBuild({
+    root, specsRoot: specs, slug: "work",
+    provider: textOnly, registry: registry(),
+    policy: { mode: "auto", allow: {}, deny: {} },
+    review: async () => clean,
+    recovery: { action: "resume" },
+  });
+  expect(out).toEqual({ status: "done" });
+  expect(readFileSync(join(root, "T2.txt"), "utf8")).toBe("the whole task\n");
+  const events = readEvents(specs, "work");
+  expect(events.at(-1)).toEqual({ t: "build.done" });
+  expect(events.some((e) => e.t === "task.failed")).toBe(false);
+  // The commit the branch held is the one the log records as merged.
+  expect(events.find((e) => e.t === "task.done" && (e as any).id === "T2")).toEqual({ t: "task.done", id: "T2", commit: head });
+  expect(existsSync(tree.path)).toBe(false);
+  expect((await runGit(["branch", "--list", "vesna/work/T2"], root)).stdout.trim()).toBe("");
+});
+
+test("a resumed worker that changes nothing on a branch with nothing on it is still a worker that changed nothing", async () => {
+  const { root, specs } = setup(deadAfterT1);
+  const f = fakes();
+  const path = worktreePath(root, "work", "T2");
+  mkdirSync(path, { recursive: true });
+  const branch = branchName("work", "T2");
+  const git = async (args: string[]) => {
+    if (args[0] === "worktree" && args[1] === "list") {
+      return { code: 0, stdout: `worktree ${path}\nHEAD 0000000000000000000000000000000000000000\nbranch refs/heads/${branch}\n\n`, stderr: "" };
+    }
+    // The branch is exactly at base: no commits ahead.
+    if (args[0] === "rev-list") return { code: 0, stdout: "0\n", stderr: "" };
+    return f.git(args);
+  };
+  const resume = async (r: any): Promise<BuildResult> => ({ ...built(r.task, 1), status: "no-changes", commit: undefined });
+  const out = await runBuild(base(root, specs, f, { recovery: { action: "resume" }, git, resume }));
+  expect(out).toEqual({ status: "stopped", reason: "T2: the worker changed nothing" });
+});
