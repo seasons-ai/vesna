@@ -1858,6 +1858,35 @@ test("/build runs a real build against fake seams, task by task, in order", asyn
   await quit(app);
 });
 
+// Final fix round, item 2: the check's two runs have a line in the
+// transcript, from the same `describeEvent` the shell prints — after the
+// review verdict, and again before the merged line (the merge-stage check
+// runs first, and `task.done` is written once it passes).
+test("/build prints the check's result after the review and after the merge", async () => {
+  const base = await deps(reply("x"));
+  const specs = specsRoot(base.root);
+  const sink = createSink(specs);
+  createSpec(specs, "gate");
+  appendEvent(specs, "gate", { t: "task.added", id: "T1", title: "First" });
+  appendEvent(specs, "gate", { t: "approved", what: "plan" });
+  writeSpecFile(specPaths(specs, "gate").plan, "# Plan\n\n### Task 1: First\nverify: bun test\n\nDo it.\n");
+  const verify = async (r: { cwd: string }) => ({ code: 0, ms: r.cwd === base.root ? 61_250 : 14, timedOut: false, tail: "" });
+
+  const app = await start(reply("x"), { rows: 50, cols: 120 }, { ...base, sink, buildSeams: { ...buildFakes(), verify } });
+  app.input.type("/spec open gate\r");
+  await until(() => app.screen().includes("spec gate"), "the spec opening");
+  app.input.type("/build\r");
+  await until(() => readEvents(specs, "gate").at(-1)?.t === "build.done", "the build");
+  await until(() => app.screen().includes("T1 verify (merge): ok in 61.3s"), "the merge-stage line");
+
+  const screen = app.screen();
+  const at = (needle: string) => screen.indexOf(needle);
+  expect(at("T1 verify (review): ok in 0.0s")).toBeGreaterThan(at("T1  review: met, 0 findings"));
+  expect(at("T1 verify (merge): ok in 61.3s")).toBeGreaterThan(at("T1 verify (review): ok in 0.0s"));
+  expect(at("T1  merged")).toBeGreaterThan(at("T1 verify (merge): ok in 61.3s"));
+  await quit(app);
+});
+
 test("/build while one is already running is refused", async () => {
   const base = await deps(reply("x"));
   const sink = createSink(specsRoot(base.root));

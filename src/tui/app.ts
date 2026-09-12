@@ -99,7 +99,7 @@ export interface AppDeps {
    * worker actually makes them. Production never sets this — the real
    * functions are `runBuild`'s own defaults.
    */
-  buildSeams?: Pick<BuildLoopRequest, "build" | "resume" | "review" | "merge" | "git">;
+  buildSeams?: Pick<BuildLoopRequest, "build" | "resume" | "review" | "merge" | "git" | "verify">;
   /**
    * How long quitting waits for a cancelled build to write `build.stopped`
    * before leaving anyway. Ten seconds unless a test shortens it.
