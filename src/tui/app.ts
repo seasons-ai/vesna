@@ -236,11 +236,13 @@ export async function runApp(deps: AppDeps, io: AppIo): Promise<number> {
 
   /**
    * A core call made from a key has no `await` to catch its failure: left
-   * alone, a rejection there ends the process before `finally` restores
-   * the terminal. It is a line on the screen instead.
+   * alone, a rejection — or a throw on one of the core's synchronous fast
+   * paths — ends the process before `finally` restores the terminal. The
+   * call is made inside a promise, so both failures take one path: a line
+   * on the screen.
    */
-  const reported = (run: Promise<unknown>): void => {
-    run.catch((error: unknown) => {
+  const reported = (call: () => Promise<unknown>): void => {
+    Promise.resolve().then(call).catch((error: unknown) => {
       transcript.notice(String(error), "error");
       draw();
     });
@@ -365,7 +367,7 @@ export async function runApp(deps: AppDeps, io: AppIo): Promise<number> {
 
         if (target === undefined) return false;
         if (target.startsWith("session:")) {
-          reported(resume(target.slice("session:".length)));
+          reported(() => resume(target.slice("session:".length)));
           return false;
         }
         const text = transcript.rawOf(target);
@@ -391,11 +393,11 @@ export async function runApp(deps: AppDeps, io: AppIo): Promise<number> {
       }
 
       case "panel-left":
-        reported(toggleChats());
+        reported(() => toggleChats());
         return false;
 
       case "cycle-mode": {
-        reported(core.command("mode", nextMode(state.mode)));
+        reported(() => core.command("mode", nextMode(state.mode)));
         return false;
       }
 
@@ -501,7 +503,7 @@ export async function runApp(deps: AppDeps, io: AppIo): Promise<number> {
           // core's promise is the build's end. Every event reaches the
           // transcript and the garden as a notification, and `/build cancel`
           // is taken on this same loop while it runs.
-          reported(core.command(input.name, input.argument, { typed: line }));
+          reported(() => core.command(input.name, input.argument, { typed: line }));
           continue;
         }
 

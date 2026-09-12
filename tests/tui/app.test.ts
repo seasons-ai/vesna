@@ -2639,3 +2639,26 @@ test("the status line's token count is current while a permission question stand
   await until(() => app.screen().includes("finished"), "the turn");
   await quit(app);
 });
+
+test("a core method that throws synchronously on a key path is the same notice, and the app still quits", async () => {
+  const writes: string[] = [];
+  const terminal: Terminal = { size: () => ({ rows: 20, cols: 100 }), write: (t) => void writes.push(t) };
+  const screen = () => writes.join("").replace(/\x1b\[[0-9;]*m/g, "");
+  const input = keyboard();
+  const base = await deps(reply("x"));
+  const real = createCore(base);
+  const core: Core = {
+    ...real,
+    command: (name, argument, options) => {
+      if (name === "mode") throw new Error("sync boom");
+      return real.command(name, argument, options);
+    },
+  };
+  const finished = runApp({ ...base, core }, { terminal, input });
+  await until(() => screen().includes("vesna"), "the first frame");
+  input.type("\x1b[Z");
+  await until(() => screen().includes("Error: sync boom"), "the failure as a notice");
+  input.type("\x03\x03");
+  expect(await finished).toBe(0);
+  expect(writes.join("")).toContain("\x1b[?1049l");
+});
