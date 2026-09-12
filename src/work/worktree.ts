@@ -32,6 +32,30 @@ export const runGit: GitRunner = async (args, cwd) => {
   return { code: await child.exited, stdout, stderr };
 };
 
+/**
+ * One git command that touches the worktree list at a time.
+ *
+ * `git worktree add` writes a new worktree's administrative files one after
+ * another — `locked`, `gitdir`, `commondir`, `HEAD` — each by truncating and
+ * then writing. Every git command that enumerates worktrees (`worktree
+ * add`, `worktree list`, `worktree remove`, and `branch` listing or
+ * deleting) reads those files as it goes, and an empty `commondir` is fatal
+ * to it: "failed to read .git/worktrees/<id>/commondir: Success". So two
+ * tasks starting side by side die at the window between one open() and the
+ * write() that follows it — rarely, and under load, which is how a release
+ * gate failed once and passed on rerun. Git offers no lock for this, so the
+ * writer and every reader take this one.
+ *
+ * It is per process. Two Vesna processes on one repository are not covered.
+ */
+let worktreeTurn: Promise<unknown> = Promise.resolve();
+
+function serialized<T>(run: () => Promise<T>): Promise<T> {
+  const turn = worktreeTurn.then(run, run);
+  worktreeTurn = turn.catch(() => undefined);
+  return turn;
+}
+
 /** Where a task's checkout lives. Inside the project, and git-ignored. */
 export function worktreesRoot(repo: string): string {
   return join(repo, ".vesna", "worktrees");
@@ -76,7 +100,7 @@ export async function createWorktree(
 
   await ensureIgnored(repo);
 
-  const made = await git(["worktree", "add", "-b", branch, path, "HEAD"], repo);
+  const made = await serialized(() => git(["worktree", "add", "-b", branch, path, "HEAD"], repo));
   if (made.code !== 0) {
     throw new WorktreeError(`could not create a worktree: ${firstLine(made.stderr)}`);
   }
@@ -102,7 +126,7 @@ export async function listWorktrees(
   repo: string,
   git: GitRunner = runGit,
 ): Promise<Worktree[]> {
-  const result = await git(["worktree", "list", "--porcelain"], repo);
+  const result = await serialized(() => git(["worktree", "list", "--porcelain"], repo));
   if (result.code !== 0) return [];
 
   const found: Worktree[] = [];
@@ -184,14 +208,14 @@ export async function removeWorktree(
     );
   }
 
-  const removed = await git(["worktree", "remove", "--force", path], repo);
+  const removed = await serialized(() => git(["worktree", "remove", "--force", path], repo));
   if (removed.code !== 0) {
     throw new WorktreeError(`could not remove worktree: ${firstLine(removed.stderr)}`);
   }
   // A successful git removal may leave an empty administrative directory behind.
   await rm(path, { recursive: true, force: true });
 
-  const deleted = await git(["branch", "-D", tree.branch], repo);
+  const deleted = await serialized(() => git(["branch", "-D", tree.branch], repo));
   if (deleted.code !== 0) {
     throw new WorktreeError(`worktree removed, but could not delete branch: ${firstLine(deleted.stderr)}`);
   }
@@ -206,7 +230,7 @@ export async function removeWorktree(
  * name, not the absence of an error.
  */
 export async function branchExists(repo: string, branch: string, git: GitRunner = runGit): Promise<boolean> {
-  const result = await git(["branch", "--list", branch], repo);
+  const result = await serialized(() => git(["branch", "--list", branch], repo));
   if (result.code !== 0) return false;
   return result.stdout.split("\n").some((line) => line.replace(/^[*+]?\s*/, "").trim() === branch);
 }
@@ -250,7 +274,7 @@ export async function isMerged(repo: string, branch: string, base: string, git: 
  */
 export async function deleteBranch(repo: string, branch: string, git: GitRunner = runGit): Promise<void> {
   await git(["worktree", "prune"], repo);
-  const result = await git(["branch", "-D", branch], repo);
+  const result = await serialized(() => git(["branch", "-D", branch], repo));
   if (result.code !== 0 && !/not found/i.test(result.stderr)) {
     throw new WorktreeError(`could not delete branch ${branch}: ${result.stderr.trim().split("\n")[0]}`);
   }
