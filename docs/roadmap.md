@@ -33,6 +33,19 @@ says `--resume`, `--retry <task>` or `--abort` — the same three words as
 a merged task's worktree and branch are removed, an aborted or retried one's
 discarded, a stopped one's kept for a person to read.
 
+**Verification in the plan** (on `main`, after `0.4.0`). Done as declared: a
+task in `plan.md` declares its check on the line under its heading
+(`verify: bun test tests/x.test.ts`); Vesna runs it independently of the
+worker — in the task's worktree after the review passes, where a failure is a
+fix round on the shared counter, and on the base branch after the merge, where
+a failure keeps the merge, writes `verify.failed` and stops the build — with
+both logs in `.vesna/specs/<slug>/verify/`; the garden shows which of the
+three — worker, reviewer, Vesna — produced a done task's evidence. Beside it:
+an approval carries the sha256 of the text it approves and `/build` refuses a
+plan that changed since; the chat asks `approve the plan? [y] yes  [n] not
+yet` after a turn that leaves one waiting; the bottom line names the
+permission mode and the key that cycles it.
+
 **`0.3.2` — trust patch.** Tagged and published. The whole-branch review
 gates `done`. The README version follows `package.json` under test. This
 roadmap replaces a stale one. One `vesna build` per spec at a time. CI installs
@@ -50,11 +63,6 @@ Nothing at the moment — see Next.
 stopped can be re-reviewed after a fix without recording a new task (today the
 only route is a new task, and its final review covers the branch only from
 that point); each build carries an id in its events.
-
-**Verification in the plan.** Done when: a task in `plan.md` can declare its
-check (`verify: bun test tests/x.test.ts`), Vesna runs it independently of the
-worker after the review passes and again after the merge, and the garden shows
-which of the three — worker, reviewer, Vesna — produced the evidence.
 
 ## Later
 

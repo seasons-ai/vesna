@@ -37,7 +37,8 @@ A task is finished when a check the system ran says so, not when the agent
 says so. `task_verify` takes a command that fails when the work is not done;
 Vesna runs it and reads the exit status. A review counts only if the
 reviewer answered through `review_verdict`, not in prose. A plan builds only
-if a person typed `/approve plan`; no tool can. The state of the work is a
+if a person approved it — `y` to the question, or `/approve plan`; no tool
+can. The state of the work is a
 log of typed events, so "I finished T2" in a chat message is never mistaken
 for the fact of it.
 
@@ -128,6 +129,44 @@ answer, a **bounded** change is designed in the conversation and built, an
 ctrl-g                       show or hide the column
 ```
 
+A task in `plan.md` can name its own check on the line under its heading:
+
+```markdown
+### Task 1: Add the first line
+verify: test -f NOTES.md && grep -q one NOTES.md
+
+Append a line containing the word `one` to NOTES.md.
+```
+
+Vesna runs that command itself, twice: in the task's worktree once the
+review passes, and on the base branch once the task is merged. A failure
+before the merge is a fix round for the worker, on the same counter as
+review rounds; a failure after the merge keeps the merge as it is, writes
+`verify.failed`, and stops the build for a person. Both runs log to
+`.vesna/specs/<slug>/verify/`. A done task in the garden says who produced
+its evidence — `✓ worker  ✓ reviewer  ✓ vesna` — with a dash for a task that
+declared no check and a cross for a check that failed after the merge.
+
+After a turn that leaves a plan waiting, the chat lists the tasks with their
+checks and asks; only a typed `y` writes the approval:
+
+```text
+  T1  Add the first line       verify: test -f NOTES.md && grep -q one NOTES.md
+  T2  Add the second line      no verify — worker and reviewer only
+  approve the plan? [y] yes  [n] not yet
+  approved: plan — /build will run it
+```
+
+The approval names the text that was read. Edit `plan.md` afterwards and the
+build refuses until someone approves it again:
+
+```console
+$ vesna build notes
+vesna: plan.md changed after it was approved — approve it again
+$ echo $?
+2
+```
+
 `/build` runs the approved plan one task at a time, in dependency order: a
 brief cut from `plan.md`, a worker in its own worktree, a reviewer that must
 answer through `review_verdict`, up to five fix rounds, then a merge. After
@@ -198,7 +237,9 @@ Three modes in `.vesna/config.yaml` — `plan` looks and changes nothing, `ask`
 asks before each new kind of action and remembers your answer, `auto` allows
 everything but the always-ask list: secrets, the spec's event log, `sudo`,
 `rm -r`, force pushes, publishing. Reading never asks. A reviewer's shell is
-held to a read-only allowlist.
+held to a read-only allowlist. The chat's bottom line names the mode in force
+and the key that cycles it — `/help · shift-tab: ask → auto · ctrl-c twice to
+leave` — so `auto` is never a surprise.
 
 This is policy, not a sandbox. `shell` and `script` run with your own
 privileges; the classifier that decides what is read-only has needed a fix in
@@ -206,11 +247,12 @@ every review it has had. Containment is on the roadmap, not claimed.
 
 ## Roadmap
 
-**Now — a stable SDD agent, and the automation around it.** Recoverable
-builds have shipped: a process killed mid-build can be resumed, retried, or
-abandoned from the chat or the shell, and a merged task's worktree is cleaned
-up. Next in this line: verification declared in the plan and re-run after
-the merge.
+**Now — a stable SDD agent, and the automation around it.** Verification in
+the plan has shipped: a task declares its check with `verify:`, Vesna runs it
+after the review and again after the merge, approval is tied to the text it
+approves, and the garden says who produced each task's evidence. Next in this
+line: re-reviewing a branch the whole-branch review stopped, and a build id in
+the events.
 
 **Next — the editor.** The agent as a server, and a VS Code extension that
 shows the spec, the plan, the garden and the review findings as editor
