@@ -4,7 +4,7 @@ test/**
 node_modules/**
 esbuild.mjs
 tsconfig.json
-*.map
+**/*.map
 .superpowers/**
 media/shots/**
 bun.lock

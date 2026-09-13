@@ -7,6 +7,11 @@ test("the words a person sees are exact", () => {
   expect(WORDS.exited(null)).toBe("Vesna exited.");
   expect(WORDS.exited(2)).toBe("Vesna exited with code 2.");
   expect(WORDS.statusBuilding("T2")).toBe("vesna: building T2");
+  expect(WORDS.unresponsive).toBe("Vesna did not answer in time.");
+  expect(WORDS.appName).toBe("Vesna");
+  expect(WORDS.starting).toBe("Starting Vesna…");
+  expect(WORDS.statusTooltip(null)).toBe("Vesna");
+  expect(WORDS.statusTooltip("ask")).toBe("Vesna — click to change the mode (ask)");
   expect(NEXT_MODE.auto).toBe("plan");
   expect(COMMAND_NAMES).not.toContain("theme");
 });

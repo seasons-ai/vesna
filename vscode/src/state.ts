@@ -19,6 +19,7 @@ export type ServerStatus =
   | { kind: "notFound"; command: string }
   | { kind: "exited"; code: number | null; stderr: string }
   | { kind: "tooOld"; server: string; extension: string }
+  | { kind: "unresponsive" }
   | { kind: "noFolder" };
 
 export interface PanelModel {
@@ -66,11 +67,13 @@ export function reduce(model: PanelModel, event: Event): PanelModel {
     case "notification":
       return reduceNotification(model, event.n);
     case "server":
-      // `notFound`/`exited`/`tooOld` keep `entries` and `state` (a person can
-      // still read what happened); `starting`/`up` keep everything too;
-      // `noFolder` is only ever the initial status. None of that needs a
-      // special case — a `server` event only ever replaces `server`.
-      return { ...model, server: event.status };
+      // `notFound`/`exited`/`tooOld`/`unresponsive` keep `entries` and
+      // `state` (a person can still read what happened); so do `starting`
+      // and `up`. What no server change keeps is the ask and the queue: an
+      // ask belongs to the server that asked it, and a new server has no
+      // open question — so the composer is never left disabled by a
+      // question nobody can answer any more.
+      return { ...model, server: event.status, ask: null, queued: 0 };
     case "sent":
       // While the core is busy the turn is queued; otherwise it starts at
       // once and nothing is queued.

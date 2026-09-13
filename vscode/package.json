@@ -134,11 +134,13 @@
       "properties": {
         "vesna.command": {
           "type": "string",
+          "scope": "resource",
           "default": "vesna",
           "description": "The executable that runs `serve` — `vesna` from PATH by default, or an absolute path, or a runtime such as `bun` with the script in `vesna.args`."
         },
         "vesna.args": {
           "type": "array",
+          "scope": "resource",
           "items": {
             "type": "string"
           },

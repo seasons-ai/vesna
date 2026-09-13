@@ -10,13 +10,13 @@ import { Transcript } from "./Transcript";
  * keeps for itself is the composer's text, which step cards are open, and
  * where the transcript is scrolled.
  */
-export function App({ model }: { model: PanelModel }) {
+export function App({ model, rejected }: { model: PanelModel; rejected: { text: string; seq: number } | null }) {
   return (
     <div className="app">
       <Header model={model} />
       <Transcript entries={model.entries} />
       {model.ask !== null && <AskBlock key={model.ask.id} ask={model.ask} />}
-      <Composer asking={model.ask !== null} queued={model.queued} />
+      <Composer asking={model.ask !== null} queued={model.queued} rejected={rejected} />
     </div>
   );
 }

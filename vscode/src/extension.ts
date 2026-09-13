@@ -8,87 +8,19 @@ import { existsSync } from "node:fs";
 import { readdir } from "node:fs/promises";
 import { join } from "node:path";
 import * as vscode from "vscode";
-import type { Client } from "./client";
 import { diagnostics } from "./diagnostics";
 import { applyDiagnostics } from "./diagnosticsView";
 import { GARDEN_VIEW_ID, GardenProvider } from "./gardenView";
+import { ServerLink } from "./link";
 import { CHAT_VIEW_ID, VesnaPanel } from "./panel";
 import type { Notification, State } from "./protocol";
-import { startServer, stopServer, type ChildLike, type Spawner } from "./server";
+import { DEACTIVATE_CEILING_MS, type Spawner } from "./server";
 import { readSettings } from "./settings";
 import { createStore, type Store } from "./state";
 import { CYCLE_MODE_COMMAND, wireStatusBar } from "./status";
 import { NEXT_MODE, WORDS } from "./words";
 
 const spawner: Spawner = (command, args, opts) => spawn(command, args, opts);
-
-/**
- * The one server of this window. `start` is called once on activation and
- * again only when a person asks (Restart in the panel, `vesna.restart`);
- * nothing here restarts it on its own.
- */
-class ServerLink {
-  private client: Client | null = null;
-  private child: ChildLike | null = null;
-  /** Bumped per start, so a late callback from an old server changes nothing. */
-  private generation = 0;
-
-  constructor(
-    private readonly root: string,
-    private readonly extensionVersion: string,
-    private readonly store: Store,
-    private readonly onNotification: (n: Notification) => void,
-  ) {}
-
-  current(): Client | null {
-    return this.client;
-  }
-
-  async start(): Promise<void> {
-    this.generation += 1;
-    const generation = this.generation;
-    const configuration = vscode.workspace.getConfiguration("vesna");
-    const settings = readSettings((key) => configuration.get(key));
-    const started = await startServer({
-      command: settings.command,
-      args: settings.args,
-      cwd: this.root,
-      extensionVersion: this.extensionVersion,
-      spawn: spawner,
-      onStatus: (status) => {
-        if (generation !== this.generation) return;
-        this.store.dispatch({ kind: "server", status });
-        if (status.kind !== "up" && status.kind !== "starting") {
-          this.client = null;
-          this.child = null;
-        }
-      },
-      onNotification: (n) => {
-        if (generation === this.generation) this.onNotification(n);
-      },
-    });
-    if (generation !== this.generation) {
-      // A restart overtook this start: what it started is not ours to keep.
-      if (started.client !== null && started.child !== null) void stopServer(started.client, started.child);
-      return;
-    }
-    this.client = started.client;
-    this.child = started.child;
-  }
-
-  async stop(): Promise<void> {
-    const { client, child } = this;
-    this.client = null;
-    this.child = null;
-    if (client !== null && child !== null) await stopServer(client, child);
-  }
-
-  async restart(): Promise<void> {
-    this.store.dispatch({ kind: "server", status: { kind: "starting" } });
-    await this.stop();
-    await this.start();
-  }
-}
 
 let link: ServerLink | null = null;
 
@@ -109,7 +41,22 @@ export function activate(context: vscode.ExtensionContext): void {
     if (n.method === "transcript" && n.params.kind === "user") panel.turnStartedIfQueued(n.params.text);
   };
 
-  if (root !== null) link = new ServerLink(root, version, store, onNotification);
+  if (root !== null && folder !== undefined) {
+    link = new ServerLink({
+      root,
+      extensionVersion: version,
+      store,
+      onNotification,
+      spawn: spawner,
+      // The folder's own settings: `vesna.command`/`vesna.args` are
+      // resource-scoped, and a multi-root workspace's first folder may name
+      // a different command than the window does.
+      settings: () => {
+        const configuration = vscode.workspace.getConfiguration("vesna", folder.uri);
+        return readSettings((key) => configuration.get(key));
+      },
+    });
+  }
   if (folders.length > 1 && folder !== undefined) store.dispatch({ kind: "note", text: WORDS.multiRoot(folder.name) });
 
   context.subscriptions.push(
@@ -117,7 +64,7 @@ export function activate(context: vscode.ExtensionContext): void {
   );
 
   const statusItem = vscode.window.createStatusBarItem("vesna.mode", vscode.StatusBarAlignment.Left, 50);
-  statusItem.name = "Vesna";
+  statusItem.name = WORDS.appName;
   const unwire = wireStatusBar(statusItem, store);
   context.subscriptions.push(statusItem, { dispose: unwire });
 
@@ -156,10 +103,11 @@ export function activate(context: vscode.ExtensionContext): void {
   else void link?.start();
 }
 
+/** VS Code gives this about five seconds: the server is asked to leave and killed inside three. */
 export async function deactivate(): Promise<void> {
   const current = link;
   link = null;
-  if (current !== null) await current.stop();
+  if (current !== null) await current.stop(DEACTIVATE_CEILING_MS);
 }
 
 // ---------------------------------------------------------------------------

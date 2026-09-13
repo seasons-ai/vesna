@@ -22,6 +22,10 @@ export const WORDS = {
   exited: (code: number | null) => `Vesna exited${code === null ? "" : ` with code ${code}`}.`,
   tooOld: (server: string, extension: string) =>
     `This Vesna (${server}) is too old for this extension (${extension}).`,
+  unresponsive: "Vesna did not answer in time.",
+  appName: "Vesna",
+  starting: "Starting Vesna…",
+  statusTooltip: (mode: string | null) => (mode === null ? "Vesna" : `Vesna — click to change the mode (${mode})`),
   statusMode: (mode: string) => `vesna: ${mode}`,
   statusBuilding: (task: string | null) => `vesna: building${task === null ? "" : ` ${task}`}`,
   statusNone: "vesna",

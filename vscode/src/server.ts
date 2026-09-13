@@ -36,7 +36,15 @@ export type Spawner = (
 
 export const CLIENT_NAME = "vscode-vesna";
 export const STDERR_LINES = 20;
+/** How long a restart waits for the old server to leave before killing it. */
 export const STOP_CEILING_MS = 12_000;
+/**
+ * How long `deactivate` may wait: VS Code gives the extension host about
+ * five seconds on window close, so the kill has to land inside that.
+ */
+export const DEACTIVATE_CEILING_MS = 3_000;
+/** How long the handshake may take before the server is written off as unresponsive. */
+export const HANDSHAKE_CEILING_MS = 10_000;
 
 export interface StartOptions {
   command: string;
@@ -44,6 +52,10 @@ export interface StartOptions {
   cwd: string;
   extensionVersion: string;
   spawn: Spawner;
+  /** The handshake ceiling; `HANDSHAKE_CEILING_MS` unless a test says otherwise. */
+  handshakeMs?: number;
+  /** The child, the moment it exists — so whoever owns the server can kill it before it has spoken. */
+  onSpawn?: (child: ChildLike) => void;
   onStatus: (status: ServerStatus) => void;
   onNotification: (n: Notification) => void;
 }
@@ -116,6 +128,8 @@ export async function startServer(opts: StartOptions): Promise<Started> {
     return { client: null, child: null };
   }
 
+  opts.onSpawn?.(child);
+
   let stderr = "";
   child.stderr?.on("data", (chunk) => {
     stderr = tail(stderr + chunk.toString(), STDERR_LINES);
@@ -157,13 +171,27 @@ export async function startServer(opts: StartOptions): Promise<Started> {
     else held.push(n);
   });
 
+  // A server that starts but never speaks is written off after the ceiling
+  // and killed: it is neither up nor gone, and nobody else would kill it.
+  let timer: ReturnType<typeof setTimeout> | null = null;
+  const late = new Promise<"late">((resolve) => {
+    timer = setTimeout(() => resolve("late"), opts.handshakeMs ?? HANDSHAKE_CEILING_MS);
+  });
+
   let result: InitializeResult;
   try {
     const outcome = await Promise.race([
       client.initialize({ clientName: CLIENT_NAME, clientVersion: opts.extensionVersion }),
       failed,
+      late,
     ]);
     if (outcome === "gone") return { client: null, child: null };
+    if (outcome === "late") {
+      report({ kind: "unresponsive" });
+      stopping.add(child);
+      killIfAlive(child);
+      return { client: null, child: null };
+    }
     result = outcome;
   } catch (error) {
     // A closed pipe was already reported by `onClose`; anything else is the
@@ -173,6 +201,8 @@ export async function startServer(opts: StartOptions): Promise<Started> {
       void stopServer(client, child);
     }
     return { client: null, child: null };
+  } finally {
+    if (timer !== null) clearTimeout(timer);
   }
 
   if (!capable(result.capabilities)) {
@@ -181,11 +211,19 @@ export async function startServer(opts: StartOptions): Promise<Started> {
     return { client: null, child: null };
   }
 
+  // `up` first: it clears whatever ask the last server left, and the state
+  // and anything held (an ask included) belong to this server.
+  onStatus({ kind: "up" });
   onNotification({ method: "state", params: result.state });
   for (const n of held.splice(0)) onNotification(n);
   ready = true;
-  onStatus({ kind: "up" });
   return { client, child };
+}
+
+/** SIGKILL, unless the process has already left. Marks it as ours to stop, so the exit is not news. */
+export function killIfAlive(child: ChildLike): void {
+  stopping.add(child);
+  if (!gone(child)) child.kill("SIGKILL");
 }
 
 function waitExit(child: ChildLike, ceilingMs: number): Promise<boolean> {
@@ -200,25 +238,23 @@ function waitExit(child: ChildLike, ceilingMs: number): Promise<boolean> {
 }
 
 /**
- * `shutdown`, then `exit`, then wait for the process up to `ceilingMs`
- * (the server's own ceiling is 10 s), then kill it. The ceiling spans the
- * whole of it: a server that never answers `shutdown` is killed too.
+ * `shutdown` and `exit` back to back — the server closes the core on the
+ * first and leaves on the second, and waiting for `shutdown`'s answer would
+ * only let a server that never answers outlive the ceiling — then wait for
+ * the process up to `ceilingMs`, then kill it. A restart can afford the
+ * server's own 10 s of closing (`STOP_CEILING_MS`); window close cannot
+ * (`DEACTIVATE_CEILING_MS`).
  */
 export async function stopServer(client: Client, child: ChildLike, ceilingMs = STOP_CEILING_MS): Promise<void> {
   stopping.add(child);
   if (gone(child)) return;
   const left = waitExit(child, ceilingMs);
-  void (async () => {
-    try {
-      await client.shutdown();
-    } catch {
-      // The server may already be gone, or refuse: `exit` goes out regardless.
-    }
-    try {
-      client.exit();
-    } catch {
-      // Nothing to write to: the process is leaving or has left.
-    }
-  })();
+  // Neither write may throw past here; the process leaving is the outcome either way.
+  client.shutdown().catch(() => {});
+  try {
+    client.exit();
+  } catch {
+    // Nothing to write to: the process is leaving or has left.
+  }
   if (!(await left)) child.kill("SIGKILL");
 }

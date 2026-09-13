@@ -27,7 +27,17 @@ export class VesnaPanel implements vscode.WebviewViewProvider {
     private readonly extensionUri: vscode.Uri,
     private readonly store: Store,
     private readonly link: PanelLink,
-  ) {}
+  ) {
+    // A server change (a restart, an exit) drops what was queued for the old
+    // one: its echoes will never come.
+    let server = store.model.server;
+    store.subscribe((model) => {
+      if (model.server !== server) {
+        server = model.server;
+        this.queued.length = 0;
+      }
+    });
+  }
 
   resolveWebviewView(view: vscode.WebviewView): void {
     this.view = view;
@@ -71,6 +81,12 @@ export class VesnaPanel implements vscode.WebviewViewProvider {
     }
   }
 
+  /** A line that did not reach the server goes back to the composer. */
+  private reject(text: string): void {
+    const message: ToWebview = { kind: "rejected", text };
+    void this.view?.webview.postMessage(message);
+  }
+
   /** A line the panel wants said when the server cannot be asked. */
   private notice(text: string, level: "warn" | "error" = "warn"): void {
     this.store.dispatch({ kind: "notification", n: { method: "transcript", params: { kind: "notice", text, level } } });
@@ -82,12 +98,18 @@ export class VesnaPanel implements vscode.WebviewViewProvider {
       return;
     }
     const client = this.link.client();
+    // The line as typed, to hand back if it cannot be delivered.
+    const typed = message.kind === "send" ? message.text : message.kind === "command" ? message.typed : null;
     if (client === null) {
       this.notice(WORDS.notRunning);
+      if (typed !== null) this.reject(typed);
       return;
     }
     const settle = (run: Promise<void>): void => {
-      run.catch((error: unknown) => this.notice((error as Error)?.message ?? String(error), "error"));
+      run.catch((error: unknown) => {
+        this.notice((error as Error)?.message ?? String(error), "error");
+        if (typed !== null) this.reject(typed);
+      });
     };
     switch (message.kind) {
       case "send":
@@ -129,7 +151,7 @@ function html(webview: vscode.Webview, uris: { script: vscode.Uri; style: vscode
 <meta http-equiv="Content-Security-Policy" content="${csp}">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <link rel="stylesheet" href="${uris.style.toString()}">
-<title>Vesna</title>
+<title>${WORDS.appName}</title>
 </head>
 <body>
 <div id="root"></div>

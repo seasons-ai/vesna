@@ -31,3 +31,14 @@ test("args that are not a list of strings fall back to none", () => {
 test("the command is trimmed", () => {
   expect(readSettings(getter({ command: " vesna " })).command).toBe("vesna");
 });
+
+// ---------------------------------------------------------------------------
+// The contributions are folder-scoped: a multi-root workspace's first folder
+// may name its own command, and the extension reads the folder's settings.
+
+test("vesna.command and vesna.args are resource-scoped in package.json", async () => {
+  const pkg = (await import("../package.json")) as { contributes: { configuration: { properties: Record<string, { scope?: string }> } } };
+  const properties = pkg.contributes.configuration.properties;
+  expect(properties["vesna.command"]?.scope).toBe("resource");
+  expect(properties["vesna.args"]?.scope).toBe("resource");
+});

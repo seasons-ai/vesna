@@ -4,6 +4,7 @@
  * imports this under Bun.
  */
 import type { PanelModel } from "../src/state";
+import { COMMAND_NAMES } from "../src/words";
 
 /** Webview → host. Exactly these five; nothing else crosses. */
 export type ToHost =
@@ -13,8 +14,32 @@ export type ToHost =
   | { kind: "interrupt" }
   | { kind: "restart" };
 
-/** Host → webview: the whole model, every time it changes. */
-export type ToWebview = { kind: "model"; model: PanelModel };
+/**
+ * Host → webview: the whole model every time it changes, or a line the
+ * host could not deliver (no server, or the request rejected) handed back
+ * so the composer can put it where it was.
+ */
+export type ToWebview = { kind: "model"; model: PanelModel } | { kind: "rejected"; text: string };
+
+export function isRejected(message: unknown): message is { kind: "rejected"; text: string } {
+  return (
+    message !== null &&
+    typeof message === "object" &&
+    (message as { kind?: unknown }).kind === "rejected" &&
+    typeof (message as { text?: unknown }).text === "string"
+  );
+}
+
+/**
+ * The command names the line could still become: only while it is a bare
+ * `/prefix` with no space yet — after the space the name is decided. The
+ * match is case-insensitive; the list is `COMMAND_NAMES` in its order.
+ */
+export function completions(line: string): string[] {
+  if (!line.startsWith("/") || line.includes(" ") || line.includes("\n")) return [];
+  const prefix = line.slice(1).toLowerCase();
+  return COMMAND_NAMES.filter((name) => name.startsWith(prefix));
+}
 
 /**
  * Splits a composer line the way the root's `parseChatInput` does: trim;

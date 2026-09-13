@@ -410,6 +410,37 @@ pre.code code {
   opacity: 0.6;
 }
 
+/* The command names a bare `/prefix` could become, listed above the box. */
+.completions {
+  list-style: none;
+  margin: 0 0 6px;
+  padding: 2px 0;
+  border: 1px solid var(--vscode-editorSuggestWidget-border, var(--vscode-widget-border));
+  border-radius: 2px;
+  background: var(--vscode-editorSuggestWidget-background, var(--vscode-editor-background));
+  max-height: 160px;
+  overflow-y: auto;
+}
+
+.completion {
+  display: block;
+  width: 100%;
+  padding: 2px 8px;
+  border: 0;
+  text-align: left;
+  font-family: var(--vscode-editor-font-family);
+  font-size: inherit;
+  color: var(--vscode-editorSuggestWidget-foreground, var(--vscode-foreground));
+  background: transparent;
+  cursor: pointer;
+}
+
+.completion:hover,
+.completions [aria-selected="true"] .completion {
+  color: var(--vscode-editorSuggestWidget-selectedForeground, var(--vscode-list-activeSelectionForeground));
+  background: var(--vscode-editorSuggestWidget-selectedBackground, var(--vscode-list-activeSelectionBackground));
+}
+
 .badge {
   position: absolute;
   top: 12px;

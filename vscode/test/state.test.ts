@@ -276,3 +276,34 @@ test("the store reduces on dispatch and tells every subscriber, until unsubscrib
   expect(seen).toEqual([1, 1]);
   expect(store.model.note).toBe("x");
 });
+
+// ---------------------------------------------------------------------------
+// An ask never outlives its server.
+
+test("a server event that is not up clears the ask and the queue", () => {
+  for (const status of [
+    { kind: "exited", code: 3, stderr: "" },
+    { kind: "starting" },
+    { kind: "notFound", command: "vesna" },
+    { kind: "tooOld", server: "0.0.1", extension: "0.1.0" },
+    { kind: "unresponsive" },
+  ] as const) {
+    let model = initialModel();
+    model = reduce(model, { kind: "notification", n: { method: "state", params: makeState(true) } });
+    model = reduce(model, { kind: "sent" });
+    model = reduce(model, { kind: "notification", n: { method: "ask", params: makeAsk("a1") } });
+    expect(model.ask).not.toBeNull();
+    expect(model.queued).toBe(1);
+    model = reduce(model, { kind: "server", status });
+    expect(model.ask).toBeNull();
+    expect(model.queued).toBe(0);
+    expect(model.server).toEqual(status);
+  }
+});
+
+test("up after a restart clears the ask too — a new server has no open question", () => {
+  let model = initialModel();
+  model = reduce(model, { kind: "notification", n: { method: "ask", params: makeAsk("a1") } });
+  model = reduce(model, { kind: "server", status: { kind: "up" } });
+  expect(model.ask).toBeNull();
+});

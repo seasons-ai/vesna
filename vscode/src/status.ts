@@ -32,7 +32,7 @@ export const CYCLE_MODE_COMMAND = "vesna.cycleMode";
 export function wireStatusBar(item: vscode.StatusBarItem, store: Store): () => void {
   const draw = (state: State | null): void => {
     item.text = `${statusIcon(state)} ${statusText(state)}`;
-    item.tooltip = state === null ? "Vesna" : `Vesna — click to change the mode (${state.mode})`;
+    item.tooltip = WORDS.statusTooltip(state === null ? null : state.mode);
   };
   item.command = CYCLE_MODE_COMMAND;
   draw(store.model.state);

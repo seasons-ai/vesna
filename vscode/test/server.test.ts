@@ -190,10 +190,6 @@ test("capabilities missing a required key → tooOld, then shutdown and exit, no
   await tick();
   answerInitialize(h.child, { transcript: 1 }, "0.5.0");
   await tick();
-  const sent = h.child.sent();
-  expect(sent.map((m) => m.method)).toEqual(["initialize", "shutdown"]);
-  h.child.say({ jsonrpc: "2.0", id: sent[1].id, result: {} });
-  await tick();
   expect(h.child.sent().map((m) => m.method)).toEqual(["initialize", "shutdown", "exit"]);
   h.child.exit(0);
   const { client } = await started;
@@ -277,7 +273,7 @@ test("lastLines keeps only the tail", () => {
 // ---------------------------------------------------------------------------
 // Stopping
 
-test("stopServer: shutdown, exit, then waits for the process — no kill when it leaves in time", async () => {
+test("stopServer writes shutdown and exit back to back, and does not kill a child that leaves in time", async () => {
   const h = harness();
   const started = start(h);
   await tick();
@@ -285,10 +281,7 @@ test("stopServer: shutdown, exit, then waits for the process — no kill when it
   const { client, child } = await started;
   const stopping = stopServer(client!, child!, 200);
   await tick();
-  const sent = h.child.sent();
-  expect(sent.map((m) => m.method)).toEqual(["initialize", "shutdown"]);
-  h.child.say({ jsonrpc: "2.0", id: sent[1].id, result: {} });
-  await tick();
+  // Both are on the wire before the server has answered anything.
   expect(h.child.sent().map((m) => m.method)).toEqual(["initialize", "shutdown", "exit"]);
   h.child.exit(0);
   await stopping;
@@ -297,14 +290,15 @@ test("stopServer: shutdown, exit, then waits for the process — no kill when it
   expect(h.statuses.map((s) => s.kind)).toEqual(["starting", "up"]);
 });
 
-test("stopServer kills the process once the ceiling passes", async () => {
+test("stopServer kills a child that ignores everything once the ceiling passes", async () => {
   const h = harness();
   const started = start(h);
   await tick();
   answerInitialize(h.child, { transcript: 1, state: 1, ask: 1 });
   const { client, child } = await started;
-  const stopping = stopServer(client!, child!, 30);
-  await stopping;
+  const before = Date.now();
+  await stopServer(client!, child!, 30);
+  expect(Date.now() - before).toBeGreaterThanOrEqual(25);
   expect(h.child.killed).toEqual(["SIGKILL"]);
 });
 
@@ -317,4 +311,65 @@ test("stopServer on a process that already exited resolves at once", async () =>
   h.child.exit(1);
   await stopServer(client!, child!, 30);
   expect(h.child.killed).toEqual([]);
+});
+
+// ---------------------------------------------------------------------------
+// A handshake that never comes
+
+test("a child that never answers initialize → unresponsive after the handshake ceiling, and killed", async () => {
+  const h = harness();
+  const started = startServer({
+    command: "vesna",
+    args: [],
+    cwd: "/repo",
+    extensionVersion: "0.1.0",
+    spawn: h.spawner,
+    handshakeMs: 30,
+    onStatus: (s) => h.statuses.push(s),
+    onNotification: (n) => h.notifications.push(n),
+  });
+  const { client } = await started;
+  expect(client).toBeNull();
+  expect(h.statuses).toEqual([{ kind: "starting" }, { kind: "unresponsive" }]);
+  expect(h.child.killed).toEqual(["SIGKILL"]);
+  // The kill's exit is ours, not news.
+  h.child.exit(null);
+  expect(h.statuses).toHaveLength(2);
+});
+
+test("onSpawn hands the child over at spawn time, before any handshake", async () => {
+  const h = harness();
+  const spawned: ChildLike[] = [];
+  const started = startServer({
+    command: "vesna",
+    args: [],
+    cwd: "/repo",
+    extensionVersion: "0.1.0",
+    spawn: h.spawner,
+    onSpawn: (child) => spawned.push(child),
+    onStatus: (s) => h.statuses.push(s),
+    onNotification: (n) => h.notifications.push(n),
+  });
+  await tick();
+  expect(spawned).toEqual([h.child]);
+  answerInitialize(h.child, { transcript: 1, state: 1, ask: 1 });
+  await started;
+});
+
+test("up comes before the handshake's state, so an ask sent right after it is not cleared by up", async () => {
+  const h = harness();
+  const order: string[] = [];
+  const started = startServer({
+    command: "vesna",
+    args: [],
+    cwd: "/repo",
+    extensionVersion: "0.1.0",
+    spawn: h.spawner,
+    onStatus: (s) => order.push(`status:${s.kind}`),
+    onNotification: (n) => order.push(`notification:${n.method}`),
+  });
+  await tick();
+  answerInitialize(h.child, { transcript: 1, state: 1, ask: 1 });
+  await started;
+  expect(order).toEqual(["status:starting", "status:up", "notification:state"]);
 });

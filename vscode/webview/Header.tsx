@@ -13,7 +13,7 @@ export function Header({ model }: { model: PanelModel }) {
     <header className="header">
       <div className="header-line">
         <span className="header-facts">
-          {state === null ? "Vesna" : `${state.model} · ${state.service} · $${state.usage.costUsd.toFixed(4)}`}
+          {state === null ? WORDS.appName : `${state.model} · ${state.service} · $${state.usage.costUsd.toFixed(4)}`}
         </span>
         {state?.busy === true && (
           <button type="button" className="button secondary" onClick={() => post({ kind: "interrupt" })}>
@@ -32,11 +32,18 @@ function ServerBanner({ server }: { server: ServerStatus }) {
     case "up":
       return null;
     case "starting":
-      return <div className="banner muted">Starting Vesna…</div>;
+      return <div className="banner muted">{WORDS.starting}</div>;
     case "noFolder":
       return <div className="banner">{WORDS.noFolder}</div>;
     case "tooOld":
       return <div className="banner error">{WORDS.tooOld(server.server, server.extension)}</div>;
+    case "unresponsive":
+      return (
+        <div className="banner error">
+          <span>{WORDS.unresponsive}</span>
+          <RestartButton />
+        </div>
+      );
     case "notFound":
       return (
         <div className="banner error">

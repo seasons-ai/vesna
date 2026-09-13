@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { initialModel, type PanelModel } from "../src/state";
 import { App } from "./App";
-import { bindHost, type HostApi, type ToWebview } from "./bridge";
+import { bindHost, isRejected, type HostApi, type ToWebview } from "./bridge";
 
 declare function acquireVsCodeApi(): HostApi;
 
@@ -16,11 +16,19 @@ bindHost(acquireVsCodeApi());
  */
 function Root() {
   const [model, setModel] = useState<PanelModel>(initialModel);
+  // A line the host handed back, numbered so the same text twice is two events.
+  const [rejected, setRejected] = useState<{ text: string; seq: number } | null>(null);
 
   useEffect(() => {
     let pending: PanelModel | null = null;
     let frame: number | null = null;
+    let seq = 0;
     const onMessage = (event: MessageEvent<ToWebview>) => {
+      if (isRejected(event.data)) {
+        seq += 1;
+        setRejected({ text: event.data.text, seq });
+        return;
+      }
       if (event.data?.kind !== "model") return;
       pending = event.data.model;
       frame ??= requestAnimationFrame(() => {
@@ -36,7 +44,7 @@ function Root() {
     };
   }, []);
 
-  return <App model={model} />;
+  return <App model={model} rejected={rejected} />;
 }
 
 createRoot(document.getElementById("root")!).render(<Root />);
