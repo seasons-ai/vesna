@@ -54,9 +54,11 @@ jobs:
 
       - name: Publish to the Marketplace
         working-directory: vscode
+        env:
+          VSCE_PAT: ${{ secrets.VSCE_PAT }}
         run: |
           pkg="$(node -p "require('./package.json').version")"
-          bunx --bun @vscode/vsce publish --no-dependencies -p "${{ secrets.VSCE_PAT }}" --packagePath "vesna-$pkg.vsix"
+          bunx --bun @vscode/vsce publish --no-dependencies --packagePath "vesna-$pkg.vsix"
 
       - name: GitHub Release
         uses: softprops/action-gh-release@v2
