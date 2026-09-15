@@ -258,6 +258,32 @@ This is policy, not a sandbox. `shell` and `script` run with your own
 privileges; the classifier that decides what is read-only has needed a fix in
 every review it has had. Containment is on the roadmap, not claimed.
 
+### Tools from MCP servers
+
+`.vesna/config.yaml` can start MCP servers over stdio and hand their tools
+to the agent:
+
+```yaml
+mcp:
+  github:
+    command: npx
+    args: ["-y", "@modelcontextprotocol/server-github"]
+    env: [GITHUB_TOKEN]
+    tools:
+      list_issues: pure
+      get_file_contents: pure
+```
+
+Every tool becomes a node named `<server>__<tool>` — `github__list_issues` —
+under the same policy as a builtin. Its effect is `external` unless
+`tools:` lowers it to `pure` or `write`; the server's own read-only claim
+is shown as a hint in the permission question, never trusted as one. A
+rule matches it like any node — `deny: { "github__*": ["**"] }` blocks
+the whole server, `**` meaning every call and `*` a facetless call or a
+top-level path. The reviewer only ever borrows a server's `pure` tools.
+`env` names variables to pass through, never their values. `/mcp` lists
+each server with its status and tool count.
+
 ## Clients
 
 One core, four clients. `vesna` is the full-screen chat; `vesna --plain` is

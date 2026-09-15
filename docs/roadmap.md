@@ -82,6 +82,21 @@ is a later spec's.
 
 Every console block in the README is verbatim output.
 
+**MCP servers as tools** (on `main`, unreleased). Done as declared: `mcp:`
+in `.vesna/config.yaml` starts servers over stdio — command, args, `env`
+names only, a per-tool `pure`/`write` override; a client speaks
+`initialize`, paged `tools/list`, `tools/call` with a 60 s ceiling and a
+`down` state a dead or mute server settles into. Every tool registers as
+`<server>__<tool>` under the same policy as a builtin — `external` unless
+the config lowers it, the server's own read-only claim only ever a hint in
+the permission question — and a `deny`/`allow` rule reaches it by server or
+by star (`github__*`, `**` for the whole server, `*` for a facetless call
+or a top-level path). The reviewer is offered a server's `pure` tools and
+no other. `/mcp` and `State.mcp` report each server's status and tool
+count. A secret named in `env:` reaches the server it was named for and
+nowhere Vesna itself writes — not the session, not a notice, not a report
+line.
+
 **The editor extension** (`vscode/`, `0.1.0`). A VS Code extension on
 `vesna serve`: a side-panel chat with streaming markdown, a card per tool
 call from `transcript.step`, and the questions as buttons `y`/`a`/`n`; the
@@ -104,14 +119,14 @@ skips a registry whose token is missing.
 
 ## Next
 
-**MCP in the core.** An MCP client added to the tool registry — servers
-declared in `.vesna/config.yaml`, their tools reachable under the same
-read-only policy as everything else Vesna calls. The registry itself as an
-MCP server, so another agent can drive Vesna's tools. Then a `claude-code`
-provider on top, driving the `claude` CLI against that server instead of a
-model API directly. Done when a configured MCP server's tools show up
-policy-gated in a turn, and a `claude-code` provider turn calls one through
-the registry's own server.
+**Vesna as an MCP server, and the `claude-code` provider.** The registry
+served over stdio, so another agent — Claude Code, Cursor — can reach
+Vesna's own tools the way Vesna now reaches an MCP server's. On top of it,
+a `claude-code` provider that drives the official `claude -p` against that
+server with its built-in tools disallowed — the white-zone route to a
+Claude subscription, no key of Vesna's own. Done when an external agent
+calls one of Vesna's tools through the served registry, and a
+`claude-code` provider turn runs entirely through it.
 
 ## Later
 
