@@ -15,7 +15,7 @@ Vesna itself is not bundled — install the CLI first, then this extension:
 npm i -g @seasons-ai/vesna
 ```
 
-Then install "Vesna" from the Marketplace (`seasons-ai.vesna`), open a
+Then install "Vesna" from the Marketplace (`Vesna.vesna`), open a
 folder with (or without) a `.vesna/` spec, and the extension starts
 `vesna serve` for you.
 

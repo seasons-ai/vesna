@@ -3,7 +3,7 @@
   "displayName": "Vesna",
   "description": "A coding agent with spec-driven development built in — the chat, the garden and the review findings beside your code.",
   "version": "0.1.0",
-  "publisher": "seasons-ai",
+  "publisher": "Vesna",
   "license": "MIT",
   "repository": { "type": "git", "url": "https://github.com/seasons-ai/vesna", "directory": "vscode" },
   "engines": { "vscode": "^1.90.0" },

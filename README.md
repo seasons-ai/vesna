@@ -264,8 +264,8 @@ One core, four clients. `vesna` is the full-screen chat; `vesna --plain` is
 the same conversation one line at a time, for a dumb terminal; `vesna
 serve` is the core with no screen at all — `vesna --help` lists it beside
 the others — and a VS Code extension (`vscode/`, on the
-[Marketplace](https://marketplace.visualstudio.com/items?itemName=seasons-ai.vesna)
-as `seasons-ai.vesna`) — the chat, the garden and the findings beside the
+[Marketplace](https://marketplace.visualstudio.com/items?itemName=Vesna.vesna)
+as `Vesna.vesna`) — the chat, the garden and the findings beside the
 code:
 
 ```text

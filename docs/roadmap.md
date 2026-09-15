@@ -97,7 +97,7 @@ workspace, the 12 s kill path against a genuinely hung server, a real turn
 (a permission question, Always, the approve-the-plan buttons, a queued
 `send`), Cancel replacing Build mid-build, and the running/failed/blocked
 task icons against a live build rather than the pure mapping's unit tests.
-Published on the Marketplace as `seasons-ai.vesna` once `release-vscode.yml`
+Published on the Marketplace as `Vesna.vesna` once `release-vscode.yml`
 runs on its first `vscode-v*` tag.
 
 ## Next
