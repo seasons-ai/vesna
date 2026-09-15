@@ -18,7 +18,7 @@ export function unattendedApprove(
   return async (action) => {
     const verdict = decide(action, policy, root);
     if (verdict === "allow") return "allow";
-    const reason = verdict === "deny" ? policyRefusal(action.node, policy.mode) : wouldAsk(action.node);
+    const reason = verdict === "deny" ? policyRefusal(action.node, policy.mode) : wouldAsk(action.node, policy.mode);
     report(reason);
     return { verdict: "deny", reason };
   };

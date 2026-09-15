@@ -566,5 +566,8 @@ test("a policy refusal names the mode's reason; a question nobody can answer say
   expect(policyRefusal("fake__hint", "plan")).toBe("fake__hint refused: plan mode changes nothing — shift-tab to leave it");
   expect(policyRefusal("fake__hint", "ask")).toBe("refused by policy: fake__hint");
   expect(policyRefusal("write", "auto")).toBe("refused by policy: write");
-  expect(wouldAsk("fake__hint")).toBe("fake__hint would ask — run it in the chat, or set permissions.mode: auto");
+  expect(wouldAsk("fake__hint", "ask")).toBe("fake__hint would ask — run it in the chat, or set permissions.mode: auto");
+  expect(wouldAsk("fake__hint", "plan")).toBe("fake__hint would ask — run it in the chat, or set permissions.mode: auto");
+  // Already in auto: the only thing left to ask about is the always-ask list.
+  expect(wouldAsk("shell", "auto")).toBe("shell would ask — it is on the always-ask list, so a person must run it");
 });

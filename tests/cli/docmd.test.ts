@@ -34,7 +34,8 @@ test("the always-ask list refuses even in auto", async () => {
   const lines: string[] = [];
   const approve = unattendedApprove(policy("auto"), root, (line) => lines.push(line));
   const verdict = await approve({ node: "shell", input: { command: "sudo rm -rf /" }, cwd: root, effect: "external" });
-  expect(verdict).toEqual({ verdict: "deny", reason: "shell would ask — run it in the chat, or set permissions.mode: auto" });
+  expect(verdict).toEqual({ verdict: "deny", reason: "shell would ask — it is on the always-ask list, so a person must run it" });
+  expect(lines).toEqual(["shell would ask — it is on the always-ask list, so a person must run it"]);
 });
 
 test("a deny rule refuses by policy, in auto", async () => {

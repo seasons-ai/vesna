@@ -80,10 +80,13 @@ export function policyRefusal(node: string, mode: Mode): string {
 
 /**
  * `vesna do` has nobody to ask. What the chat would have put to a person is
- * refused, and the line says where the question can be answered.
+ * refused, and the line says where the question can be answered. In `auto`
+ * the only question left is the always-ask list, and no setting opens that.
  */
-export function wouldAsk(node: string): string {
-  return `${node} would ask — run it in the chat, or set permissions.mode: auto`;
+export function wouldAsk(node: string, mode: Mode): string {
+  return mode === "auto"
+    ? `${node} would ask — it is on the always-ask list, so a person must run it`
+    : `${node} would ask — run it in the chat, or set permissions.mode: auto`;
 }
 
 /**
