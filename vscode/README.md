@@ -15,9 +15,13 @@ Vesna itself is not bundled — install the CLI first, then this extension:
 npm i -g @seasons-ai/vesna
 ```
 
-Then install "Vesna" from the Marketplace (`Vesna.vesna`), open a
-folder with (or without) a `.vesna/` spec, and the extension starts
-`vesna serve` for you.
+Then the extension, `Vesna.vesna`, from wherever your editor installs
+from: Cursor, Windsurf, VSCodium and Theia use [Open VSX](https://open-vsx.org/extension/Vesna/vesna);
+VS Code uses the Microsoft Marketplace, or the `.vsix` attached to every
+[release](https://github.com/seasons-ai/vesna/releases?q=vscode-v) —
+`code --install-extension vesna-<version>.vsix`, or Extensions → `…` →
+Install from VSIX. Open a folder with (or without) a `.vesna/` spec and the
+extension starts `vesna serve` for you.
 
 ## The three views
 

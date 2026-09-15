@@ -263,10 +263,11 @@ every review it has had. Containment is on the roadmap, not claimed.
 One core, four clients. `vesna` is the full-screen chat; `vesna --plain` is
 the same conversation one line at a time, for a dumb terminal; `vesna
 serve` is the core with no screen at all — `vesna --help` lists it beside
-the others — and a VS Code extension (`vscode/`, on the
-[Marketplace](https://marketplace.visualstudio.com/items?itemName=Vesna.vesna)
-as `Vesna.vesna`) — the chat, the garden and the findings beside the
-code:
+the others — and an editor extension (`vscode/` — `Vesna.vesna` on
+[Open VSX](https://open-vsx.org/extension/Vesna/vesna) for Cursor, Windsurf
+and VSCodium, and as a `.vsix` on every
+[release](https://github.com/seasons-ai/vesna/releases?q=vscode-v) for VS
+Code) — the chat, the garden and the findings beside the code:
 
 ```text
   vesna serve                             serve the agent over JSON-RPC on stdio (for editors)

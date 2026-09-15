@@ -13,6 +13,9 @@ permissions:
 jobs:
   publish:
     runs-on: ubuntu-latest
+    env:
+      OVSX_PAT: ${{ secrets.OVSX_PAT }}
+      VSCE_PAT: ${{ secrets.VSCE_PAT }}
     steps:
       - uses: actions/checkout@v4
 
@@ -52,7 +55,22 @@ jobs:
           pkg="$(node -p "require('./package.json').version")"
           bunx --bun @vscode/vsce package --no-dependencies -o "vesna-$pkg.vsix"
 
+      # Two registries, each only when its token is set: Open VSX is where
+      # Cursor, Windsurf, VSCodium and Theia install from; the Microsoft
+      # Marketplace is VS Code's own. A missing token skips that registry
+      # rather than failing the release — the .vsix on the GitHub Release is
+      # always there to install by hand.
+      - name: Publish to Open VSX
+        if: ${{ env.OVSX_PAT != '' }}
+        working-directory: vscode
+        env:
+          OVSX_PAT: ${{ secrets.OVSX_PAT }}
+        run: |
+          pkg="$(node -p "require('./package.json').version")"
+          npx --yes ovsx publish "vesna-$pkg.vsix" -p "$OVSX_PAT"
+
       - name: Publish to the Marketplace
+        if: ${{ env.VSCE_PAT != '' }}
         working-directory: vscode
         env:
           VSCE_PAT: ${{ secrets.VSCE_PAT }}

@@ -97,8 +97,10 @@ workspace, the 12 s kill path against a genuinely hung server, a real turn
 (a permission question, Always, the approve-the-plan buttons, a queued
 `send`), Cancel replacing Build mid-build, and the running/failed/blocked
 task icons against a live build rather than the pure mapping's unit tests.
-Published on the Marketplace as `Vesna.vesna` once `release-vscode.yml`
-runs on its first `vscode-v*` tag.
+Published as `Vesna.vesna` to Open VSX (Cursor, Windsurf, VSCodium,
+Theia) and as a `.vsix` on each `vscode-v*` release; the Microsoft
+Marketplace joins once a publisher token exists — `release-vscode.yml`
+skips a registry whose token is missing.
 
 ## Next
 
