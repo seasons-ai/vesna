@@ -71,6 +71,21 @@ export function moreInFullScreen(): string {
   return "the full-screen chat has more: /provider, /model, /mode, /spec, /history, /theme";
 }
 
+/** The notice for an action the policy refused outright, in the mode's own words. */
+export function policyRefusal(node: string, mode: Mode): string {
+  return mode === "plan"
+    ? `${node} refused: plan mode changes nothing — shift-tab to leave it`
+    : `refused by policy: ${node}`;
+}
+
+/**
+ * `vesna do` has nobody to ask. What the chat would have put to a person is
+ * refused, and the line says where the question can be answered.
+ */
+export function wouldAsk(node: string): string {
+  return `${node} would ask — run it in the chat, or set permissions.mode: auto`;
+}
+
 /**
  * `/mcp`: one line per server. A server that is up says how many tools it
  * brought; one that is down says why, in the client's own words. No servers

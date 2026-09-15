@@ -204,7 +204,8 @@ function describe(value: unknown): string {
 
 /** Passed-through environment variable names, not values — never lower-case,
  * never a stray symbol a shell would choke on. */
-const ENV_NAME = /^[A-Z_][A-Z0-9_]*$/;
+/** A variable's name, in either case: `http_proxy` is as much a name as `GITHUB_TOKEN`. */
+const ENV_NAME = /^[A-Za-z_][A-Za-z0-9_]*$/;
 
 /**
  * The `mcp:` section, pure: `raw` in, servers and problems out. A malformed
@@ -265,7 +266,16 @@ export function parseMcp(raw: unknown): { servers: Record<string, McpServerConfi
     }
 
     const argsRaw = entry.args;
-    const args = Array.isArray(argsRaw) ? (argsRaw as string[]) : [];
+    let args: string[] = [];
+    if (argsRaw !== undefined) {
+      // Checked here, as a config problem: an element that is not a string
+      // would otherwise reach the spawn and surface as "could not start".
+      if (!Array.isArray(argsRaw) || !argsRaw.every((arg) => typeof arg === "string")) {
+        problems.push(`mcp ${key}: args must be a list of strings`);
+        continue;
+      }
+      args = argsRaw as string[];
+    }
 
     servers[key] = { command, args, env, tools };
   }

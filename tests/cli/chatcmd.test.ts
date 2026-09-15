@@ -3,6 +3,8 @@ import {
   CHAT_COMMANDS,
   PLAIN_CHAT_COMMANDS,
   mcpLines,
+  policyRefusal,
+  wouldAsk,
   approvalQuestion,
   approveOutcome,
   buildBusy,
@@ -558,4 +560,11 @@ test("mcpLines: one line per server, the tool count for up, the problem for down
 
 test("mcpLines with no servers says where to add one", () => {
   expect(mcpLines([])).toEqual(["no MCP servers — add an mcp: section to .vesna/config.yaml"]);
+});
+
+test("a policy refusal names the mode's reason; a question nobody can answer says where to ask it", () => {
+  expect(policyRefusal("fake__hint", "plan")).toBe("fake__hint refused: plan mode changes nothing — shift-tab to leave it");
+  expect(policyRefusal("fake__hint", "ask")).toBe("refused by policy: fake__hint");
+  expect(policyRefusal("write", "auto")).toBe("refused by policy: write");
+  expect(wouldAsk("fake__hint")).toBe("fake__hint would ask — run it in the chat, or set permissions.mode: auto");
 });

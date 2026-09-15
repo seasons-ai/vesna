@@ -16,6 +16,7 @@ import { isHelp, isVersion, VERSION } from "./entry";
 import { parseFlags } from "./flags";
 import { authCommand } from "./authcmd";
 import { buildCommand } from "./buildcmd";
+import { unattendedApprove } from "./docmd";
 import { serveCommand } from "./servecmd";
 import { needsOnboarding, runOnboarding } from "./onboard";
 import type { Preset } from "../providers/catalog";
@@ -233,46 +234,44 @@ export async function main(argv: string[]): Promise<number> {
   if (action === "serve") return await serveCommand(root);
 
   const { registry, config, provider, theme, notes, policy, sink, mcp } = await buildContext(root);
-  const permit = (node: { use: string }) => permits(config, node.use);
 
-  if (enteringChat) {
-    // The chat's core closes the servers when it closes.
-    const deps = { registry, provider, config, theme, root, notes, policy, sink, mcp };
-    // The line-based chat stays available for dumb terminals and for piping.
-    if (flags.plain !== undefined || !process.stdout.isTTY) return await runChat(deps);
-    return await runTui(deps);
-  }
+  // Every way out from here — a refusal, an answer, a throw — closes the
+  // servers: a server left running holds the process open after the exit
+  // line has been printed. The chat's core closes them itself as well; both
+  // closes are idempotent.
+  try {
+    if (enteringChat) {
+      const deps = { registry, provider, config, theme, root, notes, policy, sink, mcp };
+      // The line-based chat stays available for dumb terminals and for piping.
+      if (flags.plain !== undefined || !process.stdout.isTTY) return await runChat(deps);
+      return await runTui(deps);
+    }
 
-  if (command === "do" && target) {
-    const started = Date.now();
-    let trace;
-    try {
-      trace = await runLive(target, provider, registry, {
+    if (command === "do" && target) {
+      const started = Date.now();
+      const trace = await runLive(target, provider, registry, {
         cwd: root,
         model: flags.model ?? config.model,
         prices: config.prices,
         notes,
         permit: (type) => permits(config, type),
+        // The config's policy, with nobody to ask: what the chat would put
+        // to a person is refused, and the line on stderr says where to ask.
+        approve: unattendedApprove(policy, root, (line) => console.error(`vesna: ${line}`)),
         onStep: (step) =>
           console.log(
             `  ${theme.paint("petal", "·")} ${theme.paint("text", step.nodeType.padEnd(8))} ${theme.paint("muted", `${step.durationMs}ms`)}`,
           ),
       });
-    } finally {
-      // The servers were started for this one task; a server left running
-      // would hold the process open after the answer.
-      await mcp.close();
+
+      const seconds = ((Date.now() - started) / 1000).toFixed(1);
+
+      if (trace.finalText) console.log(`\n${trace.finalText}`);
+      console.log(`\n${trace.steps.length} steps · ${seconds}s · $${trace.costUsd.toFixed(4)}`);
+      return EXIT.ok;
     }
 
-    const seconds = ((Date.now() - started) / 1000).toFixed(1);
-
-    if (trace.finalText) console.log(`\n${trace.finalText}`);
-    console.log(`\n${trace.steps.length} steps · ${seconds}s · $${trace.costUsd.toFixed(4)}`);
-    return EXIT.ok;
-  }
-
-  if (command === "build") {
-    try {
+    if (command === "build") {
       return await buildCommand(
         target,
         root,
@@ -287,13 +286,13 @@ export async function main(argv: string[]): Promise<number> {
         },
         flags,
       );
-    } finally {
-      await mcp.close();
     }
-  }
 
-  console.error(`vesna: unknown command "${command}"`);
-  console.error("");
-  console.error(USAGE);
-  return EXIT.error;
+    console.error(`vesna: unknown command "${command}"`);
+    console.error("");
+    console.error(USAGE);
+    return EXIT.error;
+  } finally {
+    await mcp.close();
+  }
 }

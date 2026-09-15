@@ -31,7 +31,7 @@ export interface SessionOptions {
     input: Record<string, unknown>;
     cwd: string;
     effect?: "pure" | "write" | "external";
-  }) => Promise<"allow" | "deny">;
+  }) => Promise<Verdict>;
   prices?: Record<string, ModelPrice>;
   /** The project's own instructions, from .vesna/AGENTS.md. */
   notes?: string;
@@ -51,6 +51,13 @@ export interface SessionOptions {
   /** Cancels the turn: the provider request, and the loop between tool calls. */
   signal?: AbortSignal;
 }
+
+/**
+ * What `approve` answers. A refusal may carry the words the model reads as
+ * the tool's result — `vesna do` says why nobody could be asked — or it may
+ * be the bare word, and the model reads that the user refused.
+ */
+export type Verdict = "allow" | "deny" | { verdict: "deny"; reason: string };
 
 export interface TurnResult {
   /** Assistant text from this turn only. */
@@ -139,7 +146,10 @@ export function createSession(
     let turnText = "";
 
     for (let turn = 0; turn < maxTurns; turn += 1) {
-      if (signal?.aborted) break;
+      // A turn cut short between tool calls ends as one cut short in the
+      // model's own request does: by the abort the person asked for, so
+      // whoever is listening says "interrupted" either way.
+      if (signal?.aborted) throw new DOMException("The operation was aborted", "AbortError");
       const response = await provider.complete({
         model,
         system,
@@ -183,13 +193,13 @@ export function createSession(
             cwd: options.cwd,
             ...(registry.get(use.name) ? { effect: registry.get(use.name)!.effect } : {}),
           });
-          if (verdict === "deny") {
+          if (verdict !== "allow") {
             // Reported rather than thrown: a refusal is an answer, and the
             // model can still choose a different way to the same goal.
             results.push({
               type: "tool_result",
               callId: use.id,
-              content: `refused by the user: ${use.name}`,
+              content: verdict === "deny" ? `refused by the user: ${use.name}` : verdict.reason,
               isError: true,
             });
             continue;

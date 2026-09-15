@@ -14,6 +14,7 @@ import {
   describeProviders,
   mcpLines,
   modelSwitchOutcome,
+  policyRefusal,
   quitTimedOut,
   recoverOutcome,
   specSwitchBlocked,
@@ -908,12 +909,7 @@ export function createCore(deps: CoreDeps): Core {
     const verdict = decide(action, policy, deps.root);
     if (verdict === "allow") return "allow";
     if (verdict === "deny") {
-      notice(
-        policy.mode === "plan"
-          ? `${action.node} refused: plan mode changes nothing — shift-tab to leave it`
-          : `refused by policy: ${action.node}`,
-        "warn",
-      );
+      notice(policyRefusal(action.node, policy.mode), "warn");
       return "deny";
     }
 

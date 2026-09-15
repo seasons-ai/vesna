@@ -83,3 +83,37 @@ test("no mcp section is no servers", async () => {
     expect(config.mcp).toBeUndefined();
   });
 });
+
+// A proxied server needs `http_proxy`, the conventional Unix spelling: a
+// name is a name whatever its case.
+test("env accepts lower-case names", async () => {
+  await withRoot(async (root, home) => {
+    await writeConfig(root, ["mcp:", "  x:", "    command: npx", "    env: [http_proxy, HTTPS_PROXY, _x1]"].join("\n"));
+    const config = await loadConfig(root, {}, home);
+    expect(config.mcpProblems).toBeUndefined();
+    expect(config.mcp!.x!.env).toEqual(["http_proxy", "HTTPS_PROXY", "_x1"]);
+  });
+});
+
+test("env still refuses what is not a name", async () => {
+  await withRoot(async (root, home) => {
+    await writeConfig(root, ["mcp:", "  x:", "    command: npx", "    env: [1x, a-b]"].join("\n"));
+    const config = await loadConfig(root, {}, home);
+    expect(config.mcpProblems).toEqual(["mcp x: env must be a list of names"]);
+  });
+});
+
+test("args must be a list of strings, or the server is skipped with a problem", async () => {
+  await withRoot(async (root, home) => {
+    await writeConfig(
+      root,
+      ["mcp:", "  nums:", "    command: x", "    args: [1]", "  str:", "    command: x", "    args: -y", "  ok:", "    command: x", "    args: [-y, x]"].join("\n"),
+    );
+    const config = await loadConfig(root, {}, home);
+    expect(Object.keys(config.mcp!)).toEqual(["ok"]);
+    expect(config.mcpProblems).toEqual([
+      "mcp nums: args must be a list of strings",
+      "mcp str: args must be a list of strings",
+    ]);
+  });
+});

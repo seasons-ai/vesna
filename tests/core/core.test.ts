@@ -1139,3 +1139,17 @@ test("a server that dies mid-session is announced as down, with no tools, in a s
   expect(typeof state.mcp[0].problem).toBe("string");
   await core.close();
 });
+
+test("interrupting a tool call mid-flight says interrupted, as interrupting the model does", async () => {
+  const core = createCore(await mcpDeps("auto", {}, { provider: toolCaller("fake__slow", { ms: 20_000 }) }));
+  const seen = collect(core);
+  const turn = core.send("go");
+  await until(() => seen.some((n) => n.method === "state" && (n.params as any).busy === true), "the turn to start");
+  // Long enough for the call to be on the wire; the fixture sleeps 20 s.
+  await new Promise((resolve) => setTimeout(resolve, 150));
+  core.interrupt();
+  await turn;
+  expect(transcript(seen).some((e: any) => e.kind === "notice" && /interrupted/.test(e.text) && e.level === "warn")).toBe(true);
+  expect(transcript(seen).at(-1)).toEqual({ kind: "turn-end" });
+  await core.close();
+});

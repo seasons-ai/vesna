@@ -152,3 +152,52 @@ test("a phase that changes between turns is picked up on the next one, not froze
   expect(systems[1]).toContain("## Phase: spec");
   expect(systems[1]).not.toContain("## Phase: design");
 });
+
+test("a refusal with a reason is what the model reads as the tool's result", async () => {
+  const { provider, seen } = scriptedProvider([
+    [{ type: "tool_call", id: "c1", name: "echo", input: { value: 1 } }],
+  ]);
+  const session = createSession(provider, registryWithEcho(), {
+    cwd: "/tmp",
+    async approve() {
+      return { verdict: "deny", reason: "echo would ask — run it in the chat" };
+    },
+  });
+  await session.send("go");
+  const results = seen[1]!.at(-1)!.content;
+  expect(results).toEqual([{ type: "tool_result", callId: "c1", content: "echo would ask — run it in the chat", isError: true }]);
+});
+
+test("a bare deny still reads as the user's refusal", async () => {
+  const { provider, seen } = scriptedProvider([
+    [{ type: "tool_call", id: "c1", name: "echo", input: { value: 1 } }],
+  ]);
+  const session = createSession(provider, registryWithEcho(), {
+    cwd: "/tmp",
+    async approve() {
+      return "deny";
+    },
+  });
+  await session.send("go");
+  expect(seen[1]!.at(-1)!.content[0].content).toBe("refused by the user: echo");
+});
+
+test("a turn aborted between tool calls ends by the abort, not quietly", async () => {
+  const controller = new AbortController();
+  const { provider } = scriptedProvider([
+    [{ type: "tool_call", id: "c1", name: "echo", input: { value: 1 } }],
+  ]);
+  const registry = createRegistry();
+  registry.register({
+    type: "echo",
+    effect: "pure",
+    description: "Echo a value, then the person interrupts",
+    inputSchema: { type: "object" },
+    async run(input: any) {
+      controller.abort();
+      return { value: input.value };
+    },
+  });
+  const session = createSession(provider, registry, { cwd: "/tmp", signal: controller.signal });
+  await expect(session.send("go")).rejects.toThrow("The operation was aborted");
+});
