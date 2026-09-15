@@ -12,6 +12,10 @@ export interface NodeDef<I = any, O = any> {
   description: string;
   /** JSON Schema for `run`'s input. This is what the agent sees as the tool schema. */
   inputSchema: Record<string, unknown>;
+  /** Where the node comes from; absent means a builtin. An MCP server's
+   * tools carry `"mcp"`, so a caller can pick them out — the reviewer's
+   * registry lists the `pure` ones and no other. */
+  origin?: "builtin" | "mcp";
   run(input: I, ctx: NodeContext): Promise<O>;
 }
 

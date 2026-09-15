@@ -17,7 +17,9 @@
  * `sampling/createMessage` request (id 900) after `initialize` and logs the
  * client's response to stderr; `FAKE_MCP_PRINT_ENV=NAME` makes `echo` append
  * the named environment variable's value to its text, to prove a
- * passed-through secret reaches the server and nothing else.
+ * passed-through secret reaches the server and nothing else; `FAKE_MCP_LINGER
+ * =1` keeps the process alive after stdin closes, so a test that wants to
+ * see the process killed rather than merely orphaned has something to kill.
  */
 import { createInterface } from "node:readline";
 
@@ -145,6 +147,8 @@ async function handle(message: RpcMessage): Promise<void> {
     send({ jsonrpc: "2.0", id, error: { code: -32601, message: `unknown method "${method}"` } });
   }
 }
+
+if (process.env.FAKE_MCP_LINGER === "1") setInterval(() => {}, 1000);
 
 const rl = createInterface({ input: process.stdin, terminal: false });
 rl.on("line", (line) => {

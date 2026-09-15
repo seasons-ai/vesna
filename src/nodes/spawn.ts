@@ -26,7 +26,7 @@ const GRACE_MS = 300;
  *
  * Linux is read from /proc, which needs no tools; elsewhere `pgrep -P`.
  */
-function descendantsOf(pid: number): number[] {
+export function descendantsOf(pid: number): number[] {
   const children = new Map<number, number[]>();
   if (process.platform === "linux") {
     for (const entry of readdirSync("/proc")) {
@@ -62,7 +62,7 @@ function descendantsOf(pid: number): number[] {
   return found;
 }
 
-function killAll(pids: number[], signal: "SIGTERM" | "SIGKILL"): void {
+export function killAll(pids: number[], signal: "SIGTERM" | "SIGKILL"): void {
   for (const target of pids) {
     try {
       process.kill(target, signal);

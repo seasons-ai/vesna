@@ -16,6 +16,7 @@
  * server it was named for and no other.
  */
 import pkg from "../../package.json" with { type: "json" };
+import { descendantsOf, killAll } from "../nodes/spawn";
 import { errorResponse, METHOD_NOT_FOUND } from "../serve/rpc";
 import { PROTOCOL_VERSION, type McpServerConfig, type McpServerStatus, type McpTool } from "./types";
 
@@ -288,23 +289,37 @@ export function createMcpClient(name: string, config: McpServerConfig, options: 
     send({ jsonrpc: "2.0", method, params });
   };
 
-  /** SIGTERM, then SIGKILL after the grace if the child is still there. */
+  /**
+   * SIGTERM to the root, then SIGKILL to the whole tree after the grace, the
+   * way `spawnInterruptible` does it: a server started through `npx` or a
+   * shell wrapper is a tree, and a signal to its root alone leaves the real
+   * server orphaned, alive, and holding the pipes. The tree is captured
+   * before the first signal — once the root dies its children are
+   * reparented and no walk from its pid finds them.
+   */
   const terminate = (): Promise<void> => {
     if (terminating !== undefined) return terminating;
     const target = child;
     if (target === undefined || exited) return Promise.resolve();
     terminating = (async () => {
+      // An in-memory child has no pid and no tree; pid 0 must never be walked.
+      const tree = target.pid > 0 ? [...descendantsOf(target.pid), target.pid] : [];
       try {
         target.stdin.end();
       } catch {
         // Already closed.
       }
       target.kill("SIGTERM");
-      const gone = await Promise.race([
-        target.exited.then(() => true),
-        new Promise<boolean>((resolve) => setTimeout(() => resolve(false), GRACE_MS)),
-      ]);
-      if (!gone) {
+      const grace = new Promise<boolean>((resolve) => setTimeout(() => resolve(false), GRACE_MS));
+      const gone = await Promise.race([target.exited.then(() => true), grace]);
+      // A root that left within the grace may still have left children
+      // behind; they get the same grace, then the kill nothing can trap.
+      if (!gone || tree.length > 1) {
+        await grace;
+        const now = new Set<number>();
+        for (const pid of tree) for (const kid of descendantsOf(pid)) now.add(kid);
+        for (const pid of tree) now.add(pid);
+        killAll([...now], "SIGKILL");
         target.kill("SIGKILL");
         await target.exited;
       }
