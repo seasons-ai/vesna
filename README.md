@@ -15,7 +15,7 @@ backgrounds, `assets/mark-light.svg` for light ones.*
 
 A coding agent with spec-driven development built in.
 
-**Status: v0.7.** Early, tested, and honest about what it does not do yet.
+**Status: v0.8.** Early, tested, and honest about what it does not do yet.
 
 ## Who this is for
 
@@ -315,9 +315,9 @@ Content-Length: 109
 ```
 
 ```text
-Content-Length: 384
+Content-Length: 393
 
-{"jsonrpc":"2.0","id":1,"result":{"serverVersion":"0.7.0","capabilities":{"transcript":1,"state":1,"ask":1},"state":{"mode":"ask","busy":false,"building":false,"buildState":"idle","model":"llama3.2","service":"ollama","usage":{"inputTokens":0,"outputTokens":0,"costUsd":0},"spec":null,"specSlug":null,"chats":null,"chatId":"20260912-182938-iaqe","root":"/private/tmp/demo.6O84/cwd"}}}
+{"jsonrpc":"2.0","id":1,"result":{"serverVersion":"0.8.0","capabilities":{"transcript":1,"state":1,"ask":1},"state":{"mode":"ask","busy":false,"building":false,"buildState":"idle","model":"llama3.2","service":"ollama","usage":{"inputTokens":0,"outputTokens":0,"costUsd":0},"spec":null,"specSlug":null,"chats":null,"chatId":"20260915-173112-uvn2","root":"/private/tmp/demo.0WvM/cwd","mcp":[]}}}
 ```
 
 Both chats hold the core in-process; `tests/core/border.test.ts` is what

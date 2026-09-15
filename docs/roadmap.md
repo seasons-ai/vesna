@@ -82,7 +82,7 @@ is a later spec's.
 
 Every console block in the README is verbatim output.
 
-**MCP servers as tools** (on `main`, unreleased). Done as declared: `mcp:`
+**MCP servers as tools** (`0.8.0`). Done as declared: `mcp:`
 in `.vesna/config.yaml` starts servers over stdio — command, args, `env`
 names only, a per-tool `pure`/`write` override; a client speaks
 `initialize`, paged `tools/list`, `tools/call` with a 60 s ceiling and a
