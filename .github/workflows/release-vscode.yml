@@ -67,6 +67,10 @@ jobs:
           OVSX_PAT: ${{ secrets.OVSX_PAT }}
         run: |
           pkg="$(node -p "require('./package.json').version")"
+          ns="$(node -p "require('./package.json').publisher")"
+          # A namespace is not made by publishing into it; creating one that
+          # exists is an error worth nothing, so it is asked for and ignored.
+          npx --yes ovsx create-namespace "$ns" -p "$OVSX_PAT" || true
           npx --yes ovsx publish "vesna-$pkg.vsix" -p "$OVSX_PAT"
 
       - name: Publish to the Marketplace
