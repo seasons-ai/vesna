@@ -540,14 +540,18 @@ test("mcpLines: one line per server, the tool count for up, the problem for down
   expect(
     mcpLines([
       { name: "github", status: "up", tools: 12 },
-      { name: "db", status: "down", tools: 0, problem: "server db is down: exited with code 1" },
+      { name: "db", status: "down", tools: 0, problem: "exited with code 1" },
       { name: "one", status: "up", tools: 1 },
+      { name: "mute", status: "down", tools: 0, problem: "did not answer initialize in time" },
+      { name: "gone", status: "down", tools: 0, problem: "closed" },
       { name: "a-very-long-name", status: "starting", tools: 0 },
     ]),
   ).toEqual([
     "github       up       12 tools",
-    "db           down     server db is down: exited with code 1",
+    "db           down     exited with code 1",
     "one          up       1 tool",
+    "mute         down     did not answer initialize in time",
+    "gone         down     closed",
     "a-very-long-name starting 0 tools",
   ]);
 });

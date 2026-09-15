@@ -131,6 +131,33 @@ function listed(patterns: string[] | undefined, facet: string, node: string): bo
   return (patterns ?? []).some((pattern) => match(facet, pattern));
 }
 
+/**
+ * The patterns a table holds for a node: under its own name, and under every
+ * key that is a glob over it — `github__*` covers a whole MCP server in one
+ * line. A key without a `*` is the node's name and nothing else, so no
+ * builtin's rules move.
+ */
+function rulesFor(table: Record<string, string[]>, node: string): string[] {
+  const rules: string[] = [];
+  for (const [key, patterns] of Object.entries(table)) {
+    if (key === node || (key.includes("*") && matchesCommand(node, key))) rules.push(...patterns);
+  }
+  return rules;
+}
+
+/**
+ * Whether a table names this action. With a facet, the patterns match it as
+ * they always did. Without one — most MCP tools carry neither a path nor a
+ * command — only a rule of `*` (or `**`) can reach the node: the one way to
+ * say "this tool, whatever it is given".
+ */
+function covered(table: Record<string, string[]>, action: Action, facet: string | undefined): boolean {
+  const rules = rulesFor(table, action.node);
+  if (rules.length === 0) return false;
+  if (facet === undefined) return rules.includes("*") || rules.includes("**");
+  return listed(rules, facet, action.node);
+}
+
 function alwaysAsk(action: Action, facet: string | undefined, cwd: string): boolean {
   if (action.node === "shell" || action.node === "script") {
     const command = typeof action.input.command === "string" ? action.input.command : "";
@@ -165,7 +192,7 @@ export function decide(action: Action, policy: Policy, cwd: string): Decision {
 
   // Deny first: the always-ask list exists to stop something being allowed
   // silently, and refusing outright is stricter than asking.
-  if (facet !== undefined && listed(policy.deny[action.node], facet, action.node)) return "deny";
+  if (covered(policy.deny, action, facet)) return "deny";
 
   // Then the list no rule may switch off.
   if (alwaysAsk(action, facet, cwd)) return "ask";
@@ -176,9 +203,7 @@ export function decide(action: Action, policy: Policy, cwd: string): Decision {
   // some earlier "always allow" could quietly defeat would not be worth having.
   if (policy.mode === "plan") return "deny";
 
-  if (facet !== undefined && listed(policy.allow[action.node], facet, action.node)) {
-    return "allow";
-  }
+  if (covered(policy.allow, action, facet)) return "allow";
 
   return policy.mode === "auto" ? "allow" : "ask";
 }

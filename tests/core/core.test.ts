@@ -5,12 +5,15 @@ import { chmodSync } from "node:fs";
 import { join } from "node:path";
 import { createCore } from "../../src/core/core";
 import type { Notification } from "../../src/core/types";
+import type { Provider } from "../../src/providers/types";
 import { createSink } from "../../src/spec/sink";
 import { openSession, readSessionSync } from "../../src/store/sessions";
 import { appendEvent, createSpec, digestOf, readEvents, specPaths, specsRoot, writeSpecFile } from "../../src/spec/store";
 import type { BuildResult } from "../../src/work/builder";
 import { allowing, buildFakes, deps, halfway, reply, toolCaller, until, writing } from "../helpers/chat";
 import { registerMcp, type McpHandle } from "../../src/mcp/register";
+import { bunSpawner, type ChildLike } from "../../src/mcp/client";
+import type { Policy } from "../../src/policy/decide";
 import type { McpStatus } from "../../src/mcp/types";
 import { createRegistry } from "../../src/registry/registry";
 
@@ -915,6 +918,7 @@ function mcpHandle(servers: McpStatus[]) {
   const state = { closed: 0 };
   const handle: McpHandle = {
     servers,
+    onChange: () => () => {},
     async close() {
       state.closed += 1;
     },
@@ -937,7 +941,7 @@ test("the state carries the MCP servers, and an empty list when there are none",
 test("/mcp prints one line per server, quoted back when typed, and ends the turn", async () => {
   const { handle } = mcpHandle([
     { name: "github", status: "up", tools: 12 },
-    { name: "db", status: "down", tools: 0, problem: "server db is down: exited with code 1" },
+    { name: "db", status: "down", tools: 0, problem: "exited with code 1" },
   ]);
   const core = createCore({ ...(await deps(reply("x"))), mcp: handle });
   const seen = collect(core);
@@ -945,7 +949,7 @@ test("/mcp prints one line per server, quoted back when typed, and ends the turn
   expect(transcript(seen)).toEqual([
     { kind: "user", text: "/mcp" },
     { kind: "notice", text: "github       up       12 tools", level: "muted" },
-    { kind: "notice", text: "db           down     server db is down: exited with code 1", level: "muted" },
+    { kind: "notice", text: "db           down     exited with code 1", level: "muted" },
     { kind: "turn-end" },
   ]);
   await core.close();
@@ -977,21 +981,50 @@ test("close closes the MCP servers, once", async () => {
  * is `fake__hint` — declared read-only by the server, `external` unless the
  * config says `pure`.
  */
-async function mcpDeps(mode: "plan" | "ask" | "auto", tools: Record<string, "pure" | "write"> = {}) {
+async function mcpDeps(
+  mode: "plan" | "ask" | "auto",
+  tools: Record<string, "pure" | "write"> = {},
+  extra: { policy?: Partial<Policy>; nodes?: string[]; provider?: Provider; tee?: string } = {},
+) {
   const registry = createRegistry();
   const fixture = join(import.meta.dir, "..", "fixtures", "mcp-server.ts");
+  // Teed: every line Vesna sends the server lands in the log, so "no call
+  // was made" is a fact about the wire, not about a notice.
+  const server = extra.tee === undefined
+    ? { command: "bun", args: [fixture] }
+    : { command: "sh", args: ["-c", `tee -a "${extra.tee}" | bun "${fixture}"`] };
+  const children: ChildLike[] = [];
   const handle = await registerMcp(
     registry,
-    { fake: { command: "bun", args: [fixture], env: [], tools } },
-    { env: process.env, cwd: process.cwd(), report: () => {} },
+    { fake: { ...server, env: [], tools } },
+    {
+      env: process.env,
+      cwd: process.cwd(),
+      report: () => {},
+      spawn: (command, args, options) => {
+        const child = bunSpawner(command, args, options);
+        children.push(child);
+        return child;
+      },
+    },
   );
-  const base = await deps(toolCaller("fake__hint", {}), { registry });
+  const base = await deps(extra.provider ?? toolCaller("fake__hint", {}), { registry });
   return {
     ...base,
-    config: { ...base.config, permissions: { nodes: ["fake__hint"] } },
-    policy: { mode, allow: {}, deny: {} },
+    config: { ...base.config, permissions: { nodes: extra.nodes ?? ["fake__hint"] } },
+    policy: { mode, allow: {}, deny: {}, ...extra.policy },
     mcp: handle,
+    children,
   };
+}
+
+/** Every JSON-RPC method the teed server was sent, in order. */
+async function methodsOn(log: string): Promise<string[]> {
+  const text = await Bun.file(log).text();
+  return text
+    .split("\n")
+    .filter((line) => line.trim() !== "")
+    .map((line) => JSON.parse(line).method as string);
 }
 
 test("an MCP tool in plan mode is refused with the plan-mode notice", async () => {
@@ -1035,5 +1068,74 @@ test("an MCP tool the config calls pure runs in ask mode without a question", as
   await core.send("go");
   expect(seen.some((n) => n.method === "ask")).toBe(false);
   expect(transcript(seen).some((e: any) => e.kind === "step" && e.step.nodeType === "fake__hint")).toBe(true);
+  await core.close();
+});
+
+test("a deny rule on an MCP tool keeps it off the wire in auto mode", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "vesna-mcp-wire-"));
+  const log = join(dir, "wire.log");
+  const core = createCore(await mcpDeps("auto", {}, { policy: { deny: { fake__hint: ["*"] } }, tee: log }));
+  const seen = collect(core);
+  await core.send("go");
+  expect(transcript(seen).some((e: any) => e.kind === "notice" && e.text === "refused by policy: fake__hint" && e.level === "warn")).toBe(true);
+  expect(transcript(seen).some((e: any) => e.kind === "step")).toBe(false);
+  await core.close();
+  expect(await methodsOn(log)).not.toContain("tools/call");
+});
+
+test("a deny rule over the whole server, with a path in the input, keeps it off the wire too", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "vesna-mcp-wire-"));
+  const log = join(dir, "wire.log");
+  const core = createCore(
+    await mcpDeps("auto", {}, {
+      policy: { deny: { "fake__*": ["*"] } },
+      provider: toolCaller("fake__hint", { path: "x" }),
+      tee: log,
+    }),
+  );
+  const seen = collect(core);
+  await core.send("go");
+  expect(transcript(seen).some((e: any) => e.kind === "notice" && e.text === "refused by policy: fake__hint")).toBe(true);
+  await core.close();
+  expect(await methodsOn(log)).not.toContain("tools/call");
+});
+
+/** A caller that also records which tools each request offered. */
+function offeringCaller(name: string): Provider & { offered: string[][] } {
+  const inner = toolCaller(name, {});
+  const caller = {
+    id: "fake",
+    offered: [] as string[][],
+    async complete(request: Parameters<Provider["complete"]>[0]) {
+      caller.offered.push((request.tools ?? []).map((t) => t.name));
+      return inner.complete(request);
+    },
+  };
+  return caller;
+}
+
+test("permissions.nodes is an allowlist of builtins: an MCP tool is offered and runs without being named", async () => {
+  const provider = offeringCaller("fake__hint");
+  const core = createCore(await mcpDeps("auto", {}, { nodes: ["read"], provider }));
+  const seen = collect(core);
+  await core.send("go");
+  expect(provider.offered[0]).toContain("fake__hint");
+  expect(transcript(seen).some((e: any) => e.kind === "step" && e.step.nodeType === "fake__hint")).toBe(true);
+  await core.close();
+});
+
+test("a server that dies mid-session is announced as down, with no tools, in a state notification", async () => {
+  const d = await mcpDeps("auto");
+  const core = createCore(d);
+  const seen = collect(core);
+  expect(core.snapshot().mcp).toEqual([{ name: "fake", status: "up", tools: 4 }]);
+  process.kill(d.children[0]!.pid, "SIGKILL");
+  await until(
+    () => seen.some((n) => n.method === "state" && (n.params as any).mcp[0]?.status === "down"),
+    "the state saying down",
+  );
+  const state = [...seen].reverse().find((n) => n.method === "state")!.params as any;
+  expect(state.mcp[0]).toMatchObject({ name: "fake", status: "down", tools: 0 });
+  expect(typeof state.mcp[0].problem).toBe("string");
   await core.close();
 });

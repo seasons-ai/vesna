@@ -60,6 +60,8 @@ export interface McpClient {
   status(): McpServerStatus;
   /** Why the server is down, once it is. */
   problem(): string | undefined;
+  /** Called once, when the server goes down — dies, falls mute, or is closed. Returns the unsubscribe. */
+  onDown(handler: (reason: string) => void): () => void;
 }
 
 export interface McpClientOptions {
@@ -165,6 +167,7 @@ export function createMcpClient(name: string, config: McpServerConfig, options: 
   let initializing: Promise<{ tools: McpTool[] }> | undefined;
   let closing: Promise<void> | undefined;
   let terminating: Promise<void> | undefined;
+  const downHandlers = new Set<(reason: string) => void>();
 
   const note = (text: string) => {
     process.stderr.write(`mcp ${name}: ${text}\n`);
@@ -178,6 +181,7 @@ export function createMcpClient(name: string, config: McpServerConfig, options: 
     const waiting = [...pending.values()];
     pending.clear();
     for (const entry of waiting) entry.settle({ kind: "down" });
+    for (const handler of downHandlers) handler(reason);
   };
 
   const send = (message: object): boolean => {
@@ -436,5 +440,9 @@ export function createMcpClient(name: string, config: McpServerConfig, options: 
 
     status: () => status,
     problem: () => problem,
+    onDown(handler) {
+      downHandlers.add(handler);
+      return () => void downHandlers.delete(handler);
+    },
   };
 }

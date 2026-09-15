@@ -214,6 +214,13 @@ export function createCore(deps: CoreDeps): Core {
 
   let session = makeSession(deps.resumed);
 
+  // A server dying mid-session is a fact a client paints from the state, so
+  // it is announced as one — not left for the next command to reveal.
+  // Nothing is announced past close: the servers going down is the close.
+  const stopWatchingMcp = deps.mcp?.onChange(() => {
+    if (!closing) changed();
+  });
+
   /** Never lets a write to disk take the conversation down with it. */
   function remember(event: SessionEvent): void {
     void deps.record?.append(event).catch(() => {});
@@ -1161,6 +1168,7 @@ export function createCore(deps: CoreDeps): Core {
       closing = true;
       for (const ask of asks.open()) asks.answer(ask.id, "n");
       turn?.abort();
+      stopWatchingMcp?.();
       closed = stopBuild().then(() => deps.mcp?.close());
       return closed;
     },

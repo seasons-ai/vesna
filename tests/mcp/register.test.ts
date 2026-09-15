@@ -300,8 +300,8 @@ test("close stops every server, is idempotent, and the statuses say closed", asy
   await closing;
   for (const child of spawner.children) expect(typeof (await child.exited)).toBe("number");
   expect(handle.servers).toEqual([
-    { name: "a", status: "down", tools: 4, problem: "closed" },
-    { name: "b", status: "down", tools: 4, problem: "closed" },
+    { name: "a", status: "down", tools: 0, problem: "closed" },
+    { name: "b", status: "down", tools: 0, problem: "closed" },
   ]);
   await expect(registry.get("a__echo")!.run({ text: "x" }, ctx())).rejects.toThrow("server a is down: closed");
   await handle.close();
@@ -363,4 +363,31 @@ test("reviewerTools picks the pure MCP nodes and nothing else", async () => {
   } finally {
     await handle.close();
   }
+});
+
+test("a server that dies is reported through onChange, and its tools read 0", async () => {
+  const registry = createRegistry();
+  const { spawn, children } = capturing();
+  const handle = await registerMcp(
+    registry,
+    { fake: fixture() },
+    { env: env(), cwd: process.cwd(), report: () => {}, spawn },
+  );
+  let changes = 0;
+  const stop = handle.onChange(() => {
+    changes += 1;
+  });
+  try {
+    expect(handle.servers[0]).toEqual({ name: "fake", status: "up", tools: 4 });
+    children[0]!.kill("SIGKILL");
+    await children[0]!.exited;
+    for (let i = 0; i < 50 && changes === 0; i += 1) await sleep(10);
+    expect(changes).toBe(1);
+    expect(handle.servers[0]).toMatchObject({ name: "fake", status: "down", tools: 0 });
+    stop();
+  } finally {
+    await handle.close();
+  }
+  // Unsubscribed: the close's own change is not counted.
+  expect(changes).toBe(1);
 });

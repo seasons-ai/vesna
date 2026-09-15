@@ -237,3 +237,44 @@ test("plan mode is only as read-only as the classifier: an output flag is a writ
     expect(decide(action, p, cwd)).toBe("deny");
   }
 });
+
+// MCP tools are nodes with, mostly, nothing a rule could match on: no path,
+// no command. A rule of `"*"` reaches them anyway, and a rule's key is a
+// glob over the node name, so one line covers a whole server.
+test("a deny of * refuses a node that has no facet", () => {
+  const p = policy({ mode: "auto", deny: { fake__hint: ["*"] } });
+  expect(decide({ ...act("fake__hint", {}), effect: "external" }, p, cwd)).toBe("deny");
+});
+
+test("a rule's key is a glob over the node name", () => {
+  const p = policy({ mode: "auto", deny: { "fake__*": ["*"] } });
+  expect(decide({ ...act("fake__hint", { path: "x" }), effect: "external" }, p, cwd)).toBe("deny");
+  expect(decide({ ...act("fake__hint", {}), effect: "external" }, p, cwd)).toBe("deny");
+});
+
+test("an allow of * over a server answers without a question", () => {
+  const p = policy({ allow: { "fake__*": ["*"] } });
+  expect(decide({ ...act("fake__hint", {}), effect: "external" }, p, cwd)).toBe("allow");
+  expect(decide({ ...act("fake__hint", { path: "x" }), effect: "external" }, p, cwd)).toBe("allow");
+});
+
+test("a rule over another server leaves this one asking", () => {
+  const p = policy({ deny: { "github__*": ["*"] } });
+  expect(decide({ ...act("fake__hint", {}), effect: "external" }, p, cwd)).toBe("ask");
+});
+
+test("a key glob is anchored: fake__* does not cover a node merely containing fake__", () => {
+  const p = policy({ mode: "auto", deny: { "fake__*": ["*"] } });
+  expect(decide({ ...act("notfake__hint", {}), effect: "external" }, p, cwd)).toBe("allow");
+});
+
+test("a builtin with a facet is untouched by a * rule on another node", () => {
+  const p = policy({ mode: "auto", deny: { "fake__*": ["*"] } });
+  expect(decide(act("write", { path: "src/a.ts" }), p, cwd)).toBe("allow");
+});
+
+test("** reaches a facet-less node as * does, so one rule can cover a server's paths and its calls alike", () => {
+  const p = policy({ mode: "auto", deny: { "fake__*": ["**"] } });
+  expect(decide({ ...act("fake__hint", {}), effect: "external" }, p, cwd)).toBe("deny");
+  expect(decide({ ...act("fake__hint", { path: "src/a.ts" }), effect: "external" }, p, cwd)).toBe("deny");
+});

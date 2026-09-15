@@ -19,6 +19,8 @@ export const READ_ONLY_MARKER = " (the server says read-only)";
 
 export interface McpHandle {
   servers: McpStatus[];
+  /** Called whenever a status changes — a server dying mid-session. Returns the unsubscribe. */
+  onChange(handler: () => void): () => void;
   /** Closes every server; safe to call more than once. */
   close(): Promise<void>;
 }
@@ -104,10 +106,12 @@ async function startServer(
 
 function statusOf(started: Started): McpStatus {
   const problem = started.client.problem();
+  const status = started.client.status();
+  // A down server has nothing to offer, however many tools it listed once.
   return {
     name: started.name,
-    status: started.client.status(),
-    tools: started.tools,
+    status,
+    tools: status === "down" ? 0 : started.tools,
     ...(problem === undefined ? {} : { problem }),
   };
 }
@@ -136,6 +140,12 @@ export async function registerMcp(
   return {
     get servers() {
       return started.map(statusOf);
+    },
+    onChange(handler) {
+      const stops = started.map((entry) => entry.client.onDown(() => handler()));
+      return () => {
+        for (const stop of stops) stop();
+      };
     },
     close() {
       if (closing === undefined) {

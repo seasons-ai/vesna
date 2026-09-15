@@ -89,9 +89,11 @@ export function createSession(
   const maxTurns = options.maxTurns ?? 24;
   // Offering a node the project forbids buys a wasted turn and a confusing
   // "permission denied": if it cannot be called, it is not a tool it has.
-  const tools = toolSpecs(registry).filter(
-    (tool) => options.permit === undefined || options.permit(tool.name),
-  );
+  // An MCP server's tools are not on that list: naming the server in the
+  // config is what opted them in (see `permits` in src/cli/config.ts).
+  const permitted = (name: string): boolean =>
+    options.permit === undefined || registry.get(name)?.origin === "mcp" || options.permit(name);
+  const tools = toolSpecs(registry).filter((tool) => permitted(tool.name));
 
   // Most of this is identical across turns, which is what makes it cacheable —
   // but the phase is not: it can move between one message and the next (a
@@ -164,7 +166,7 @@ export function createSession(
       const results: ContentBlock[] = [];
 
       for (const use of calls) {
-        if (options.permit && !options.permit(use.name)) {
+        if (!permitted(use.name)) {
           results.push({
             type: "tool_result",
             callId: use.id,

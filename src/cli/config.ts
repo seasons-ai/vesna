@@ -273,7 +273,13 @@ export function parseMcp(raw: unknown): { servers: Record<string, McpServerConfi
   return { servers, problems };
 }
 
-/** Whether a node exists for the agent at all. Nothing listed means all of them. */
+/**
+ * Whether a node exists for the agent at all. Nothing listed means all of
+ * them. The list names builtins: an MCP server's tools are opted in by naming
+ * the server in the `mcp:` section, and the session skips this check for a
+ * node whose `origin` is `"mcp"` — a server started for tools the model may
+ * never see would be a server started for nothing.
+ */
 export function permits(config: VesnaConfig, node: string): boolean {
   return config.permissions.nodes === undefined || config.permissions.nodes.includes(node);
 }

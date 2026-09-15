@@ -205,8 +205,9 @@ test("/mcp prints the same lines as the full-screen chat, and closes the servers
   const mcp = {
     servers: [
       { name: "github", status: "up" as const, tools: 12 },
-      { name: "db", status: "down" as const, tools: 0, problem: "server db is down: exited with code 1" },
+      { name: "db", status: "down" as const, tools: 0, problem: "exited with code 1" },
     ],
+    onChange: () => () => {},
     async close() {
       closed.count += 1;
     },
@@ -216,6 +217,6 @@ test("/mcp prints the same lines as the full-screen chat, and closes the servers
   expect(state.calls).toBe(0);
   const text = printed.join("\n");
   expect(text).toContain("github       up       12 tools");
-  expect(text).toContain("db           down     server db is down: exited with code 1");
+  expect(text).toContain("db           down     exited with code 1");
   expect(closed.count).toBe(1);
 });
