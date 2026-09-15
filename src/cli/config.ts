@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { parse as parseYaml } from "yaml";
 import { PRESETS, presetFor, type Preset } from "../providers/catalog";
 import type { ModelPrice } from "../providers/cost";
+import { SERVER_KEY, type McpEffect, type McpServerConfig } from "../mcp/types";
 import { readSettings, settingsPath, type GlobalSettings } from "./settings";
 
 export type ProviderId = "anthropic" | "openai";
@@ -39,6 +40,10 @@ export interface VesnaConfig {
    * *project* file names is still a throw — a human wrote that one on purpose.
    */
   settingsProblem?: string;
+  /** Servers by key, from the `mcp:` section. Undefined when the section is absent. */
+  mcp?: Record<string, McpServerConfig>;
+  /** One line per skipped server, in the exact wording `settingsProblem` models. */
+  mcpProblems?: string[];
   /** True when the project config names a provider, so a command can say it cannot change it here. */
   pinned: boolean;
   provider: ProviderId;
@@ -149,6 +154,8 @@ export async function loadConfig(
   const model = raw.model ?? machine.model ?? preset.model;
   const baseUrl = raw.baseUrl ?? machine.baseUrl ?? preset.baseUrl;
 
+  const { servers: mcp, problems: mcpProblems } = parseMcp(raw);
+
   return {
     // `configured` used to mean "a project file exists". It now means "there
     // is something to work with", which is the question every caller was
@@ -156,6 +163,8 @@ export async function loadConfig(
     configured: text !== null || settings.provider !== undefined,
     preset,
     ...(settingsProblem !== undefined ? { settingsProblem } : {}),
+    ...(raw.mcp !== undefined ? { mcp } : {}),
+    ...(mcpProblems.length > 0 ? { mcpProblems } : {}),
     pinned,
     provider: preset.dialect === "anthropic" ? "anthropic" : "openai",
     auth: preset.auth ?? "key",
@@ -191,6 +200,77 @@ function unknownProvider(path: string, name: string): string {
 function describe(value: unknown): string {
   if (Array.isArray(value)) return "a list";
   return typeof value;
+}
+
+/** Passed-through environment variable names, not values — never lower-case,
+ * never a stray symbol a shell would choke on. */
+const ENV_NAME = /^[A-Z_][A-Z0-9_]*$/;
+
+/**
+ * The `mcp:` section, pure: `raw` in, servers and problems out. A malformed
+ * entry is one problem line and the whole entry is skipped — the others
+ * still load. Checked in a fixed order (key, then command, then tools, then
+ * env) so an entry wrong in more than one way still gets exactly one line.
+ */
+export function parseMcp(raw: unknown): { servers: Record<string, McpServerConfig>; problems: string[] } {
+  const servers: Record<string, McpServerConfig> = {};
+  const problems: string[] = [];
+
+  const mcp = (raw as { mcp?: unknown } | null)?.mcp;
+  if (mcp === undefined || mcp === null || typeof mcp !== "object" || Array.isArray(mcp)) {
+    return { servers, problems };
+  }
+
+  for (const [key, value] of Object.entries(mcp as Record<string, unknown>)) {
+    const entry = (value !== null && typeof value === "object" ? value : {}) as Record<string, unknown>;
+
+    if (!SERVER_KEY.test(key)) {
+      problems.push(`mcp ${key}: key must match ${SERVER_KEY.source}`);
+      continue;
+    }
+
+    if (typeof entry.command !== "string" || entry.command === "") {
+      problems.push(`mcp ${key}: no command`);
+      continue;
+    }
+    const command = entry.command;
+
+    const toolsRaw = entry.tools;
+    let toolProblem: string | undefined;
+    const tools: Record<string, McpEffect> = {};
+    if (toolsRaw !== undefined && toolsRaw !== null && typeof toolsRaw === "object" && !Array.isArray(toolsRaw)) {
+      for (const [tool, effect] of Object.entries(toolsRaw as Record<string, unknown>)) {
+        if (effect !== "pure" && effect !== "write") {
+          toolProblem = `mcp ${key}: tools.${tool}: effect must be pure or write`;
+          break;
+        }
+        tools[tool] = effect;
+      }
+    }
+    if (toolProblem !== undefined) {
+      problems.push(toolProblem);
+      continue;
+    }
+
+    const envRaw = entry.env;
+    let env: string[] = [];
+    if (envRaw !== undefined) {
+      const valid =
+        Array.isArray(envRaw) && envRaw.every((name) => typeof name === "string" && ENV_NAME.test(name));
+      if (!valid) {
+        problems.push(`mcp ${key}: env must be a list of names`);
+        continue;
+      }
+      env = envRaw as string[];
+    }
+
+    const argsRaw = entry.args;
+    const args = Array.isArray(argsRaw) ? (argsRaw as string[]) : [];
+
+    servers[key] = { command, args, env, tools };
+  }
+
+  return { servers, problems };
 }
 
 /** Whether a node exists for the agent at all. Nothing listed means all of them. */
