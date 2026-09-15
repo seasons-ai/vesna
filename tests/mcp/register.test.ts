@@ -321,7 +321,9 @@ test("close kills the whole process tree, not only a wrapper that ignores SIGTER
     {
       wrapped: {
         command: "bash",
-        args: ["-c", `trap "" TERM; bun ${FIXTURE}`],
+        // `; exit $?` keeps bash from exec-ing the last command (bash 5 on
+        // Linux does, and then there is no tree — the wrapper IS the server).
+        args: ["-c", `trap "" TERM; bun ${FIXTURE}; exit $?`],
         env: ["FAKE_MCP_LINGER"],
         tools: {},
       },
