@@ -12,6 +12,7 @@ import {
   describeHeader,
   describeModels,
   describeProviders,
+  mcpLines,
   modelSwitchOutcome,
   quitTimedOut,
   recoverOutcome,
@@ -25,6 +26,7 @@ import type { ProviderHandle } from "../cli/context";
 import { asPreset, inspectCredential, problem, remedy, usable } from "../cli/preflight";
 import { readSettings, settingsPath, writeSettings } from "../cli/settings";
 import { carryHistory } from "../loop/carry";
+import { READ_ONLY_MARKER, type McpHandle } from "../mcp/register";
 import { createSession, type Session } from "../loop/session";
 import { detailOf, type TraceStep } from "../loop/trace";
 import { findPreset } from "../providers/catalog";
@@ -68,6 +70,8 @@ export interface CoreDeps {
   policy?: Policy;
   /** Where the plan nodes write. Told which spec is open. */
   sink?: SpecSink;
+  /** The MCP servers started with this session; `close()` stops them. */
+  mcp?: McpHandle;
   /** Where `/provider` writes the machine-wide default. Defaults to the real environment and home. */
   env?: Record<string, string | undefined>;
   home?: string;
@@ -908,13 +912,20 @@ export function createCore(deps: CoreDeps): Core {
 
     const facet = facetOf(action, deps.root) ?? "";
     const pattern = facet === "" ? "" : suggestPattern(action.node, facet);
+    // An MCP server's own read-only claim closes the question as a hint —
+    // shown, and trusted for nothing: the effect the config gave the tool is
+    // what brought the question here.
+    const hint = readOnlyHint(action.node);
+    // With nothing to match on, the hint stands where the facet would; a
+    // builtin's line keeps its two spaces either way.
+    const head = facet === "" && hint !== "" ? `${action.node}${hint}` : `${action.node}  ${facet}${hint}`;
 
     // `a` is offered even with nothing to make a rule from: pressing it must
     // allow the action once and say so, never leave the question standing.
     const answer = await asks.ask(
       "permission",
       [
-        `${action.node}  ${facet}`,
+        head,
         pattern === ""
           ? "[y] allow   [n] refuse"
           : `[y] allow once   [a] always ${pattern}   [n] refuse`,
@@ -944,6 +955,13 @@ export function createCore(deps: CoreDeps): Core {
 
     notice("refused", "warn");
     return "deny";
+  }
+
+  /** The server's read-only claim for an MCP node, or nothing for any other. */
+  function readOnlyHint(node: string): string {
+    const def = deps.registry.get(node);
+    if (def === undefined || def.origin !== "mcp") return "";
+    return def.description.includes(READ_ONLY_MARKER) ? READ_ONLY_MARKER : "";
   }
 
   /**
@@ -1054,6 +1072,12 @@ export function createCore(deps: CoreDeps): Core {
       return;
     }
 
+    if (name === "mcp") {
+      for (const line of mcpLines(deps.mcp?.servers ?? [])) notice(line, "muted");
+      entry({ kind: "turn-end" });
+      return;
+    }
+
     if (name === "clear") {
       entry({ kind: "clear" });
       notice("new conversation", "muted");
@@ -1107,6 +1131,7 @@ export function createCore(deps: CoreDeps): Core {
       chats,
       chatId: deps.record?.id ?? null,
       root: deps.root,
+      mcp: deps.mcp?.servers ?? [],
     };
   }
 
@@ -1129,13 +1154,14 @@ export function createCore(deps: CoreDeps): Core {
     snapshot,
     // As leaving the chat: every open question is answered no, a turn in
     // flight is cut short, nothing asked afterwards does anything, and a
-    // build in flight is cancelled and waited for — up to the ceiling.
+    // build in flight is cancelled and waited for — up to the ceiling. The
+    // MCP servers go last: the build may still be calling them.
     close(): Promise<void> {
       if (closed !== null) return closed;
       closing = true;
       for (const ask of asks.open()) asks.answer(ask.id, "n");
       turn?.abort();
-      closed = stopBuild();
+      closed = stopBuild().then(() => deps.mcp?.close());
       return closed;
     },
   };

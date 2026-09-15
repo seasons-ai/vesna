@@ -30,7 +30,7 @@ const STATE: State = {
   model: "m", service: "s",
   usage: { inputTokens: 0, outputTokens: 0, costUsd: 0 },
   spec: null, specSlug: null, chats: null,
-  chatId: null, root: "/repo",
+  chatId: null, root: "/repo", mcp: [],
 };
 
 function fakeCore() {

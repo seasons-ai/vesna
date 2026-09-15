@@ -17,6 +17,7 @@ import { createPlanNodes } from "../nodes/plan";
 import { createClassifyNode } from "../sdd/classify";
 import { colorDepth, resolveTheme } from "../tui/theme";
 import { loadConfig } from "./config";
+import { registerMcp } from "../mcp/register";
 import { CODEX_BASE_URL, needsAddress, type Preset } from "../providers/catalog";
 import type { Provider } from "../providers/types";
 
@@ -174,11 +175,20 @@ export async function buildContext(root: string) {
   const sink = createSink(specsRoot(root));
   for (const node of createPlanNodes(sink)) registry.register(node);
   registry.register(createClassifyNode(sink));
+  // The MCP servers come after the builtins, so a tool that would shadow one
+  // is the one skipped. Every line about them goes where a settings problem
+  // goes — stderr, which no surface owns: `serve` keeps stdout for frames.
+  for (const line of config.mcpProblems ?? []) console.error(`vesna: ${line}`);
+  const mcp = await registerMcp(registry, config.mcp, {
+    env: process.env,
+    cwd: root,
+    report: (line) => console.error(`vesna: ${line}`),
+  });
   const theme = resolveTheme(config.theme, {
     depth: colorDepth(process.env, Boolean(process.stdout.isTTY)),
   });
   // Read once here so both `chat` and `do` get the same instructions.
   const notes = await readProjectNotes(root);
   const policy = await loadPolicy(root, config);
-  return { registry, config, provider, theme, notes, policy, sink };
+  return { registry, config, provider, theme, notes, policy, sink, mcp };
 }

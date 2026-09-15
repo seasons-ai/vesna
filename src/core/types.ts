@@ -3,6 +3,7 @@ import type { SpecTree } from "../spec/project";
 import type { SessionSummary } from "../store/sessions";
 import type { Mode } from "../policy/decide";
 import type { BuildState } from "../sdd/recover";
+import type { McpStatus } from "../mcp/types";
 
 /** How a client styles a notice line: ok/warn/muted/error, nothing more. */
 export type NoticeLevel = "ok" | "warn" | "muted" | "error";
@@ -39,6 +40,8 @@ export interface State {
   chatId: string | null;
   /** The folder the conversation is about — the heading of a conversations column. */
   root: string;
+  /** The MCP servers this session started, as they are now; empty when none. */
+  mcp: McpStatus[];
 }
 
 /** What a client subscribes to via `Core.on` to stay in sync with the core. */

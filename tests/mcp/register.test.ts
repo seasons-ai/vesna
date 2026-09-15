@@ -1,7 +1,7 @@
 import { test, expect } from "bun:test";
 import { join } from "node:path";
 import { bunSpawner, type ChildLike, type Spawner } from "../../src/mcp/client";
-import { registerMcp } from "../../src/mcp/register";
+import { registerMcp, reviewerTools } from "../../src/mcp/register";
 import type { McpServerConfig } from "../../src/mcp/types";
 import { createRegistry } from "../../src/registry/registry";
 import type { NodeContext } from "../../src/registry/types";
@@ -345,4 +345,22 @@ test("close kills the whole process tree, not only a wrapper that ignores SIGTER
     alive = fixturePids().filter((pid) => pid === shell || pid === server);
   }
   expect(alive).toEqual([]);
+});
+
+test("reviewerTools picks the pure MCP nodes and nothing else", async () => {
+  const registry = createRegistry();
+  registry.register({
+    type: "read", effect: "pure", description: "builtin", inputSchema: {}, async run() { return ""; },
+  });
+  const handle = await registerMcp(
+    registry,
+    { fake: fixture({ tools: { echo: "pure", hint: "write" } }) },
+    { env: env(), cwd: process.cwd(), report: () => {} },
+  );
+  try {
+    expect(handle.servers[0]!.tools).toBe(4);
+    expect(reviewerTools(registry).map((node) => node.type)).toEqual(["fake__echo"]);
+  } finally {
+    await handle.close();
+  }
 });

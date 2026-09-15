@@ -10,6 +10,9 @@ import { openSession, readSessionSync } from "../../src/store/sessions";
 import { appendEvent, createSpec, digestOf, readEvents, specPaths, specsRoot, writeSpecFile } from "../../src/spec/store";
 import type { BuildResult } from "../../src/work/builder";
 import { allowing, buildFakes, deps, halfway, reply, toolCaller, until, writing } from "../helpers/chat";
+import { registerMcp, type McpHandle } from "../../src/mcp/register";
+import type { McpStatus } from "../../src/mcp/types";
+import { createRegistry } from "../../src/registry/registry";
 
 /**
  * The same scenarios `tests/tui/app.test.ts` runs on a screen, re-run against
@@ -900,5 +903,137 @@ test("the state before a permission ask carries the usage of the call that asked
   expect(before.busy).toBe(true);
   core.answer((seen[askAt]!.params as any).id, "y");
   await turn;
+  await core.close();
+});
+
+// MCP servers as tools. The core reports the servers in its state and on
+// `/mcp`, closes them when it closes, and asks about their tools the way it
+// asks about any node — with the server's read-only claim as a hint.
+
+/** A handle whose statuses and close are observed rather than real. */
+function mcpHandle(servers: McpStatus[]) {
+  const state = { closed: 0 };
+  const handle: McpHandle = {
+    servers,
+    async close() {
+      state.closed += 1;
+    },
+  };
+  return { handle, state };
+}
+
+test("the state carries the MCP servers, and an empty list when there are none", async () => {
+  const bare = createCore(await deps(reply("x")));
+  expect(bare.snapshot().mcp).toEqual([]);
+  await bare.close();
+
+  const servers: McpStatus[] = [{ name: "github", status: "up", tools: 12 }];
+  const { handle } = mcpHandle(servers);
+  const core = createCore({ ...(await deps(reply("x"))), mcp: handle });
+  expect(core.snapshot().mcp).toEqual(servers);
+  await core.close();
+});
+
+test("/mcp prints one line per server, quoted back when typed, and ends the turn", async () => {
+  const { handle } = mcpHandle([
+    { name: "github", status: "up", tools: 12 },
+    { name: "db", status: "down", tools: 0, problem: "server db is down: exited with code 1" },
+  ]);
+  const core = createCore({ ...(await deps(reply("x"))), mcp: handle });
+  const seen = collect(core);
+  await core.command("mcp", "", { typed: "/mcp" });
+  expect(transcript(seen)).toEqual([
+    { kind: "user", text: "/mcp" },
+    { kind: "notice", text: "github       up       12 tools", level: "muted" },
+    { kind: "notice", text: "db           down     server db is down: exited with code 1", level: "muted" },
+    { kind: "turn-end" },
+  ]);
+  await core.close();
+});
+
+test("/mcp with no servers says where to add one", async () => {
+  const core = createCore(await deps(reply("x")));
+  const seen = collect(core);
+  await core.command("mcp", "");
+  expect(transcript(seen)).toEqual([
+    { kind: "notice", text: "no MCP servers — add an mcp: section to .vesna/config.yaml", level: "muted" },
+    { kind: "turn-end" },
+  ]);
+  await core.close();
+});
+
+test("close closes the MCP servers, once", async () => {
+  const { handle, state } = mcpHandle([]);
+  const core = createCore({ ...(await deps(reply("x"))), mcp: handle });
+  expect(state.closed).toBe(0);
+  await core.close();
+  expect(state.closed).toBe(1);
+  await core.close();
+  expect(state.closed).toBe(1);
+});
+
+/**
+ * The real fixture server, registered as `fake`, so the tool the model calls
+ * is `fake__hint` — declared read-only by the server, `external` unless the
+ * config says `pure`.
+ */
+async function mcpDeps(mode: "plan" | "ask" | "auto", tools: Record<string, "pure" | "write"> = {}) {
+  const registry = createRegistry();
+  const fixture = join(import.meta.dir, "..", "fixtures", "mcp-server.ts");
+  const handle = await registerMcp(
+    registry,
+    { fake: { command: "bun", args: [fixture], env: [], tools } },
+    { env: process.env, cwd: process.cwd(), report: () => {} },
+  );
+  const base = await deps(toolCaller("fake__hint", {}), { registry });
+  return {
+    ...base,
+    config: { ...base.config, permissions: { nodes: ["fake__hint"] } },
+    policy: { mode, allow: {}, deny: {} },
+    mcp: handle,
+  };
+}
+
+test("an MCP tool in plan mode is refused with the plan-mode notice", async () => {
+  const core = createCore(await mcpDeps("plan"));
+  const seen = collect(core);
+  await core.send("go");
+  expect(seen.some((n) => n.method === "ask")).toBe(false);
+  expect(transcript(seen).some((e: any) => e.kind === "notice" && e.text === "fake__hint refused: plan mode changes nothing — shift-tab to leave it")).toBe(true);
+  expect(transcript(seen).some((e: any) => e.kind === "step")).toBe(false);
+  await core.close();
+});
+
+test("an MCP tool in ask mode asks, with the server's read-only claim as a hint; y runs it", async () => {
+  const core = createCore(await mcpDeps("ask"));
+  const seen = collect(core);
+  const turn = core.send("go");
+  await until(() => seen.some((n) => n.method === "ask"), "the question");
+  const ask = seen.find((n) => n.method === "ask")!.params as any;
+  expect(ask.kind).toBe("permission");
+  expect(ask.lines[0].startsWith("fake__hint")).toBe(true);
+  expect(ask.lines[0].endsWith(" (the server says read-only)")).toBe(true);
+  expect(ask.lines[1]).toBe("[y] allow   [n] refuse");
+  expect(core.answer(ask.id, "y")).toBe(true);
+  await turn;
+  expect(transcript(seen).some((e: any) => e.kind === "step" && e.step.nodeType === "fake__hint")).toBe(true);
+  await core.close();
+});
+
+test("an MCP tool in auto mode runs without an ask", async () => {
+  const core = createCore(await mcpDeps("auto"));
+  const seen = collect(core);
+  await core.send("go");
+  expect(seen.some((n) => n.method === "ask")).toBe(false);
+  expect(transcript(seen).some((e: any) => e.kind === "step" && e.step.nodeType === "fake__hint")).toBe(true);
+  await core.close();
+});
+
+test("an MCP tool the config calls pure runs in ask mode without a question", async () => {
+  const core = createCore(await mcpDeps("ask", { hint: "pure" }));
+  const seen = collect(core);
+  await core.send("go");
+  expect(seen.some((n) => n.method === "ask")).toBe(false);
+  expect(transcript(seen).some((e: any) => e.kind === "step" && e.step.nodeType === "fake__hint")).toBe(true);
   await core.close();
 });

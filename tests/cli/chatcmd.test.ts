@@ -1,6 +1,8 @@
 import { test, expect } from "bun:test";
 import {
   CHAT_COMMANDS,
+  PLAIN_CHAT_COMMANDS,
+  mcpLines,
   approvalQuestion,
   approveOutcome,
   buildBusy,
@@ -524,4 +526,32 @@ test("the check's events print: silence when declared, the code and the seconds 
   expect(describeEvent({ t: "verify.failed", task: "T1", stage: "merge", code: null, reason: "timeout" })).toBe("T1  verify (merge): timed out");
   expect(describeEvent({ t: "verify.failed", task: "T1", stage: "review", code: null, reason: "timeout" })).toBe("T1  verify (review): timed out");
   expect(describeEvent({ t: "verify.failed", task: "T1", stage: "merge", code: 2 })).toBe("T1  verify (merge): exit 2");
+});
+
+// MCP servers as tools: `/mcp` says how each server is, one line each, in
+// the exact words the spec fixes. The plain chat prints the same lines.
+test("/mcp is a command on both surfaces, with its help line", () => {
+  const command = CHAT_COMMANDS.find((c) => c.name === "mcp");
+  expect(command?.help).toBe("list the MCP servers and their tools");
+  expect(PLAIN_CHAT_COMMANDS).toContain("mcp");
+});
+
+test("mcpLines: one line per server, the tool count for up, the problem for down", () => {
+  expect(
+    mcpLines([
+      { name: "github", status: "up", tools: 12 },
+      { name: "db", status: "down", tools: 0, problem: "server db is down: exited with code 1" },
+      { name: "one", status: "up", tools: 1 },
+      { name: "a-very-long-name", status: "starting", tools: 0 },
+    ]),
+  ).toEqual([
+    "github       up       12 tools",
+    "db           down     server db is down: exited with code 1",
+    "one          up       1 tool",
+    "a-very-long-name starting 0 tools",
+  ]);
+});
+
+test("mcpLines with no servers says where to add one", () => {
+  expect(mcpLines([])).toEqual(["no MCP servers — add an mcp: section to .vesna/config.yaml"]);
 });

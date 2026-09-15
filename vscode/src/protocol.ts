@@ -145,6 +145,17 @@ export interface State {
   chatId: string | null;
   /** The folder the conversation is about — the heading of a conversations column. */
   root: string;
+  /** The MCP servers the session started, as they are now. Absent from an older server. */
+  mcp?: McpStatus[];
+}
+
+export type McpServerStatus = "starting" | "up" | "down";
+
+export interface McpStatus {
+  name: string;
+  status: McpServerStatus;
+  tools: number;
+  problem?: string;
 }
 
 /** What a client subscribes to via `Core.on` to stay in sync with the core. */

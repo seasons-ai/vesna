@@ -112,6 +112,18 @@ function statusOf(started: Started): McpStatus {
   };
 }
 
+/**
+ * What the reviewer may borrow from the MCP servers: the tools the config
+ * calls `pure`, and no other. A reviewer that could reach a `write` or an
+ * `external` tool could change what it is judging.
+ */
+export function reviewerTools(registry: Registry): NodeDef[] {
+  return registry
+    .list()
+    .map((type) => registry.get(type))
+    .filter((def): def is NodeDef => def !== undefined && def.origin === "mcp" && def.effect === "pure");
+}
+
 export async function registerMcp(
   registry: Registry,
   servers: Record<string, McpServerConfig> | undefined,

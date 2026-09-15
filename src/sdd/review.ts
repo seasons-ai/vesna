@@ -34,6 +34,12 @@ export interface ReviewRequest {
   diff: string;
   /** For a scoped re-review: the findings the fix was meant to address. */
   findings?: Finding[];
+  /**
+   * Tools offered beside the builtins — the MCP servers' `pure` ones, as
+   * `reviewerTools` picks them. Filtered again here: this is the one place
+   * the reviewer's registry is built, so it is the place that line holds.
+   */
+  extraTools?: NodeDef[];
   model?: string;
   maxTurns?: number;
   signal?: AbortSignal;
@@ -190,6 +196,9 @@ export async function reviewTask(request: ReviewRequest): Promise<ReviewOutcome>
   registry.register(grepNode);
   registry.register(globNode);
   registry.register(shellNode);
+  for (const node of request.extraTools ?? []) {
+    if (node.origin === "mcp" && node.effect === "pure") registry.register(node);
+  }
   const holder: { verdict?: Verdict } = {};
   registry.register(createVerdictNode(holder));
 

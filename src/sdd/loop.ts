@@ -4,6 +4,7 @@ import { join } from "node:path";
 import type { Policy } from "../policy/decide";
 import type { Provider } from "../providers/types";
 import type { Registry } from "../registry/types";
+import { reviewerTools } from "../mcp/register";
 import { project, type Finding, type RecoveryAction, type SpecEvent, type Task, type VerifyStage } from "../spec/project";
 import { appendEvent, digestOf, readEvents, readSpecFile, specPaths, writeSpecFile } from "../spec/store";
 import { discardBuild, resumeTask, runTask, type BuildResult } from "../work/builder";
@@ -679,6 +680,7 @@ export async function runBuild(request: BuildLoopRequest): Promise<BuildOutcome>
             brief,
             report,
             diff: diff.stdout,
+            extraTools: reviewerTools(request.registry),
             ...(open !== undefined && !openIsVerify ? { findings: open } : {}),
             ...(request.model ? { model: request.model } : {}),
             ...(request.signal ? { signal: request.signal } : {}),
@@ -833,6 +835,7 @@ export async function runBuild(request: BuildLoopRequest): Promise<BuildOutcome>
       brief: `The whole branch for "${tree.title}" (spec ${slug}).${goal ? ` Goal: ${goal}.` : ""} Parked findings from the task reviews:\n${renderFindings(parked.map((p) => p.finding)) || "(none)"}`,
       report: "(whole-branch review)",
       diff: whole.stdout,
+      extraTools: reviewerTools(request.registry),
       ...(request.model ? { model: request.model } : {}),
       ...(request.signal ? { signal: request.signal } : {}),
     };

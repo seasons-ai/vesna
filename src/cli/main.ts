@@ -232,11 +232,12 @@ export async function main(argv: string[]): Promise<number> {
   // here may print, and what `buildContext` throws reaches stderr via bin/vesna.
   if (action === "serve") return await serveCommand(root);
 
-  const { registry, config, provider, theme, notes, policy, sink } = await buildContext(root);
+  const { registry, config, provider, theme, notes, policy, sink, mcp } = await buildContext(root);
   const permit = (node: { use: string }) => permits(config, node.use);
 
   if (enteringChat) {
-    const deps = { registry, provider, config, theme, root, notes, policy, sink };
+    // The chat's core closes the servers when it closes.
+    const deps = { registry, provider, config, theme, root, notes, policy, sink, mcp };
     // The line-based chat stays available for dumb terminals and for piping.
     if (flags.plain !== undefined || !process.stdout.isTTY) return await runChat(deps);
     return await runTui(deps);
@@ -244,17 +245,24 @@ export async function main(argv: string[]): Promise<number> {
 
   if (command === "do" && target) {
     const started = Date.now();
-    const trace = await runLive(target, provider, registry, {
-      cwd: root,
-      model: flags.model ?? config.model,
-      prices: config.prices,
-      notes,
-      permit: (type) => permits(config, type),
-      onStep: (step) =>
-        console.log(
-          `  ${theme.paint("petal", "·")} ${theme.paint("text", step.nodeType.padEnd(8))} ${theme.paint("muted", `${step.durationMs}ms`)}`,
-        ),
-    });
+    let trace;
+    try {
+      trace = await runLive(target, provider, registry, {
+        cwd: root,
+        model: flags.model ?? config.model,
+        prices: config.prices,
+        notes,
+        permit: (type) => permits(config, type),
+        onStep: (step) =>
+          console.log(
+            `  ${theme.paint("petal", "·")} ${theme.paint("text", step.nodeType.padEnd(8))} ${theme.paint("muted", `${step.durationMs}ms`)}`,
+          ),
+      });
+    } finally {
+      // The servers were started for this one task; a server left running
+      // would hold the process open after the answer.
+      await mcp.close();
+    }
 
     const seconds = ((Date.now() - started) / 1000).toFixed(1);
 
@@ -264,20 +272,24 @@ export async function main(argv: string[]): Promise<number> {
   }
 
   if (command === "build") {
-    return await buildCommand(
-      target,
-      root,
-      {
-        provider,
-        registry,
-        policy,
-        theme,
-        permit: (type) => permits(config, type),
-        notes,
-        model: flags.model ?? config.model,
-      },
-      flags,
-    );
+    try {
+      return await buildCommand(
+        target,
+        root,
+        {
+          provider,
+          registry,
+          policy,
+          theme,
+          permit: (type) => permits(config, type),
+          notes,
+          model: flags.model ?? config.model,
+        },
+        flags,
+      );
+    } finally {
+      await mcp.close();
+    }
   }
 
   console.error(`vesna: unknown command "${command}"`);

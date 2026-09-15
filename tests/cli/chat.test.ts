@@ -198,3 +198,24 @@ test("idle ctrl-c closes the core before leaving", async () => {
   expect(exits).toEqual([0]);
   expect(state.calls).toBe(0);
 });
+
+test("/mcp prints the same lines as the full-screen chat, and closes the servers on exit", async () => {
+  const { state, provider } = counting();
+  const closed = { count: 0 };
+  const mcp = {
+    servers: [
+      { name: "github", status: "up" as const, tools: 12 },
+      { name: "db", status: "down" as const, tools: 0, problem: "server db is down: exited with code 1" },
+    ],
+    async close() {
+      closed.count += 1;
+    },
+  };
+  const printed = await chat(provider, ["/mcp"], { mcp });
+
+  expect(state.calls).toBe(0);
+  const text = printed.join("\n");
+  expect(text).toContain("github       up       12 tools");
+  expect(text).toContain("db           down     server db is down: exited with code 1");
+  expect(closed.count).toBe(1);
+});

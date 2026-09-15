@@ -203,3 +203,62 @@ test("a reviewer cannot use git's --output to write, end to end", async () => {
   const { existsSync } = await import("node:fs");
   expect(existsSync(join(cwd, "x"))).toBe(false);
 });
+
+/** A node as an MCP server would register it, with the effect the config gave it. */
+function mcpNode(type: string, effect: "pure" | "write" | "external", origin: "mcp" | "none" = "mcp") {
+  return {
+    type,
+    effect,
+    ...(origin === "mcp" ? { origin } : {}),
+    description: `fake: ${type}`,
+    inputSchema: { type: "object", properties: {} },
+    async run() {
+      return "called";
+    },
+  };
+}
+
+/** Records the tool names each completion offered. */
+function offering(): Provider & { tools: string[][] } {
+  return {
+    id: "fake",
+    tools: [],
+    async complete(request): Promise<CompletionResult> {
+      (this as any).tools.push((request.tools ?? []).map((t) => t.name));
+      return {
+        content: [{ type: "text", text: "no verdict" }],
+        usage: { inputTokens: 1, outputTokens: 1, cacheReadTokens: 0, cacheWriteTokens: 0 },
+        stopReason: "end_turn",
+        model: "m",
+      };
+    },
+  };
+}
+
+test("the reviewer gets the MCP tools the config calls pure, and no other", async () => {
+  const cwd = mkdtempSync(join(tmpdir(), "vesna-review-"));
+  const provider = offering();
+  await reviewTask({
+    cwd, provider, brief: "b", report: "r", diff: "d",
+    extraTools: [
+      mcpNode("fake__pure", "pure"),
+      mcpNode("fake__external", "external"),
+      mcpNode("fake__write", "write"),
+      // Not an MCP node: the reviewer's builtins are listed by hand, never by effect.
+      mcpNode("stray", "pure", "none"),
+    ],
+  });
+  const names = provider.tools[0]!;
+  expect(names).toContain("fake__pure");
+  expect(names).not.toContain("fake__external");
+  expect(names).not.toContain("fake__write");
+  expect(names).not.toContain("stray");
+  expect(names).toEqual(expect.arrayContaining(["read", "grep", "glob", "shell", "review_verdict"]));
+});
+
+test("a reviewer without extra tools has exactly the four builtins and the verdict", async () => {
+  const cwd = mkdtempSync(join(tmpdir(), "vesna-review-"));
+  const provider = offering();
+  await reviewTask({ cwd, provider, brief: "b", report: "r", diff: "d" });
+  expect([...provider.tools[0]!].sort()).toEqual(["glob", "grep", "read", "review_verdict", "shell"]);
+});

@@ -2206,3 +2206,26 @@ test("a finishing start on an old log with no base is refused, not reviewed over
   expect(readEvents(specs, "work").length).toBe(before);
   expect(existsSync(join(specs, "work", "build.lock"))).toBe(false);
 });
+
+// The reviewer sees the MCP tools the config calls pure, through the same
+// registry the worker builds with — and none of the others.
+test("the review is handed the registry's pure MCP tools, and no other", async () => {
+  const { root, specs } = setup(oneApproved);
+  const requests: any[] = [];
+  const f = fakes();
+  const reg = registry();
+  const mcp = (type: string, effect: "pure" | "external") => ({
+    type, effect, origin: "mcp" as const, description: type, inputSchema: {}, async run() { return ""; },
+  });
+  reg.register(mcp("fake__pure", "pure"));
+  reg.register(mcp("fake__external", "external"));
+  const out = await runBuild(base(root, specs, f, {
+    registry: reg,
+    review: async (r: any) => { requests.push(r); return clean; },
+  }));
+  expect(out).toEqual({ status: "done" });
+  expect(requests.length).toBeGreaterThan(0);
+  for (const r of requests) {
+    expect(r.extraTools.map((node: any) => node.type)).toEqual(["fake__pure"]);
+  }
+});

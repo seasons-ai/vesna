@@ -184,7 +184,7 @@ export async function runChat(deps: ChatDeps): Promise<number> {
           );
           continue;
         }
-        if (input.name === "clear") {
+        if (input.name === "clear" || input.name === "mcp") {
           await core.command(input.name, input.argument, { typed: line });
           continue;
         }

@@ -5,6 +5,7 @@ import { SHAPES } from "../sdd/classify";
 import { renderFindings } from "../sdd/loop";
 import type { BuildState } from "../sdd/recover";
 import { MODES, type Mode } from "../policy/decide";
+import type { McpStatus } from "../mcp/types";
 
 export interface ChatCommand {
   name: string;
@@ -26,6 +27,7 @@ export const CHAT_COMMANDS: ChatCommand[] = [
   { name: "clear", help: "start a fresh conversation" },
   { name: "provider", help: "list services, or switch: /provider ollama" },
   { name: "model", help: "list models, or switch: /model qwen3" },
+  { name: "mcp", help: "list the MCP servers and their tools" },
   { name: "help", help: "this list" },
   { name: "exit", help: "leave" },
 ];
@@ -41,6 +43,7 @@ export const CHAT_COMMANDS: ChatCommand[] = [
 export const PLAIN_CHAT_COMMANDS: readonly string[] = [
   "cost",
   "clear",
+  "mcp",
   "help",
   "exit",
 ];
@@ -66,6 +69,19 @@ export function modeRole(mode: Mode): "muted" | "text" | "warn" {
 /** The line under `/help` in the line-based chat, so the rest are not a secret. */
 export function moreInFullScreen(): string {
   return "the full-screen chat has more: /provider, /model, /mode, /spec, /history, /theme";
+}
+
+/**
+ * `/mcp`: one line per server. A server that is up says how many tools it
+ * brought; one that is down says why, in the client's own words. No servers
+ * at all points at the config, since that is the only way to add one.
+ */
+export function mcpLines(servers: McpStatus[]): string[] {
+  if (servers.length === 0) return ["no MCP servers — add an mcp: section to .vesna/config.yaml"];
+  return servers.map((server) => {
+    if (server.status === "down") return `${server.name.padEnd(12)} down     ${server.problem ?? ""}`;
+    return `${server.name.padEnd(12)} ${server.status.padEnd(8)} ${server.tools} tool${server.tools === 1 ? "" : "s"}`;
+  });
 }
 
 export type ChatInput =

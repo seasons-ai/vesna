@@ -16,7 +16,9 @@ import { EXIT } from "./exit";
  * sessions root, so `/history` and `/resume` mean the same over a pipe.
  */
 export async function serveCommand(root: string): Promise<number> {
-  const { registry, config, provider, notes, policy, sink } = await buildContext(root);
+  // The core's close stops the MCP servers: `serve` leaves through it when
+  // the client goes, and nothing here outlives that.
+  const { registry, config, provider, notes, policy, sink, mcp } = await buildContext(root);
   const sessions = sessionsRoot(process.env, homedir());
   let record: OpenSession | undefined;
   try {
@@ -26,7 +28,7 @@ export async function serveCommand(root: string): Promise<number> {
     record = undefined;
   }
   const core = createCore({
-    registry, provider, config, root, notes, policy, sink,
+    registry, provider, config, root, notes, policy, sink, mcp,
     ...(record ? { record } : {}),
     sessionsRoot: sessions,
   });
