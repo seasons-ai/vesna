@@ -17,6 +17,8 @@ A coding agent with spec-driven development built in.
 
 **Status: v0.8.** Early, tested, and honest about what it does not do yet.
 
+**[seasonsai.io/vesna](https://seasonsai.io/vesna/)** — a run you can read before you install anything.
+
 ## Who this is for
 
 Vesna is built for the moment when work with a coding agent stops being a
